@@ -110,6 +110,31 @@ for Azure resources** so the initial tenant-level operator can receive User
 Access Administrator at root. Use that elevation only for bootstrap and remove
 it afterward. This project does not grant Microsoft Entra directory roles.
 
+## Clone the repository
+
+Install [Git](https://git-scm.com/downloads) if the `git` command is not already
+available, then clone the repository and move into its folder.
+
+Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Path "$HOME\Code" -Force | Out-Null
+Set-Location "$HOME\Code"
+git clone https://github.com/johnstel/azureeslzmultisubdemo.git
+Set-Location .\azureeslzmultisubdemo
+```
+
+macOS or Linux:
+
+```bash
+mkdir -p ~/Code
+cd ~/Code
+git clone https://github.com/johnstel/azureeslzmultisubdemo.git
+cd azureeslzmultisubdemo
+```
+
+Run the remaining commands from the `azureeslzmultisubdemo` folder.
+
 ## Prepare parameters
 
 Windows PowerShell (primary):

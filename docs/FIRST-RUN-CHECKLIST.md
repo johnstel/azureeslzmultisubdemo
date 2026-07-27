@@ -31,12 +31,18 @@ Do not place secrets in this worksheet.
 The two subscription IDs must differ. All five security-group Object IDs must
 be distinct.
 
-## 3. Prepare Windows (primary)
+## 3. Clone and prepare the project
 
-Open Windows Terminal with a PowerShell 7 profile:
+Open Windows Terminal with a PowerShell 7 profile. Install
+[Git](https://git-scm.com/downloads) first if `git --version` reports that the
+command is unavailable.
 
 ```powershell
-Set-Location "$HOME\Code\azureeslzmultisubdemo"
+git --version
+New-Item -ItemType Directory -Path "$HOME\Code" -Force | Out-Null
+Set-Location "$HOME\Code"
+git clone https://github.com/johnstel/azureeslzmultisubdemo.git
+Set-Location .\azureeslzmultisubdemo
 $PSVersionTable.PSVersion
 az version
 az bicep version
@@ -47,7 +53,11 @@ az account show --output table
 macOS or Linux alternative:
 
 ```bash
-cd ~/Code/azureeslzmultisubdemo
+git --version
+mkdir -p ~/Code
+cd ~/Code
+git clone https://github.com/johnstel/azureeslzmultisubdemo.git
+cd azureeslzmultisubdemo
 az version
 jq --version
 rg --version
@@ -56,6 +66,8 @@ az login --tenant YOUR_TENANT_ID
 az account show --output table
 ```
 
+- [ ] The repository was cloned successfully.
+- [ ] The terminal is in the `azureeslzmultisubdemo` folder.
 - [ ] The displayed tenant is correct.
 - [ ] Both sandbox subscriptions appear in `az account list --all --output table`.
 

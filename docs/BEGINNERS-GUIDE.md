@@ -118,12 +118,13 @@ You need:
 1. Windows 10 or 11 with Windows Terminal and PowerShell 7 (primary), or a
    macOS/Linux terminal with Bash;
 2. access to the Azure portal at <https://portal.azure.com>;
-3. the Azure CLI;
-4. on macOS/Linux, `jq` for JSON and `ripgrep` for local safety tests;
-5. two existing, enabled sandbox subscriptions in the same Microsoft Entra
+3. Git, which downloads a local copy of this repository;
+4. the Azure CLI;
+5. on macOS/Linux, `jq` for JSON and `ripgrep` for local safety tests;
+6. two existing, enabled sandbox subscriptions in the same Microsoft Entra
    tenant;
-6. five existing Microsoft Entra security groups;
-7. an Azure administrator who can grant the tenant- and subscription-level
+7. five existing Microsoft Entra security groups;
+8. an Azure administrator who can grant the tenant- and subscription-level
    permissions described below.
 
 This project does not accept subscription names in place of IDs. Azure
@@ -137,22 +138,40 @@ The IDs identify objects; they are not passwords or client secrets. The real
 parameter file is excluded by `.gitignore`, but you should still follow your
 organization's data-handling rules.
 
-## Step 1: Open the project
+## Step 1: Clone and open the project
+
+Cloning downloads the project from GitHub into a new
+`azureeslzmultisubdemo` folder on your computer. Install
+[Git](https://git-scm.com/downloads) first if running `git --version` reports
+that the command is unavailable.
 
 ### Windows PowerShell (primary)
 
-Open Windows Terminal, select a **PowerShell 7** profile, and move into the
-project:
+Open Windows Terminal, select a **PowerShell 7** profile, create a place for
+your repositories, and clone this repository:
 
 ```powershell
-Set-Location "$HOME\Code\azureeslzmultisubdemo"
+git --version
+New-Item -ItemType Directory -Path "$HOME\Code" -Force | Out-Null
+Set-Location "$HOME\Code"
+git clone https://github.com/johnstel/azureeslzmultisubdemo.git
+Set-Location .\azureeslzmultisubdemo
 ```
 
 ### macOS or Linux
 
 ```bash
-cd ~/Code/azureeslzmultisubdemo
+git --version
+mkdir -p ~/Code
+cd ~/Code
+git clone https://github.com/johnstel/azureeslzmultisubdemo.git
+cd azureeslzmultisubdemo
 ```
+
+The `git clone` command is needed only once. When you return later, open a
+terminal and use the final `Set-Location` or `cd` command to re-enter the
+existing project folder. Run every remaining command in this guide from that
+folder.
 
 You can inspect the files with Finder, Visual Studio Code, or another text
 editor. The most important files are:
