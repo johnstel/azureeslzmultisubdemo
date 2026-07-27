@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TEMP_DIR}"' EXIT
+
+command -v az >/dev/null 2>&1 || {
+  printf 'ERROR: Azure CLI is required for Bicep validation.\n' >&2
+  exit 1
+}
+command -v jq >/dev/null 2>&1 || {
+  printf 'ERROR: jq is required for structural tests.\n' >&2
+  exit 1
+}
+command -v rg >/dev/null 2>&1 || {
+  printf 'ERROR: ripgrep is required for safety tests.\n' >&2
+  exit 1
+}
+
+printf '1/8 Build the complete tenant template...\n'
+az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json"
+
+printf '2/8 Validate the ARM parameter template...\n'
+jq -e '
+  .parameters.deployRoleAssignments.value == false and
+  .parameters.deployEvidenceResources.value == false and
+  .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce"
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
+az bicep build-params \
+  --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
+  --outfile "${TEMP_DIR}/main.parameters.json"
+
+printf '3/8 Confirm there are exactly two subscription associations...\n'
+association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions")] | length' "${TEMP_DIR}/main.json")"
+[[ "${association_count}" -eq 2 ]] || {
+  printf 'ERROR: Expected 2 subscription association resources, found %s.\n' "${association_count}" >&2
+  exit 1
+}
+
+printf '4/8 Confirm no paid always-on resource types are declared...\n'
+if rg -n \
+  "Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)" \
+  "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" \
+  -g '*.bicep' | rg -v 'policy-library\.bicep'; then
+  printf 'ERROR: A prohibited evidence resource type is declared.\n' >&2
+  exit 1
+fi
+
+printf '5/8 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
+  printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
+  exit 1
+fi
+
+printf '6/8 Confirm five distinct Entra group parameters and guarded scripts...\n'
+group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
+[[ "${group_param_count}" -eq 5 ]] || {
+  printf 'ERROR: Expected five Entra security-group parameters.\n' >&2
+  exit 1
+}
+rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.sh"
+rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
+rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
+
+printf '7/8 Confirm region policy safely permits global resources...\n'
+rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
+rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
+rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
+
+printf '8/8 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
+  bash -n "${shell_script}"
+done
+if rg -n 'declare -A|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}' "${PROJECT_DIR}/scripts" -g '*.sh'; then
+  printf 'ERROR: A script uses a Bash 4+ feature unavailable in stock macOS Bash 3.2.\n' >&2
+  exit 1
+fi
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoLogo -NoProfile -Command '
+    $failed = $false
+    Get-ChildItem "'"${PROJECT_DIR}"'/scripts", "'"${PROJECT_DIR}"'/tests" -Filter "*.ps1" |
+      ForEach-Object {
+        $tokens = $null
+        $errors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile(
+          $_.FullName,
+          [ref]$tokens,
+          [ref]$errors
+        )
+        if ($errors.Count -gt 0) {
+          Write-Error "PowerShell parse error in $($_.FullName): $($errors[0].Message)"
+          $failed = $true
+        }
+      }
+    if ($failed) { exit 1 }
+  '
+fi
+
+printf '\nAll local validation and safety tests passed.\n'

@@ -1,0 +1,130 @@
+[CmdletBinding()]
+param()
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectDir = Split-Path -Parent $ScriptDir
+$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("azureeslz-test-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $TempDir | Out-Null
+
+function Stop-Test {
+    param([string]$Message)
+    throw $Message
+}
+
+try {
+    if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
+        Stop-Test 'Azure CLI is required for Bicep validation.'
+    }
+
+    Write-Host '1/8 Build the complete tenant template...'
+    $compiledTemplate = Join-Path $TempDir 'main.json'
+    & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
+
+    Write-Host '2/8 Validate both parameter templates...'
+    $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
+    $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
+    if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
+        Stop-Test 'deployRoleAssignments must default to false.'
+    }
+    if ($parameterTemplate.parameters.deployEvidenceResources.value -ne $false) {
+        Stop-Test 'deployEvidenceResources must default to false.'
+    }
+    if ($parameterTemplate.parameters.denyPolicyEnforcementMode.value -ne 'DoNotEnforce') {
+        Stop-Test 'denyPolicyEnforcementMode must default to DoNotEnforce.'
+    }
+    & az bicep build-params `
+        --file (Join-Path $ProjectDir 'parameters/main.template.bicepparam') `
+        --outfile (Join-Path $TempDir 'main.parameters.json')
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
+
+    Write-Host '3/8 Confirm there are exactly two subscription associations...'
+    $compiledText = Get-Content -LiteralPath $compiledTemplate -Raw
+    $associationCount = ([regex]::Matches(
+        $compiledText,
+        '"type"\s*:\s*"Microsoft\.Management/managementGroups/subscriptions"'
+    )).Count
+    if ($associationCount -ne 2) {
+        Stop-Test "Expected 2 subscription association resources, found $associationCount."
+    }
+
+    Write-Host '4/8 Confirm no paid always-on resource types are declared...'
+    $bicepFiles = @(
+        Get-Item (Join-Path $ProjectDir 'main.bicep')
+        Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
+            Where-Object { $_.Name -ne 'policy-library.bicep' }
+    )
+    $prohibitedPattern = 'Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)'
+    foreach ($bicepFile in $bicepFiles) {
+        if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match $prohibitedPattern) {
+            Stop-Test "A prohibited evidence resource type is declared in $($bicepFile.Name)."
+        }
+    }
+
+    Write-Host '5/8 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
+        if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
+            Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
+        }
+    }
+
+    Write-Host '6/8 Confirm five Entra group parameters and guarded lifecycle scripts...'
+    $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
+    $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
+    if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
+        Stop-Test 'Expected five Entra security-group parameters.'
+    }
+    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/deploy.ps1') -Raw) -notmatch 'DEPLOY-ESLZ-DEMO') {
+        Stop-Test 'PowerShell deployment confirmation guard is missing.'
+    }
+    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw) -notmatch 'DELETE-ESLZ-DEMO') {
+        Stop-Test 'PowerShell teardown confirmation guard is missing.'
+    }
+    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/deploy.sh') -Raw) -notmatch 'DEPLOY-ESLZ-DEMO') {
+        Stop-Test 'Bash deployment confirmation guard is missing.'
+    }
+    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw) -notmatch 'DELETE-ESLZ-DEMO') {
+        Stop-Test 'Bash teardown confirmation guard is missing.'
+    }
+
+    Write-Host '7/8 Confirm the region policy safely permits global resources...'
+    $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
+    foreach ($requiredPolicyText in @(
+        "field: 'location'",
+        "notEquals: 'global'",
+        "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'"
+    )) {
+        if (-not $policyText.Contains($requiredPolicyText)) {
+            Stop-Test "Region policy is missing: $requiredPolicyText"
+        }
+    }
+
+    Write-Host '8/8 Parse every PowerShell lifecycle and test script...'
+    $powerShellFiles = @(
+        Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
+        Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'
+    )
+    foreach ($powerShellFile in $powerShellFiles) {
+        $tokens = $null
+        $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $powerShellFile.FullName,
+            [ref]$tokens,
+            [ref]$parseErrors
+        )
+        if ($parseErrors.Count -gt 0) {
+            Stop-Test "PowerShell parse error in $($powerShellFile.Name): $($parseErrors[0].Message)"
+        }
+    }
+
+    Write-Host ''
+    Write-Host 'All Windows PowerShell validation and safety tests passed.'
+}
+finally {
+    if (Test-Path -LiteralPath $TempDir) {
+        Remove-Item -LiteralPath $TempDir -Recurse -Force
+    }
+}

@@ -1,0 +1,5 @@
+parameters/demo.parameters.json
+*.local.json
+work/
+.DS_Store
+

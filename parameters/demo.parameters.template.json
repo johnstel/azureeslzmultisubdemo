@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "deploymentLocation": {
+      "value": "eastus"
+    },
+    "tenantRootManagementGroupId": {
+      "value": "REPLACE_WITH_TENANT_ROOT_MANAGEMENT_GROUP_ID"
+    },
+    "namePrefix": {
+      "value": "eslz-demo"
+    },
+    "demoRootDisplayName": {
+      "value": "Enterprise-Scale Sandbox Demo"
+    },
+    "workloadArchetype": {
+      "value": "corp"
+    },
+    "connectivitySubscriptionId": {
+      "value": "REPLACE_WITH_CONNECTIVITY_SUBSCRIPTION_GUID"
+    },
+    "workloadSubscriptionId": {
+      "value": "REPLACE_WITH_WORKLOAD_SUBSCRIPTION_GUID"
+    },
+    "governanceAdminsGroupObjectId": {
+      "value": "REPLACE_WITH_GOVERNANCE_ADMINS_GROUP_OBJECT_GUID"
+    },
+    "subscriptionOwnersGroupObjectId": {
+      "value": "REPLACE_WITH_SUBSCRIPTION_OWNERS_GROUP_OBJECT_GUID"
+    },
+    "networkOperatorsGroupObjectId": {
+      "value": "REPLACE_WITH_NETWORK_OPERATORS_GROUP_OBJECT_GUID"
+    },
+    "workloadContributorsGroupObjectId": {
+      "value": "REPLACE_WITH_WORKLOAD_CONTRIBUTORS_GROUP_OBJECT_GUID"
+    },
+    "readOnlyAuditorsGroupObjectId": {
+      "value": "REPLACE_WITH_READ_ONLY_AUDITORS_GROUP_OBJECT_GUID"
+    },
+    "denyPolicyEnforcementMode": {
+      "value": "DoNotEnforce"
+    },
+    "deployRoleAssignments": {
+      "value": false
+    },
+    "deployEvidenceResources": {
+      "value": false
+    },
+    "evidenceLocation": {
+      "value": "eastus2"
+    }
+  }
+}
+
