@@ -1,5 +1,12 @@
 # Azure Enterprise-Scale Landing Zone — Two-Subscription Demo
 
+> **Version status:** `main` is the **v2 development line** (`2.0.0-dev`).
+> Use the stable current implementation at the
+> [v1.0.0 release](https://github.com/johnstel/azureeslzmultisubdemo/releases/tag/v1.0.0)
+> and the [release/v1 maintenance branch](https://github.com/johnstel/azureeslzmultisubdemo/tree/release/v1).
+> Contributors should track planned v2 work in the
+> [v2.0.0 milestone](https://github.com/johnstel/azureeslzmultisubdemo/issues?q=milestone%3A%22v2.0.0%22).
+
 > **New to Azure?** Start with the
 > [Beginner's Guide](docs/BEGINNERS-GUIDE.md). It explains every Azure concept,
 > required ID, permission, command, safety checkpoint, deployment phase, portal
