@@ -60,6 +60,18 @@ function Get-OptionalBoolValue {
     return [bool]$property.Value.value
 }
 
+function Get-OptionalStringValue {
+    param(
+        [string]$Name,
+        [string]$Default
+    )
+    $property = $parameters.parameters.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value.value) {
+        return $Default
+    }
+    return [string]$property.Value.value
+}
+
 $tenantRoot = Get-Value 'tenantRootManagementGroupId'
 $prefix = Get-Value 'namePrefix'
 $archetype = Get-Value 'workloadArchetype'
@@ -72,18 +84,6 @@ $workloadGroup = Get-Value 'workloadContributorsGroupObjectId'
 $auditorsGroup = Get-Value 'readOnlyAuditorsGroupObjectId'
 # Optional: defaults to $false when absent so older parameter files remain safe to tear down.
 $centralLogAnalyticsEnabled = Get-OptionalBoolValue 'deployCentralLogAnalytics' $false
-
-function Get-OptionalStringValue {
-    param(
-        [string]$Name,
-        [string]$Default
-    )
-    $property = $parameters.parameters.PSObject.Properties[$Name]
-    if ($null -eq $property -or $null -eq $property.Value.value) {
-        return $Default
-    }
-    return [string]$property.Value.value
-}
 
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
