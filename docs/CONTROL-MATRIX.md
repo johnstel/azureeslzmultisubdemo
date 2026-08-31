@@ -16,7 +16,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 - Azure service security baselines (for example, the Storage, Key Vault, or Compute security baselines) are Microsoft Learn guidance mapped into individual service controls; they are not one universal assignable Azure Policy initiative. See REQ-BASE-04.
 - NERC CIP has no single turnkey built-in Azure Policy initiative. Compliance requires customer-owned evidence, a registered-entity applicability decision, and procedural controls outside Azure Policy. See REQ-CIP-01 and REQ-CIP-02. This catalog and repository do not claim NERC CIP certification or compliance.
 - The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here.
-- Entries with mechanism.verificationMethod of 'secondary-source' were corroborated by multiple public references but could not be confirmed by directly fetching the built-in's raw JSON in this research session; re-confirm with `az policy definition show` / `az policy set-definition show` before assignment.
+- Large regulatory-compliance and multi-plan initiatives (`rolesVaryByMember: true` in the JSON — REQ-BASE-01, REQ-BASE-02, REQ-BASE-03, REQ-DEF-01, REQ-LOG-02) compose dozens to hundreds of member policies, each with its own `roleDefinitionIds`; consult the individual member policy relevant to the control in scope rather than a single role list.
 
 ## Classification legend
 
@@ -43,7 +43,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
-| REQ-DEPLOY-01 | Restrict resource deployment to an approved set of Azure regions. | demo-root | azure-policy | Allowed locations (built-in: Yes) | `e56962a6-4747-49cd-b67b-bf8b01975c4c` | 1.1.0 | Deny | deny-do-not-enforce |
+| REQ-DEPLOY-01 | Restrict resource deployment to an approved set of Azure regions. | demo-root | azure-policy | Allowed locations (built-in: Yes) | `e56962a6-4747-49cd-b67b-bf8b01975c4c` | 1.1.0 | Audit, Deny, Disabled | deny-do-not-enforce |
 | REQ-DEPLOY-02 | Restrict deployment to an approved allowlist of Azure resource types. | demo-root | azure-policy | Allowed resource types (built-in: Yes) | `a08ec900-254a-4555-9bf5-e42af04b5c5c` | 1.1.0 | Audit, Deny, Disabled | deny-do-not-enforce |
 | REQ-DEPLOY-03 | Block deployment of an explicit denylist of Azure resource types. | demo-root | azure-policy | Not allowed resource types (built-in: Yes) | `6c112d4e-5bc7-47ae-a041-ea2d9dccd749` | 2.0.0 | Audit, Deny, Disabled | deny-do-not-enforce |
 | REQ-DEPLOY-04 | Restrict virtual machine deployment to an approved allowlist of VM size SKUs. | landingzones | azure-policy | Allowed virtual machine size SKUs (built-in: Yes) | `cccc23c7-8427-4f53-ad12-b6a63eb452b3` | 1.0.1 | Deny | deny-do-not-enforce |
@@ -83,7 +83,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
 | REQ-LOG-01 | Export subscription Activity Logs to the effective central Log Analytics workspace. | demo-root | azure-policy | Configure Azure Activity logs to stream to specified Log Analytics workspace (built-in: Yes) | `2465583e-4e78-4c15-b6be-a36cbc7c8b0f` | 1.0.0 | DeployIfNotExists, Disabled | deployifnotexists-opt-in |
-| REQ-LOG-02 | Export supported resource-level diagnostic logs to the effective central Log Analytics workspace. | demo-root | azure-policy | Enable allLogs category group resource logging for supported resources to Log Analytics (built-in: Yes) | `0884adba-2312-4468-abeb-5422caed1038` | unknown | DeployIfNotExists, Disabled | deployifnotexists-opt-in |
+| REQ-LOG-02 | Export supported resource-level diagnostic logs to the effective central Log Analytics workspace. | demo-root | azure-policy | Enable allLogs category group resource logging for supported resources to Log Analytics (built-in: Yes) | `0884adba-2312-4468-abeb-5422caed1038` | 1.0.0 | DeployIfNotExists, Disabled | deployifnotexists-opt-in |
 
 ## Data protection
 
@@ -142,8 +142,8 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 Each control record's `mechanism.sourceUrl` and `mechanism.verificationMethod` field in `policy/control-catalog.json` records how the identifier was confirmed:
 
 - `raw-json` / `initiative-json-member`: confirmed by fetching the current built-in definition or initiative JSON directly from the public `Azure/azure-policy` GitHub repository.
-- `secondary-source`: corroborated by multiple public secondary references (for example, Azure Policy documentation mirrors), but the authoritative raw JSON file could not be located in this research session. These records include an explicit re-confirmation instruction (for example, `az policy definition show`) before assignment.
-- `documentation-pattern` / `internal-design` / `not-yet-selected` / `not-yet-created`: non-Policy mechanisms (Entra/PIM, manual evidence, or future work items) that have no Azure Policy GUID to verify.
+- `ms-learn-page`: confirmed against a current, working Microsoft Learn page whose title and path specifically match the described control (used for Entra Conditional Access and PIM guidance, which have no Azure Policy GUID).
+- `documentation-pattern` / `internal-design` / `not-yet-selected` / `not-yet-created` / `in-repository-custom-definition`: non-Policy mechanisms (Entra/PIM templates not yet tied to a single Learn page, manual evidence, custom in-repository definitions, or future work items) that have no external built-in GUID to verify.
 
 No `git diff --check` whitespace issues, no fabricated GUIDs, and no tenant credentials were used to produce this document.
 

@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/johnstel/azureeslzmultisubdemo/policy/control-catalog.schema.json",
+  "title": "v2.0 customer requirement-to-control catalog",
+  "description": "Schema for policy/control-catalog.json (issue #3). Documents the shape enforced by tests/validate-control-catalog.sh and tests/validate-control-catalog.ps1. A generic schema-validator CLI is not assumed to be installed, so the offline validation scripts re-implement these rules with jq / native PowerShell rather than invoking this file directly; keep both in sync when the shape changes.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "catalogVersion",
+    "generatedOn",
+    "purpose",
+    "sourceIssue",
+    "classificationValues",
+    "enforcementPhaseValues",
+    "cautions",
+    "controls",
+    "overlapNotes"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "catalogVersion": { "type": "string" },
+    "generatedOn": { "type": "string", "format": "date" },
+    "purpose": { "type": "string", "minLength": 1 },
+    "sourceIssue": { "type": "string", "format": "uri" },
+    "classificationValues": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "enforcementPhaseValues": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "cautions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "overlapNotes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["topic", "note"],
+        "properties": {
+          "topic": { "type": "string", "minLength": 1 },
+          "note": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "controls": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/control" }
+    }
+  },
+  "$defs": {
+    "guid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "controlId": {
+      "type": "string",
+      "pattern": "^REQ-[A-Z]+-[0-9]{2}$"
+    },
+    "mechanism": {
+      "type": "object",
+      "required": ["kind", "builtIn", "displayName", "verifiedOn", "verificationMethod"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "builtIn": { "type": "boolean" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "definitionId": {
+          "type": ["string", "null"]
+        },
+        "majorVersion": { "type": "string", "minLength": 1, "not": { "const": "unknown" } },
+        "verifiedVersion": { "type": "string", "minLength": 1, "not": { "const": "unknown" } },
+        "sourceUrl": { "type": ["string", "null"] },
+        "verifiedOn": { "type": "string", "format": "date" },
+        "verificationMethod": {
+          "type": "string",
+          "enum": [
+            "raw-json",
+            "initiative-json-member",
+            "ms-learn-page",
+            "documentation-pattern",
+            "internal-design",
+            "in-repository-custom-definition",
+            "not-yet-selected",
+            "not-yet-created"
+          ]
+        },
+        "category": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "builtIn": { "const": true },
+              "verificationMethod": { "enum": ["raw-json", "initiative-json-member"] }
+            },
+            "required": ["builtIn", "verificationMethod"]
+          },
+          "then": {
+            "properties": { "definitionId": { "$ref": "#/$defs/guid" } },
+            "required": ["definitionId"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceUrl": { "type": "string", "pattern": "raw\\.githubusercontent\\.com" }
+            },
+            "required": ["sourceUrl"]
+          },
+          "then": {
+            "properties": {
+              "sourceUrl": { "not": { "pattern": "/$" } }
+            }
+          }
+        }
+      ]
+    },
+    "control": {
+      "type": "object",
+      "required": [
+        "id",
+        "domain",
+        "customerRequirement",
+        "scope",
+        "classification",
+        "mechanism",
+        "supportedEffects",
+        "requiredParameters",
+        "roleDefinitionIds",
+        "remediationIdentityRequired",
+        "dependencies",
+        "enforcementPhase",
+        "evidenceSource"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/controlId" },
+        "domain": { "type": "string", "minLength": 1 },
+        "customerRequirement": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "minLength": 1 },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "azure-policy",
+            "entra-pim",
+            "defender-cspm-ciem",
+            "shared-service-architecture",
+            "manual-evidence"
+          ]
+        },
+        "mechanism": { "$ref": "#/$defs/mechanism" },
+        "supportedEffects": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "requiredParameters": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "roleDefinitionIds": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/guid" }
+        },
+        "remediationIdentityRequired": { "type": "boolean" },
+        "rolesVaryByMember": { "type": "boolean" },
+        "dependencies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/controlId" }
+        },
+        "enforcementPhase": {
+          "type": "string",
+          "enum": [
+            "audit-only",
+            "deny-do-not-enforce",
+            "deployifnotexists-opt-in",
+            "manual-evidence"
+          ]
+        },
+        "evidenceSource": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "remediationIdentityRequired": { "const": true } },
+            "required": ["remediationIdentityRequired"]
+          },
+          "then": {
+            "anyOf": [
+              { "properties": { "roleDefinitionIds": { "minItems": 1 } }, "required": ["roleDefinitionIds"] },
+              { "properties": { "rolesVaryByMember": { "const": true } }, "required": ["rolesVaryByMember"] }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

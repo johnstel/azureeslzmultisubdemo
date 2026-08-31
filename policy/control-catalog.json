@@ -20,8 +20,7 @@
   "cautions": [
     "Azure service security baselines (for example, the Storage, Key Vault, or Compute security baselines) are Microsoft Learn guidance mapped into individual service controls; they are not one universal assignable Azure Policy initiative. See REQ-BASE-04.",
     "NERC CIP has no single turnkey built-in Azure Policy initiative. Compliance requires customer-owned evidence, a registered-entity applicability decision, and procedural controls outside Azure Policy. See REQ-CIP-01 and REQ-CIP-02. This catalog and repository do not claim NERC CIP certification or compliance.",
-    "The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here.",
-    "Entries with mechanism.verificationMethod of 'secondary-source' were corroborated by multiple public references but could not be confirmed by directly fetching the built-in's raw JSON in this research session; re-confirm with `az policy definition show` / `az policy set-definition show` before assignment."
+    "The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here."
   ],
   "controls": [
     {
@@ -34,9 +33,9 @@
         "kind": "conditional-access-template",
         "builtIn": false,
         "displayName": "Conditional Access: privileged-role phishing-resistant MFA (report-only template)",
-        "sourceUrl": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-all-users-device-code",
+        "sourceUrl": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-admin-phish-resistant-mfa",
         "verifiedOn": "2026-08-31",
-        "verificationMethod": "documentation-pattern"
+        "verificationMethod": "ms-learn-page"
       },
       "supportedEffects": [
         "reportOnly",
@@ -119,9 +118,9 @@
         "kind": "azure-authorization-eligible-role-assignment",
         "builtIn": false,
         "displayName": "PIM-ready eligible role assignment inputs (Microsoft.Authorization roleEligibilityScheduleRequests)",
-        "sourceUrl": "https://learn.microsoft.com/en-us/azure/role-based-access-control/security-groups",
+        "sourceUrl": "https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-resource-roles-assign-roles",
         "verifiedOn": "2026-08-31",
-        "verificationMethod": "documentation-pattern"
+        "verificationMethod": "ms-learn-page"
       },
       "supportedEffects": [
         "eligible",
@@ -191,14 +190,16 @@
         "Disabled"
       ],
       "requiredParameters": [],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-DEF-02"
       ],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Defender for Cloud CIEM recommendations (requires Defender CSPM plan license; not enabled by safe defaults).",
-      "notes": "Paid Defender CSPM plan; disabled by default per issue #20 safety constraints. CIEM findings complement, not replace, the manual inventory in REQ-ID-05."
+      "notes": "Paid Defender CSPM plan; disabled by default per issue #20 safety constraints. CIEM findings complement, not replace, the manual inventory in REQ-ID-05. The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
     },
     {
       "id": "REQ-DEPLOY-01",
@@ -219,7 +220,9 @@
         "category": "General"
       },
       "supportedEffects": [
-        "Deny"
+        "Audit",
+        "Deny",
+        "Disabled"
       ],
       "requiredParameters": [
         "listOfAllowedLocations"
@@ -832,10 +835,9 @@
         "majorVersion": "3",
         "verifiedVersion": "3.0.0",
         "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Network/NetworkSecurityGroupsOnSubnets_Audit.json",
-        "verificationMethod": "secondary-source",
-        "category": "Network",
-        "notes": "GUID corroborated by multiple public secondary sources (Azure Policy documentation mirrors); the raw built-in JSON file path could not be located directly in this session. Re-confirm with `az policy definition show --name e71308d3-144b-4262-b144-efdc3cc90517` before assignment (tracked for issue #13)."
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_NetworkSecurityGroupsOnSubnets_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Security Center"
       },
       "supportedEffects": [
         "AuditIfNotExists",
@@ -926,7 +928,7 @@
         "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/Should_Use_PrivateEndpoint_Audit.json",
         "verificationMethod": "raw-json",
         "category": "Key Vault",
-        "notes": "Deny is not a supported effect for this policy because a Key Vault and its private endpoint cannot be created simultaneously."
+        "notes": "The operative parameter is audit_effect (allowedValues: Audit, Disabled; used by policyRule.then.effect). A second, deprecated effect parameter still exists in the source JSON with Deny in its allowedValues, but it is marked deprecated:true and is not referenced by policyRule.then.effect, so Deny is not an actual supported effect for this policy."
       },
       "supportedEffects": [
         "Audit",
@@ -995,12 +997,15 @@
         "logAnalytics",
         "logsEnabled"
       ],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "749f88d5-cbae-40b8-bcfc-e573ddc772fa",
+        "92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [],
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
-      "notes": "Cannot be enabled without a usable existing-or-optional workspace resource ID (issue #18 acceptance criteria); the built-in JSON embeds its own remediation roleDefinitionIds \u2014 confirm at the source URL before assignment."
+      "notes": "Cannot be enabled without a usable existing-or-optional workspace resource ID (issue #18 acceptance criteria). The built-in JSON's then.details.roleDefinitionIds array (Monitoring Contributor, Log Analytics Contributor) is reproduced verbatim above."
     },
     {
       "id": "REQ-LOG-02",
@@ -1013,13 +1018,13 @@
         "builtIn": true,
         "displayName": "Enable allLogs category group resource logging for supported resources to Log Analytics",
         "definitionId": "0884adba-2312-4468-abeb-5422caed1038",
-        "majorVersion": "unknown",
-        "verifiedVersion": "unknown",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
         "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Monitoring/",
-        "verificationMethod": "secondary-source",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Monitoring/AzureMonitor_DiagSettings_logAnalytics_allLogs.json",
+        "verificationMethod": "raw-json",
         "category": "Monitoring",
-        "notes": "GUID corroborated by public secondary sources (Azure Monitor diagnostic-settings-at-scale documentation); the raw initiative JSON file path could not be located directly in this session because the initiative is very large (~140 member policies). Re-confirm the exact GUID and version with `az policy set-definition show --name 0884adba-2312-4468-abeb-5422caed1038` before assignment."
+        "notes": "Initiative composes ~140 member DeployIfNotExists policies, one per supported resource type; this is a policySetDefinition, not a single policy."
       },
       "supportedEffects": [
         "DeployIfNotExists",
@@ -1035,7 +1040,8 @@
       ],
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
-      "notes": "Not every Azure resource type is covered by this initiative; unsupported types must be documented rather than claimed as covered (issue #18)."
+      "notes": "Not every Azure resource type is covered by this initiative; unsupported types must be documented rather than claimed as covered (issue #18). This initiative has ~140 member DeployIfNotExists policies, one per resource type, each with its own then.details.roleDefinitionIds; two sampled members (aad-domainservices, agfoodplatform-farmbeats) both required only Log Analytics Contributor (92aaf0da-9dab-42b6-94a3-d43ce8d16293), but this was not verified for every member policy, so no single roleDefinitionIds list is asserted here. Consult the member policy relevant to the resource type in scope before assignment.",
+      "rolesVaryByMember": true
     },
     {
       "id": "REQ-DATA-01",
@@ -1320,7 +1326,8 @@
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself."
+      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself. This initiative composes ~230 member policy/initiative references, each of which embeds its own then.details.roleDefinitionIds where a remediation identity is required; enumerating every member's role list here is out of scope for a single-record field. Consult the individual member policy in the source URL for the exact roles required by a given member before assignment.",
+      "rolesVaryByMember": true
     },
     {
       "id": "REQ-BASE-02",
@@ -1355,7 +1362,8 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls."
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
+      "rolesVaryByMember": true
     },
     {
       "id": "REQ-BASE-03",
@@ -1389,7 +1397,8 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance."
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance. This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
+      "rolesVaryByMember": true
     },
     {
       "id": "REQ-BASE-04",
@@ -1453,7 +1462,8 @@
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Compiled ARM template (all member plans parameterized off/disabled by default) + Defender for Cloud plan status.",
-      "notes": "Every paid plan requires an explicit independent parameter and cost warning per issue #20; no plan is enabled in the safe demo profile."
+      "notes": "Every paid plan requires an explicit independent parameter and cost warning per issue #20; no plan is enabled in the safe demo profile. This initiative composes 12 member DeployIfNotExists policies (CSPM, Containers, AI, Storage, Servers, SQL-on-VMs, App Services, SQL, Key Vault, ARM, Open Source Databases, CosmosDB), each with its own then.details.roleDefinitionIds. Sampling confirmed the CSPM, Storage, and Servers members require Owner (8e3af657-a8ff-443c-a75c-2fe8c4bcb635) while the Key Vault member requires Security Admin (fb1c8493-542b-48eb-b624-b4c8fea62acd) instead; the remaining members were not individually re-verified. Consult the member policy relevant to the plan being enabled (see REQ-DEF-02..04 for individually verified members) rather than relying on a single role list here.",
+      "rolesVaryByMember": true
     },
     {
       "id": "REQ-DEF-02",
@@ -1472,14 +1482,16 @@
         "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
         "verificationMethod": "initiative-json-member",
         "category": "Security Center",
-        "notes": "Confirmed as a member of REQ-DEF-01's initiative JSON; the individual policy's own raw JSON file path was not resolved directly in this session."
+        "notes": "Confirmed as a member of REQ-DEF-01's initiative JSON; the individual policy file (ASC_Azure_Defender_CSPM_Full_Features_DINE.json) was fetched directly and its then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
       },
       "supportedEffects": [
         "DeployIfNotExists",
         "Disabled"
       ],
       "requiredParameters": [],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-DEF-01"
@@ -1510,14 +1522,16 @@
         "Disabled"
       ],
       "requiredParameters": [],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-DEF-01"
       ],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default.",
-      "notes": "Prefer current agentless scanning / Azure Monitor Agent auto-provisioning; do not add the deprecated Log Analytics (MMA) agent dependency (see REQ-DEF-05)."
+      "notes": "Prefer current agentless scanning / Azure Monitor Agent auto-provisioning; do not add the deprecated Log Analytics (MMA) agent dependency (see REQ-DEF-05). The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
     },
     {
       "id": "REQ-DEF-04",
@@ -1542,13 +1556,16 @@
         "Disabled"
       ],
       "requiredParameters": [],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-DEF-01"
       ],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default."
+      "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default.",
+      "notes": "Defender for Cloud plan status; paid plan, disabled by default. The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
     },
     {
       "id": "REQ-DEF-05",
@@ -1639,14 +1656,17 @@
         "inclusionTagValue",
         "backupPolicyId"
       ],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "9980e02c-c2be-4d73-94e8-173b1dc7cf3c",
+        "5e467623-bb1f-42f4-a55d-6e525e11384b"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-BKP-01"
       ],
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
-      "notes": "Requires a customer-supplied, existing vault and backup policy resource ID; safe defaults create no vault and configure no backup (issue #19)."
+      "notes": "Requires a customer-supplied, existing vault and backup policy resource ID; safe defaults create no vault and configure no backup (issue #19). The built-in JSON's then.details.roleDefinitionIds array (Virtual Machine Contributor, Backup Contributor) is reproduced verbatim above."
     },
     {
       "id": "REQ-CIP-01",
@@ -1676,7 +1696,7 @@
         "sspIdRequiredPattern"
       ],
       "roleDefinitionIds": [],
-      "remediationIdentityRequired": true,
+      "remediationIdentityRequired": false,
       "dependencies": [
         "REQ-DEPLOY-01",
         "REQ-DEPLOY-02",
@@ -1701,7 +1721,7 @@
       ],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Custom initiative reusing existing domain definitions with stricter parameters (issue #22); does not itself create any policy resource until issue #22 is implemented.",
-      "notes": "Reuses existing verified domain controls above rather than duplicating policy rules; cannot be assigned outside the opt-in Critical Infrastructure branch; does not claim NERC CIP certification or full compliance."
+      "notes": "Reuses existing verified domain controls above rather than duplicating policy rules; cannot be assigned outside the opt-in Critical Infrastructure branch; does not claim NERC CIP certification or full compliance. No policyDefinition/policySetDefinition exists yet (definitionId is null), so there is no remediation identity to require until issue #22 composes this initiative from the already-verified member records listed in dependencies, each of which documents its own roleDefinitionIds."
     },
     {
       "id": "REQ-CIP-02",
