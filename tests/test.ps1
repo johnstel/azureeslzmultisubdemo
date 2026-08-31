@@ -19,7 +19,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/9 Validate repository versioning and branch guidance...'
+    Write-Host '1/10 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -37,12 +37,12 @@ try {
         }
     }
 
-    Write-Host '2/9 Build the complete tenant template...'
+    Write-Host '2/10 Build the complete tenant template...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
 
-    Write-Host '3/9 Validate both parameter templates...'
+    Write-Host '3/10 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -59,7 +59,7 @@ try {
         --outfile (Join-Path $TempDir 'main.parameters.json')
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
 
-    Write-Host '4/9 Confirm there are exactly two subscription associations...'
+    Write-Host '4/10 Confirm there are exactly two subscription associations...'
     $compiledText = Get-Content -LiteralPath $compiledTemplate -Raw
     $associationCount = ([regex]::Matches(
         $compiledText,
@@ -69,7 +69,7 @@ try {
         Stop-Test "Expected 2 subscription association resources, found $associationCount."
     }
 
-    Write-Host '5/9 Confirm no paid always-on resource types are declared...'
+    Write-Host '5/10 Confirm no paid always-on resource types are declared...'
     $bicepFiles = @(
         Get-Item (Join-Path $ProjectDir 'main.bicep')
         Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
@@ -82,14 +82,14 @@ try {
         }
     }
 
-    Write-Host '6/9 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/10 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/9 Confirm five Entra group parameters and guarded lifecycle scripts...'
+    Write-Host '7/10 Confirm five Entra group parameters and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
@@ -108,7 +108,7 @@ try {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/9 Confirm the region policy safely permits global resources...'
+    Write-Host '8/10 Confirm the region policy safely permits global resources...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -120,7 +120,7 @@ try {
         }
     }
 
-    Write-Host '9/9 Parse every PowerShell lifecycle and test script...'
+    Write-Host '9/10 Parse every PowerShell lifecycle and test script...'
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
         Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'
@@ -137,6 +137,9 @@ try {
             Stop-Test "PowerShell parse error in $($powerShellFile.Name): $($parseErrors[0].Message)"
         }
     }
+
+    Write-Host '10/10 Validate Entra Conditional Access and PIM demo artifacts...'
+    & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
     Write-Host ''
     Write-Host 'All Windows PowerShell validation and safety tests passed.'

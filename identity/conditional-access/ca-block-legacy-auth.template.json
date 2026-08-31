@@ -1,0 +1,35 @@
+{
+  "displayName": "Demo - Block legacy authentication (report-only)",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "users": {
+      "includeRoles": [
+        "All users"
+      ],
+      "excludeGroups": [
+        "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID"
+      ]
+    },
+    "applications": {
+      "includeApplications": [
+        "All"
+      ]
+    },
+    "clientAppTypes": [
+      "exchangeActiveSync",
+      "other"
+    ]
+  },
+  "grantControls": {
+    "operator": "OR",
+    "builtInControls": [
+      "block"
+    ]
+  },
+  "emergencyAccessExclusion": {
+    "required": true,
+    "placeholder": "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID",
+    "description": "Object ID of the tenant's emergency-access (break-glass) group. Break-glass accounts must be excluded from this policy so a legacy-protocol dependency discovered during an incident cannot be blocked at the worst possible time. A future apply workflow must fail closed if this placeholder is still present."
+  },
+  "notes": "Report-only demo input for a Microsoft Graph conditionalAccessPolicies resource that blocks legacy authentication protocols (basic auth, POP, IMAP, older Exchange ActiveSync clients) which cannot satisfy Conditional Access. Not applied to any tenant by this repository. Before controlled deployment: (1) replace the emergency-access placeholder, (2) confirm Entra ID P1 licensing minimum, (3) review the Azure AD sign-in logs 'Legacy Authentication' workbook for the report-only period to find remaining legacy clients before switching state to 'enabled', (4) confirm any workload identities (service principals, managed identities) that rely on protocols such as SMTP AUTH are migrated to modern auth or explicitly scoped out of 'All users' before enforcement."
+}

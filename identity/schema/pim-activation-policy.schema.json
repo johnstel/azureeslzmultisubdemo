@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/johnstel/azureeslzmultisubdemo/identity/schema/pim-activation-policy.schema.json",
+  "title": "Entra PIM role-activation policy input (demo artifact)",
+  "description": "Declarative shape for a Microsoft Graph unifiedRoleManagementPolicy assignment/notification rule set for Privileged Identity Management. This file is validated statically and is never sent to Microsoft Graph by this repository.",
+  "type": "object",
+  "required": [
+    "roleName",
+    "assignmentType",
+    "activation",
+    "notifications",
+    "emergencyAccessExclusion",
+    "notes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "roleName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "assignmentType": {
+      "type": "string",
+      "description": "Access must be eligible, never permanent, for every role governed by this artifact.",
+      "const": "eligible"
+    },
+    "activation": {
+      "type": "object",
+      "required": [
+        "requireApproval",
+        "approvers",
+        "requireMultiFactorAuthentication",
+        "authenticationContext",
+        "requireJustification",
+        "maximumActivationDurationHours"
+      ],
+      "properties": {
+        "requireApproval": {
+          "type": "boolean",
+          "const": true
+        },
+        "approvers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "requireMultiFactorAuthentication": {
+          "type": "boolean",
+          "const": true
+        },
+        "authenticationContext": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the phishing-resistant authentication-strength / Conditional Access authentication context required at activation."
+        },
+        "requireJustification": {
+          "type": "boolean",
+          "const": true
+        },
+        "maximumActivationDurationHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "required": ["notifyAdminsOnActivation", "notifyApproversOnActivationRequest", "notifyAssigneeOnActivation"],
+      "properties": {
+        "notifyAdminsOnActivation": { "type": "boolean", "const": true },
+        "notifyApproversOnActivationRequest": { "type": "boolean", "const": true },
+        "notifyAssigneeOnActivation": { "type": "boolean", "const": true }
+      }
+    },
+    "emergencyAccessExclusion": {
+      "type": "object",
+      "required": ["required", "placeholder", "description"],
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "placeholder": {
+          "type": "string",
+          "pattern": "^REPLACE_WITH_.+$",
+          "description": "Object ID of the emergency-access/break-glass account that must remain permanently assigned outside this eligible/approval workflow. Must be replaced before any apply workflow runs."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

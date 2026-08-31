@@ -1,0 +1,34 @@
+{
+  "displayName": "Demo - Require phishing-resistant MFA for privileged roles (report-only)",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "users": {
+      "includeRoles": [
+        "Global Administrator",
+        "Privileged Role Administrator",
+        "Security Administrator",
+        "Conditional Access Administrator",
+        "Application Administrator",
+        "Cloud Application Administrator"
+      ],
+      "excludeGroups": [
+        "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID"
+      ]
+    },
+    "applications": {
+      "includeApplications": ["All"]
+    },
+    "clientAppTypes": ["all"]
+  },
+  "grantControls": {
+    "operator": "OR",
+    "builtInControls": ["authenticationStrength"],
+    "authenticationStrength": "Phishing-resistant MFA"
+  },
+  "emergencyAccessExclusion": {
+    "required": true,
+    "placeholder": "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID",
+    "description": "Object ID of the tenant's emergency-access (break-glass) group. Every break-glass account must sit in this group and remain excluded from this policy so a Conditional Access misconfiguration can never lock the tenant out. A future apply workflow must fail closed if this placeholder is still present."
+  },
+  "notes": "Report-only demo input for a Microsoft Graph conditionalAccessPolicies resource. Not applied to any tenant by this repository. Before controlled deployment: (1) replace the emergency-access placeholder with a real, monitored break-glass group object ID, (2) confirm the tenant has an Entra ID P2 (or Microsoft Entra Suite / EMS E5 equivalent) license granting Conditional Access and Authentication Strengths, (3) review sign-in logs for the report-only period before switching state to 'enabled', (4) keep this exclusion group's sign-ins outside all other Conditional Access policies in this folder as well."
+}
