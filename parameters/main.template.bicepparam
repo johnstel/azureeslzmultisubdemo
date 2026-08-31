@@ -16,3 +16,5 @@ param denyPolicyEnforcementMode = 'DoNotEnforce'
 param deployRoleAssignments = false
 param deployEvidenceResources = false
 param evidenceLocation = 'eastus2'
+param enableCriticalInfrastructure = false
+param criticalInfrastructureSubscriptionIds = []

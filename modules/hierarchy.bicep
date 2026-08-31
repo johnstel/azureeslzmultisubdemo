@@ -11,6 +11,15 @@ param workloadArchetype string
 param connectivitySubscriptionId string
 param workloadSubscriptionId string
 
+@description('Set true to create the opt-in Critical Infrastructure management group under Landing Zones.')
+param enableCriticalInfrastructure bool = false
+
+@description('Management group ID for the Critical Infrastructure branch, used only when enableCriticalInfrastructure is true.')
+param criticalInfrastructureManagementGroupId string
+
+@description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch, used only when enableCriticalInfrastructure is true.')
+param criticalInfrastructureSubscriptionIds array = []
+
 resource demoRoot 'Microsoft.Management/managementGroups@2023-04-01' = {
   name: demoRootManagementGroupId
   properties: {
@@ -81,8 +90,26 @@ resource workloadSubscription 'Microsoft.Management/managementGroups/subscriptio
   name: workloadSubscriptionId
 }
 
+resource criticalInfrastructure 'Microsoft.Management/managementGroups@2023-04-01' = if (enableCriticalInfrastructure) {
+  name: criticalInfrastructureManagementGroupId
+  properties: {
+    displayName: 'Critical Infrastructure'
+    details: {
+      parent: {
+        id: landingZones.id
+      }
+    }
+  }
+}
+
+resource criticalInfrastructureSubscriptions 'Microsoft.Management/managementGroups/subscriptions@2023-04-01' = [for subscriptionId in criticalInfrastructureSubscriptionIds: if (enableCriticalInfrastructure) {
+  parent: criticalInfrastructure
+  name: subscriptionId
+}]
+
 output demoRootManagementGroupId string = demoRoot.name
 output platformManagementGroupId string = platform.name
 output connectivityManagementGroupId string = connectivity.name
 output landingZonesManagementGroupId string = landingZones.name
 output workloadManagementGroupId string = workload.name
+output criticalInfrastructureManagementGroupId string = enableCriticalInfrastructure ? criticalInfrastructure.name : ''
