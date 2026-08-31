@@ -158,33 +158,20 @@ if ($Mode -eq 'populated') {
 }
 
 
-# Schema/reference files are read from the schema/ subdirectory of the
-# active -Path ($IdentityDir), not unconditionally from the tracked repo:
-# populated mode operates on a full external copy of the identity/ tree (see
-# the module header and the runbook), and $schemaDir must be
-# containment-checked below just like $caDir/$pimDir so a caller cannot
-# smuggle a link back into the tracked tree through it either.
-$schemaDir = Join-Path $IdentityDir 'schema'
-if (-not (Test-Path -LiteralPath $schemaDir)) { Stop-Validation "Missing directory: $schemaDir" }
-
-if ($Mode -eq 'populated') {
-    Assert-OutsideTrackedIdentity -ResolvedPath (Resolve-FinalTarget -Path $schemaDir) -Description 'the schema/ directory'
-}
-
-$knownIdsPath = Join-Path $schemaDir 'known-entra-ids.json'
+# Schema/reference files are always read from the tracked repository's
+# canonical identity/schema/ tree -- deliberately independent of the
+# caller-supplied -Path/$IdentityDir. The validators are the trust anchor
+# for what a compliant artifact looks like, so accepting a caller-supplied
+# schema would let external input redefine the very rules used to validate
+# it. Any schema/ directory or files under a populated -Path are ignored.
+$knownIdsPath = Join-Path $ProjectDir 'identity/schema/known-entra-ids.json'
 if (-not (Test-Path -LiteralPath $knownIdsPath)) { Stop-Validation "Missing reference file: $knownIdsPath" }
 $knownIds = Get-Content -LiteralPath $knownIdsPath -Raw | ConvertFrom-Json
 
-$caSchemaPath = Join-Path $schemaDir 'conditional-access-policy.schema.json'
-$pimSchemaPath = Join-Path $schemaDir 'pim-activation-policy.schema.json'
+$caSchemaPath = Join-Path $ProjectDir 'identity/schema/conditional-access-policy.schema.json'
+$pimSchemaPath = Join-Path $ProjectDir 'identity/schema/pim-activation-policy.schema.json'
 if (-not (Test-Path -LiteralPath $caSchemaPath)) { Stop-Validation "Missing reference file: $caSchemaPath" }
 if (-not (Test-Path -LiteralPath $pimSchemaPath)) { Stop-Validation "Missing reference file: $pimSchemaPath" }
-
-if ($Mode -eq 'populated') {
-    Assert-OutsideTrackedIdentity -ResolvedPath (Resolve-FinalTarget -Path $knownIdsPath) -Description 'schema/known-entra-ids.json'
-    Assert-OutsideTrackedIdentity -ResolvedPath (Resolve-FinalTarget -Path $caSchemaPath) -Description 'schema/conditional-access-policy.schema.json'
-    Assert-OutsideTrackedIdentity -ResolvedPath (Resolve-FinalTarget -Path $pimSchemaPath) -Description 'schema/pim-activation-policy.schema.json'
-}
 
 $caSchemaJson = Get-Content -LiteralPath $caSchemaPath -Raw
 $pimSchemaJson = Get-Content -LiteralPath $pimSchemaPath -Raw

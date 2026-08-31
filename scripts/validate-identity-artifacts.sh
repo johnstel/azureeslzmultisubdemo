@@ -186,32 +186,19 @@ if [[ "${mode}" == "populated" ]]; then
   assert_outside_tracked_identity "${canonical_identity_dir}" "the requested --path"
 fi
 
-# Schema/reference files are read from the schema/ subdirectory of the
-# active --path (identity_dir), not unconditionally from the tracked repo:
-# populated mode operates on a full external copy of the identity/ tree
-# (see the module header and the runbook), and schema_dir must be
-# containment-checked below just like ca_dir/pim_dir so a caller cannot
-# smuggle a link back into the tracked tree through it either.
-schema_dir="${identity_dir}/schema"
-[[ -d "${schema_dir}" ]] || fail "Missing directory: ${schema_dir}"
-
-if [[ "${mode}" == "populated" ]]; then
-  assert_outside_tracked_identity "$(canonicalize_dir "${schema_dir}")" "the schema/ directory"
-fi
-
-known_ids_file="${schema_dir}/known-entra-ids.json"
+# Schema/reference files are always read from the tracked repository's
+# canonical identity/schema/ tree -- deliberately independent of the
+# caller-supplied --path/identity_dir. The validators are the trust anchor
+# for what a compliant artifact looks like, so accepting a caller-supplied
+# schema would let external input redefine the very rules used to validate
+# it. Any schema/ directory or files under a populated --path are ignored.
+known_ids_file="${PROJECT_DIR}/identity/schema/known-entra-ids.json"
 [[ -f "${known_ids_file}" ]] || fail "Missing reference file: ${known_ids_file}"
 
-ca_schema_file="${schema_dir}/conditional-access-policy.schema.json"
-pim_schema_file="${schema_dir}/pim-activation-policy.schema.json"
+ca_schema_file="${PROJECT_DIR}/identity/schema/conditional-access-policy.schema.json"
+pim_schema_file="${PROJECT_DIR}/identity/schema/pim-activation-policy.schema.json"
 [[ -f "${ca_schema_file}" ]] || fail "Missing reference file: ${ca_schema_file}"
 [[ -f "${pim_schema_file}" ]] || fail "Missing reference file: ${pim_schema_file}"
-
-if [[ "${mode}" == "populated" ]]; then
-  assert_outside_tracked_identity "$(canonicalize_file "${known_ids_file}")" "schema/known-entra-ids.json"
-  assert_outside_tracked_identity "$(canonicalize_file "${ca_schema_file}")" "schema/conditional-access-policy.schema.json"
-  assert_outside_tracked_identity "$(canonicalize_file "${pim_schema_file}")" "schema/pim-activation-policy.schema.json"
-fi
 
 # A small, offline JSON Schema (draft-07 subset) validator implemented
 # entirely in jq (already a required dependency, so this introduces no new

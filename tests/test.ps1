@@ -785,15 +785,19 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Remove-Item -LiteralPath $repoAliasDir -Force
 
         # Case: an otherwise-legitimate external -Path root whose
-        # conditional-access/, pim/, or schema/ subdirectory is itself a
-        # symbolic link back into the tracked identity/ folder must be
-        # rejected. Checking only the containment of the requested root is
-        # not sufficient: the root can resolve outside identity/ while a
-        # nested directory constructed beneath it aliases the tracked,
-        # unpopulated tree. Each subdirectory is tested in isolation (the
-        # other two subdirectories are genuine, non-symlinked copies from
-        # $identityPopDir) so that one containment check rejecting first
-        # cannot mask another one silently never being exercised.
+        # conditional-access/ or pim/ subdirectory is itself a symbolic link
+        # back into the tracked identity/ folder must be rejected. Checking
+        # only the containment of the requested root is not sufficient: the
+        # root can resolve outside identity/ while a nested directory
+        # constructed beneath it aliases the tracked, unpopulated tree.
+        # Each subdirectory is tested in isolation (the other subdirectory
+        # is a genuine, non-symlinked copy from $identityPopDir) so that one
+        # containment check rejecting first cannot mask another one
+        # silently never being exercised. Schema/reference files are always
+        # read from the tracked repository's canonical identity/schema/
+        # tree, independent of -Path, so there is no schema containment
+        # check to bypass -- see the schema-ignored regression below
+        # instead.
         function New-IsolatedBypassDir {
             param([string]$TargetDir)
             if (Test-Path -LiteralPath $TargetDir) { Remove-Item -LiteralPath $TargetDir -Recurse -Force }
@@ -804,33 +808,26 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         New-IsolatedBypassDir -TargetDir $bypassCaDir
         Remove-Item -LiteralPath (Join-Path $bypassCaDir 'conditional-access') -Recurse -Force
         New-Item -ItemType SymbolicLink -Path (Join-Path $bypassCaDir 'conditional-access') -Target (Join-Path $identitySrcDir 'conditional-access') | Out-Null
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked conditional-access/ subdirectory (pim/ and schema/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassCaDir) -ExpectedMessage 'the conditional-access/ directory'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked conditional-access/ subdirectory (pim/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassCaDir) -ExpectedMessage 'the conditional-access/ directory'
         Remove-Item -LiteralPath $bypassCaDir -Recurse -Force
 
         $bypassPimDir = Join-Path $TempDir 'identity-bypass-pim-dir'
         New-IsolatedBypassDir -TargetDir $bypassPimDir
         Remove-Item -LiteralPath (Join-Path $bypassPimDir 'pim') -Recurse -Force
         New-Item -ItemType SymbolicLink -Path (Join-Path $bypassPimDir 'pim') -Target (Join-Path $identitySrcDir 'pim') | Out-Null
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked pim/ subdirectory (conditional-access/ and schema/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassPimDir) -ExpectedMessage 'the pim/ directory'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked pim/ subdirectory (conditional-access/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassPimDir) -ExpectedMessage 'the pim/ directory'
         Remove-Item -LiteralPath $bypassPimDir -Recurse -Force
 
-        $bypassSchemaDir = Join-Path $TempDir 'identity-bypass-schema-dir'
-        New-IsolatedBypassDir -TargetDir $bypassSchemaDir
-        Remove-Item -LiteralPath (Join-Path $bypassSchemaDir 'schema') -Recurse -Force
-        New-Item -ItemType SymbolicLink -Path (Join-Path $bypassSchemaDir 'schema') -Target (Join-Path $identitySrcDir 'schema') | Out-Null
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked schema/ subdirectory (conditional-access/ and pim/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassSchemaDir) -ExpectedMessage 'the schema/ directory'
-        Remove-Item -LiteralPath $bypassSchemaDir -Recurse -Force
-
-        # Case: an otherwise-legitimate external -Path root with genuine,
-        # external conditional-access/, pim/, and schema/ directories, but
-        # whose individual files are themselves symbolic links back into the
+        # Case: an otherwise-legitimate external -Path root with a genuine,
+        # external conditional-access/ and pim/ directory, but whose
+        # individual files are themselves symbolic links back into the
         # tracked identity/ folder, must also be rejected. Directory-level
         # containment checks alone do not catch a symlinked leaf file. Each
         # artifact type's files are tested in isolation (the other
-        # directories' files are genuine, non-symlinked copies), so that
+        # directory's files are genuine, non-symlinked copies), so that
         # Conditional Access's per-file containment check rejecting first
-        # cannot mask the PIM (or schema) per-file check silently never
-        # being exercised -- this specifically locks in the fix applying
+        # cannot mask the PIM per-file check silently never being exercised
+        # -- this specifically locks in the fix applying
         # Resolve-FinalTarget/Assert-OutsideTrackedIdentity to every PIM
         # Get-Content call, not just Conditional Access's.
         $bypassCaFileDir = Join-Path $TempDir 'identity-bypass-ca-file'
@@ -840,7 +837,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             Remove-Item -LiteralPath $_.FullName -Force
             New-Item -ItemType SymbolicLink -Path (Join-Path $bypassCaFileDir "conditional-access/$leafName") -Target (Join-Path $identitySrcDir "conditional-access/$leafName") | Out-Null
         }
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via symbolic-link Conditional Access template files (PIM and schema files genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassCaFileDir) -ExpectedMessage 'outside the tracked identity/ folder'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via symbolic-link Conditional Access template files (PIM files genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassCaFileDir) -ExpectedMessage 'outside the tracked identity/ folder'
         Remove-Item -LiteralPath $bypassCaFileDir -Recurse -Force
 
         $bypassPimFileDir = Join-Path $TempDir 'identity-bypass-pim-file'
@@ -850,15 +847,26 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             Remove-Item -LiteralPath $_.FullName -Force
             New-Item -ItemType SymbolicLink -Path (Join-Path $bypassPimFileDir "pim/$leafName") -Target (Join-Path $identitySrcDir "pim/$leafName") | Out-Null
         }
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via symbolic-link PIM template files (Conditional Access and schema files genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassPimFileDir) -ExpectedMessage 'outside the tracked identity/ folder'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via symbolic-link PIM template files (Conditional Access files genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassPimFileDir) -ExpectedMessage 'outside the tracked identity/ folder'
         Remove-Item -LiteralPath $bypassPimFileDir -Recurse -Force
 
-        $bypassSchemaFileDir = Join-Path $TempDir 'identity-bypass-schema-file'
-        New-IsolatedBypassDir -TargetDir $bypassSchemaFileDir
-        Remove-Item -LiteralPath (Join-Path $bypassSchemaFileDir 'schema/known-entra-ids.json') -Force
-        New-Item -ItemType SymbolicLink -Path (Join-Path $bypassSchemaFileDir 'schema/known-entra-ids.json') -Target (Join-Path $identitySrcDir 'schema/known-entra-ids.json') | Out-Null
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic-link schema/known-entra-ids.json reference file (conditional-access/ and pim/ files genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassSchemaFileDir) -ExpectedMessage 'schema/known-entra-ids.json'
-        Remove-Item -LiteralPath $bypassSchemaFileDir -Recurse -Force
+        # Case: schema/reference files are always read from the tracked
+        # repository's canonical identity/schema/ tree, never from a
+        # caller-supplied -Path. A malicious or malformed schema/ directory
+        # under an external populated root must therefore be silently
+        # ignored rather than read -- validation must still succeed using
+        # the tracked schemas.
+        $schemaIgnoredDir = Join-Path $TempDir 'identity-schema-ignored'
+        New-IsolatedBypassDir -TargetDir $schemaIgnoredDir
+        Remove-Item -LiteralPath (Join-Path $schemaIgnoredDir 'schema') -Recurse -Force
+        New-Item -ItemType Directory -Path (Join-Path $schemaIgnoredDir 'schema') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $schemaIgnoredDir 'schema/known-entra-ids.json') -Value '{"not":"a real schema"}'
+        $global:LASTEXITCODE = 0
+        & pwsh -NoLogo -NoProfile -File $validatorPath -Mode populated -Path $schemaIgnoredDir | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Test "validate-identity-artifacts.ps1 should ignore a caller-supplied schema/ directory and validate successfully using the tracked repository schemas, but it exited with code $LASTEXITCODE."
+        }
+        Remove-Item -LiteralPath $schemaIgnoredDir -Recurse -Force
 
         # Case: on a genuinely case-insensitive filesystem (default macOS
         # APFS, exFAT/vfat, some NTFS/SMB mounts), a casing variant of the
@@ -941,18 +949,21 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Remove-Item -LiteralPath $identityJunctionDir -Force
 
         # Case: an otherwise-legitimate external -Path root whose
-        # conditional-access/, pim/, or schema/ subdirectory is itself a
-        # junction back into the tracked identity/ folder must be rejected.
-        # Each subdirectory is tested in isolation (the other two are
-        # genuine, non-symlinked copies from $identityPopDir) so that one
+        # conditional-access/ or pim/ subdirectory is itself a junction back
+        # into the tracked identity/ folder must be rejected. Each
+        # subdirectory is tested in isolation (the other subdirectory is a
+        # genuine, non-symlinked copy from $identityPopDir) so that one
         # containment check rejecting first cannot mask another one
-        # silently never being exercised.
+        # silently never being exercised. Schema/reference files are always
+        # read from the tracked repository's canonical identity/schema/
+        # tree, independent of -Path, so there is no schema containment
+        # check to bypass here either.
         $bypassCaJunctionDir = Join-Path $TempDir 'identity-bypass-ca-junction'
         if (Test-Path -LiteralPath $bypassCaJunctionDir) { Remove-Item -LiteralPath $bypassCaJunctionDir -Recurse -Force }
         Copy-Item -LiteralPath $identityPopDir -Destination $bypassCaJunctionDir -Recurse
         Remove-Item -LiteralPath (Join-Path $bypassCaJunctionDir 'conditional-access') -Recurse -Force
         New-Item -ItemType Junction -Path (Join-Path $bypassCaJunctionDir 'conditional-access') -Target (Join-Path $identitySrcDir 'conditional-access') | Out-Null
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked conditional-access/ subdirectory (pim/ and schema/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassCaJunctionDir) -ExpectedMessage 'the conditional-access/ directory'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked conditional-access/ subdirectory (pim/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassCaJunctionDir) -ExpectedMessage 'the conditional-access/ directory'
         Remove-Item -LiteralPath $bypassCaJunctionDir -Recurse -Force
 
         $bypassPimJunctionDir = Join-Path $TempDir 'identity-bypass-pim-junction'
@@ -960,16 +971,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Copy-Item -LiteralPath $identityPopDir -Destination $bypassPimJunctionDir -Recurse
         Remove-Item -LiteralPath (Join-Path $bypassPimJunctionDir 'pim') -Recurse -Force
         New-Item -ItemType Junction -Path (Join-Path $bypassPimJunctionDir 'pim') -Target (Join-Path $identitySrcDir 'pim') | Out-Null
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked pim/ subdirectory (conditional-access/ and schema/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassPimJunctionDir) -ExpectedMessage 'the pim/ directory'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked pim/ subdirectory (conditional-access/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassPimJunctionDir) -ExpectedMessage 'the pim/ directory'
         Remove-Item -LiteralPath $bypassPimJunctionDir -Recurse -Force
-
-        $bypassSchemaJunctionDir = Join-Path $TempDir 'identity-bypass-schema-junction'
-        if (Test-Path -LiteralPath $bypassSchemaJunctionDir) { Remove-Item -LiteralPath $bypassSchemaJunctionDir -Recurse -Force }
-        Copy-Item -LiteralPath $identityPopDir -Destination $bypassSchemaJunctionDir -Recurse
-        Remove-Item -LiteralPath (Join-Path $bypassSchemaJunctionDir 'schema') -Recurse -Force
-        New-Item -ItemType Junction -Path (Join-Path $bypassSchemaJunctionDir 'schema') -Target (Join-Path $identitySrcDir 'schema') | Out-Null
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked schema/ subdirectory (conditional-access/ and pim/ genuine)' -Arguments @('-Mode', 'populated', '-Path', $bypassSchemaJunctionDir) -ExpectedMessage 'the schema/ directory'
-        Remove-Item -LiteralPath $bypassSchemaJunctionDir -Recurse -Force
 
         # Case: Windows drive-letter paths are case-insensitive at the
         # filesystem level, so a casing variant of the tracked identity/

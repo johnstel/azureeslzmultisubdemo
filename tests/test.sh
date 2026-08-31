@@ -559,15 +559,18 @@ rm -rf "${IDENTITY_SYMLINK_DIR}" && ln -s "${PROJECT_DIR}/identity" "${IDENTITY_
 expect_identity_validation_failure "populated mode bypass via a symbolic link aliasing the tracked identity/ folder" --mode populated --path "${IDENTITY_SYMLINK_DIR}"
 rm -f "${IDENTITY_SYMLINK_DIR}"
 
-# Case: an otherwise-legitimate external --path root whose conditional-access/,
-# pim/, or schema/ subdirectory is itself a symbolic link back into the
-# tracked identity/ folder must be rejected. Only checking the containment of
-# the requested root is not sufficient: the root can resolve outside
-# identity/ while a nested directory constructed beneath it aliases the
-# tracked, unpopulated tree. Each subdirectory is tested in isolation (the
-# other two subdirectories are genuine, non-symlinked copies) so that one
-# containment check rejecting first cannot mask another one silently never
-# being exercised.
+# Case: an otherwise-legitimate external --path root whose conditional-access/
+# or pim/ subdirectory is itself a symbolic link back into the tracked
+# identity/ folder must be rejected. Only checking the containment of the
+# requested root is not sufficient: the root can resolve outside identity/
+# while a nested directory constructed beneath it aliases the tracked,
+# unpopulated tree. Each subdirectory is tested in isolation (the other
+# subdirectory is a genuine, non-symlinked copy) so that one containment
+# check rejecting first cannot mask another one silently never being
+# exercised. Schema/reference files are always read from the tracked
+# repository's canonical identity/schema/ tree, independent of --path, so
+# there is no schema containment check to bypass -- see the schema-ignored
+# regression below instead.
 make_isolated_bypass_dir() {
   local target_dir="$1"
   rm -rf "${target_dir}"
@@ -578,32 +581,24 @@ IDENTITY_BYPASS_CA_DIR="${TEMP_DIR}/identity-bypass-ca-dir"
 make_isolated_bypass_dir "${IDENTITY_BYPASS_CA_DIR}"
 rm -rf "${IDENTITY_BYPASS_CA_DIR}/conditional-access"
 ln -s "${PROJECT_DIR}/identity/conditional-access" "${IDENTITY_BYPASS_CA_DIR}/conditional-access"
-expect_identity_validation_failure_with_message "populated mode bypass via a symbolic link aliasing the tracked conditional-access/ subdirectory (pim/ and schema/ genuine)" "the conditional-access/ directory" --mode populated --path "${IDENTITY_BYPASS_CA_DIR}"
+expect_identity_validation_failure_with_message "populated mode bypass via a symbolic link aliasing the tracked conditional-access/ subdirectory (pim/ genuine)" "the conditional-access/ directory" --mode populated --path "${IDENTITY_BYPASS_CA_DIR}"
 rm -rf "${IDENTITY_BYPASS_CA_DIR}"
 
 IDENTITY_BYPASS_PIM_DIR="${TEMP_DIR}/identity-bypass-pim-dir"
 make_isolated_bypass_dir "${IDENTITY_BYPASS_PIM_DIR}"
 rm -rf "${IDENTITY_BYPASS_PIM_DIR}/pim"
 ln -s "${PROJECT_DIR}/identity/pim" "${IDENTITY_BYPASS_PIM_DIR}/pim"
-expect_identity_validation_failure_with_message "populated mode bypass via a symbolic link aliasing the tracked pim/ subdirectory (conditional-access/ and schema/ genuine)" "the pim/ directory" --mode populated --path "${IDENTITY_BYPASS_PIM_DIR}"
+expect_identity_validation_failure_with_message "populated mode bypass via a symbolic link aliasing the tracked pim/ subdirectory (conditional-access/ genuine)" "the pim/ directory" --mode populated --path "${IDENTITY_BYPASS_PIM_DIR}"
 rm -rf "${IDENTITY_BYPASS_PIM_DIR}"
 
-IDENTITY_BYPASS_SCHEMA_DIR="${TEMP_DIR}/identity-bypass-schema-dir"
-make_isolated_bypass_dir "${IDENTITY_BYPASS_SCHEMA_DIR}"
-rm -rf "${IDENTITY_BYPASS_SCHEMA_DIR}/schema"
-ln -s "${PROJECT_DIR}/identity/schema" "${IDENTITY_BYPASS_SCHEMA_DIR}/schema"
-expect_identity_validation_failure_with_message "populated mode bypass via a symbolic link aliasing the tracked schema/ subdirectory (conditional-access/ and pim/ genuine)" "the schema/ directory" --mode populated --path "${IDENTITY_BYPASS_SCHEMA_DIR}"
-rm -rf "${IDENTITY_BYPASS_SCHEMA_DIR}"
-
 # Case: an otherwise-legitimate external --path root with genuine, external
-# conditional-access/, pim/, and schema/ directories, but whose individual
-# files are themselves symbolic links back into the tracked identity/
-# folder, must also be rejected. Directory-level containment checks alone do
-# not catch a symlinked leaf file. Each artifact type's files are tested in
-# isolation (the other two directories' files are genuine, non-symlinked
-# copies), so that Conditional Access's containment check rejecting first
-# cannot mask the PIM (or schema) per-file check silently never being
-# exercised.
+# conditional-access/ and pim/ directories, but whose individual files are
+# themselves symbolic links back into the tracked identity/ folder, must
+# also be rejected. Directory-level containment checks alone do not catch a
+# symlinked leaf file. Each artifact type's files are tested in isolation
+# (the other directory's files are genuine, non-symlinked copies), so that
+# Conditional Access's containment check rejecting first cannot mask the
+# PIM per-file check silently never being exercised.
 IDENTITY_BYPASS_CA_FILE_DIR="${TEMP_DIR}/identity-bypass-ca-file"
 make_isolated_bypass_dir "${IDENTITY_BYPASS_CA_FILE_DIR}"
 for f in "${IDENTITY_BYPASS_CA_FILE_DIR}/conditional-access"/*.template.json; do
@@ -611,7 +606,7 @@ for f in "${IDENTITY_BYPASS_CA_FILE_DIR}/conditional-access"/*.template.json; do
   rm -f "${f}"
   ln -s "${PROJECT_DIR}/identity/conditional-access/${name}" "${f}"
 done
-expect_identity_validation_failure_with_message "populated mode bypass via symbolic-link Conditional Access template files (PIM and schema files genuine)" "outside the tracked identity/ folder" --mode populated --path "${IDENTITY_BYPASS_CA_FILE_DIR}"
+expect_identity_validation_failure_with_message "populated mode bypass via symbolic-link Conditional Access template files (PIM files genuine)" "outside the tracked identity/ folder" --mode populated --path "${IDENTITY_BYPASS_CA_FILE_DIR}"
 rm -rf "${IDENTITY_BYPASS_CA_FILE_DIR}"
 
 IDENTITY_BYPASS_PIM_FILE_DIR="${TEMP_DIR}/identity-bypass-pim-file"
@@ -621,15 +616,21 @@ for f in "${IDENTITY_BYPASS_PIM_FILE_DIR}/pim"/*.template.json; do
   rm -f "${f}"
   ln -s "${PROJECT_DIR}/identity/pim/${name}" "${f}"
 done
-expect_identity_validation_failure_with_message "populated mode bypass via symbolic-link PIM template files (Conditional Access and schema files genuine)" "outside the tracked identity/ folder" --mode populated --path "${IDENTITY_BYPASS_PIM_FILE_DIR}"
+expect_identity_validation_failure_with_message "populated mode bypass via symbolic-link PIM template files (Conditional Access files genuine)" "outside the tracked identity/ folder" --mode populated --path "${IDENTITY_BYPASS_PIM_FILE_DIR}"
 rm -rf "${IDENTITY_BYPASS_PIM_FILE_DIR}"
 
-IDENTITY_BYPASS_SCHEMA_FILE_DIR="${TEMP_DIR}/identity-bypass-schema-file"
-make_isolated_bypass_dir "${IDENTITY_BYPASS_SCHEMA_FILE_DIR}"
-rm -f "${IDENTITY_BYPASS_SCHEMA_FILE_DIR}/schema/known-entra-ids.json"
-ln -s "${PROJECT_DIR}/identity/schema/known-entra-ids.json" "${IDENTITY_BYPASS_SCHEMA_FILE_DIR}/schema/known-entra-ids.json"
-expect_identity_validation_failure_with_message "populated mode bypass via a symbolic-link schema/known-entra-ids.json reference file (conditional-access/ and pim/ files genuine)" "schema/known-entra-ids.json" --mode populated --path "${IDENTITY_BYPASS_SCHEMA_FILE_DIR}"
-rm -rf "${IDENTITY_BYPASS_SCHEMA_FILE_DIR}"
+# Case: schema/reference files are always read from the tracked repository's
+# canonical identity/schema/ tree, never from a caller-supplied --path. A
+# malicious or malformed schema/ directory under an external populated root
+# must therefore be silently ignored rather than read -- validation must
+# still succeed using the tracked schemas.
+IDENTITY_SCHEMA_IGNORED_DIR="${TEMP_DIR}/identity-schema-ignored"
+make_isolated_bypass_dir "${IDENTITY_SCHEMA_IGNORED_DIR}"
+rm -rf "${IDENTITY_SCHEMA_IGNORED_DIR}/schema"
+mkdir -p "${IDENTITY_SCHEMA_IGNORED_DIR}/schema"
+echo '{"not":"a real schema"}' > "${IDENTITY_SCHEMA_IGNORED_DIR}/schema/known-entra-ids.json"
+"${PROJECT_DIR}/scripts/validate-identity-artifacts.sh" --mode populated --path "${IDENTITY_SCHEMA_IGNORED_DIR}" >/dev/null
+rm -rf "${IDENTITY_SCHEMA_IGNORED_DIR}"
 
 # Case: on a genuinely case-insensitive filesystem (default macOS APFS,
 # exFAT/vfat, some NTFS/SMB mounts), a casing variant of the tracked
