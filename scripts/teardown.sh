@@ -33,22 +33,28 @@ owners_group="$(value subscriptionOwnersGroupObjectId)"
 network_group="$(value networkOperatorsGroupObjectId)"
 workload_group="$(value workloadContributorsGroupObjectId)"
 auditors_group="$(value readOnlyAuditorsGroupObjectId)"
+# Optional: defaults to false when absent so older parameter files remain safe to tear down.
+central_log_analytics_enabled="$(jq -r '.parameters.deployCentralLogAnalytics.value // false' "${PARAMETER_FILE}")"
 
 demo_root_scope="/providers/Microsoft.Management/managementGroups/${prefix}"
 platform_scope="/providers/Microsoft.Management/managementGroups/${prefix}-platform"
 workload_scope="/providers/Microsoft.Management/managementGroups/${prefix}-${archetype}"
 connectivity_scope="/subscriptions/${connectivity_subscription}"
 subscription_workload_scope="/subscriptions/${workload_subscription}"
+monitoring_resource_group="rg-${prefix}-monitoring"
 
 print_plan() {
   printf 'TEARDOWN PLAN (reverse dependency order)\n'
   printf '  1. Delete resource groups rg-%s-connectivity and rg-%s-%s-demo if present.\n' "${prefix}" "${prefix}" "${archetype}"
+  if [[ "${central_log_analytics_enabled}" == 'true' ]]; then
+    printf '  1a. Delete the demo-created monitoring resource group %s (deployCentralLogAnalytics=true).\n' "${monitoring_resource_group}"
+  fi
   printf '  2. Delete only the seven demo role assignments for the five groups at their documented scopes.\n'
   printf '  3. Delete demo policy assignments and the five custom policy definitions.\n'
   printf '  4. Move subscriptions %s and %s back to %s.\n' "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
   printf '  5. Delete management groups %s-connectivity, %s-platform, %s-%s, %s-landingzones, then %s.\n' \
     "${prefix}" "${prefix}" "${prefix}" "${archetype}" "${prefix}" "${prefix}"
-  printf '\nSubscriptions and Entra groups are never deleted.\n'
+  printf '\nSubscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.\n'
 }
 
 delete_role_mapping() {
@@ -94,8 +100,19 @@ fi
 if az group exists --subscription "${workload_subscription}" --name "rg-${prefix}-${archetype}-demo" --output tsv | grep -qi true; then
   az group delete --subscription "${workload_subscription}" --name "rg-${prefix}-${archetype}-demo" --yes --no-wait
 fi
+# Only delete the monitoring resource group when this repository created it
+# (deployCentralLogAnalytics=true). A supplied existing workspace/resource group is never
+# owned by this demo and must never be deleted here.
+if [[ "${central_log_analytics_enabled}" == 'true' ]]; then
+  if az group exists --subscription "${connectivity_subscription}" --name "${monitoring_resource_group}" --output tsv | grep -qi true; then
+    az group delete --subscription "${connectivity_subscription}" --name "${monitoring_resource_group}" --yes --no-wait
+  fi
+fi
 az group wait --subscription "${connectivity_subscription}" --name "rg-${prefix}-connectivity" --deleted --interval 10 --timeout 900 2>/dev/null || true
 az group wait --subscription "${workload_subscription}" --name "rg-${prefix}-${archetype}-demo" --deleted --interval 10 --timeout 900 2>/dev/null || true
+if [[ "${central_log_analytics_enabled}" == 'true' ]]; then
+  az group wait --subscription "${connectivity_subscription}" --name "${monitoring_resource_group}" --deleted --interval 10 --timeout 900 2>/dev/null || true
+fi
 
 delete_role_mapping "${governance_group}" 'Management Group Contributor' "${demo_root_scope}"
 delete_role_mapping "${governance_group}" 'Resource Policy Contributor' "${demo_root_scope}"

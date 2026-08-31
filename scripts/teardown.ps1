@@ -48,6 +48,18 @@ function Get-Value {
     return [string]$property.Value.value
 }
 
+function Get-OptionalBoolValue {
+    param(
+        [string]$Name,
+        [bool]$Default
+    )
+    $property = $parameters.parameters.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value.value) {
+        return $Default
+    }
+    return [bool]$property.Value.value
+}
+
 $tenantRoot = Get-Value 'tenantRootManagementGroupId'
 $prefix = Get-Value 'namePrefix'
 $archetype = Get-Value 'workloadArchetype'
@@ -58,21 +70,27 @@ $ownersGroup = Get-Value 'subscriptionOwnersGroupObjectId'
 $networkGroup = Get-Value 'networkOperatorsGroupObjectId'
 $workloadGroup = Get-Value 'workloadContributorsGroupObjectId'
 $auditorsGroup = Get-Value 'readOnlyAuditorsGroupObjectId'
+# Optional: defaults to $false when absent so older parameter files remain safe to tear down.
+$centralLogAnalyticsEnabled = Get-OptionalBoolValue 'deployCentralLogAnalytics' $false
 
 $demoRootScope = "/providers/Microsoft.Management/managementGroups/$prefix"
 $platformScope = "/providers/Microsoft.Management/managementGroups/$prefix-platform"
 $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$archetype"
 $connectivityScope = "/subscriptions/$connectivitySubscription"
 $subscriptionWorkloadScope = "/subscriptions/$workloadSubscription"
+$monitoringResourceGroupName = "rg-$prefix-monitoring"
 
 Write-Host 'TEARDOWN PLAN (reverse dependency order)'
 Write-Host "  1. Delete resource groups rg-$prefix-connectivity and rg-$prefix-$archetype-demo if present."
+if ($centralLogAnalyticsEnabled) {
+    Write-Host "  1a. Delete the demo-created monitoring resource group $monitoringResourceGroupName (deployCentralLogAnalytics=true)."
+}
 Write-Host '  2. Delete only the seven demo role assignments for the five groups at their documented scopes.'
 Write-Host '  3. Delete demo policy assignments and the five custom policy definitions.'
 Write-Host "  4. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
 Write-Host "  5. Delete management groups $prefix-connectivity, $prefix-platform, $prefix-$archetype, $prefix-landingzones, then $prefix."
 Write-Host ''
-Write-Host 'Subscriptions and Entra groups are never deleted.'
+Write-Host 'Subscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.'
 
 if (-not $Execute) {
     Write-Host ''
@@ -130,8 +148,25 @@ if ([string]$workloadExists -eq 'true') {
     if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $workloadResourceGroup." }
 }
 
+# Only delete the monitoring resource group when this repository created it
+# (deployCentralLogAnalytics=true). A supplied existing workspace/resource group is never
+# owned by this demo and must never be deleted here.
+if ($centralLogAnalyticsEnabled) {
+    $monitoringExists = & az group exists `
+        --subscription $connectivitySubscription `
+        --name $monitoringResourceGroupName `
+        --output tsv 2>$null
+    if ([string]$monitoringExists -eq 'true') {
+        & az group delete --subscription $connectivitySubscription --name $monitoringResourceGroupName --yes --no-wait
+        if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $monitoringResourceGroupName." }
+    }
+}
+
 & az group wait --subscription $connectivitySubscription --name $connectivityResourceGroup --deleted --interval 10 --timeout 900 2>$null
 & az group wait --subscription $workloadSubscription --name $workloadResourceGroup --deleted --interval 10 --timeout 900 2>$null
+if ($centralLogAnalyticsEnabled) {
+    & az group wait --subscription $connectivitySubscription --name $monitoringResourceGroupName --deleted --interval 10 --timeout 900 2>$null
+}
 
 Remove-RoleMapping $governanceGroup 'Management Group Contributor' $demoRootScope
 Remove-RoleMapping $governanceGroup 'Resource Policy Contributor' $demoRootScope

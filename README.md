@@ -118,16 +118,25 @@ subscription, and only one may be used at a time:
 - **Create a new central workspace**: set `deployCentralLogAnalytics=true`.
   This creates a metered Log Analytics workspace (data ingestion and
   retention charges apply) in a new `rg-<namePrefix>-monitoring` resource
-  group. This must not be combined with `existingLogAnalyticsWorkspaceResourceId`;
-  if both are set, the module treats the configuration as conflicting and
-  creates nothing.
+  group. This must not be combined with `existingLogAnalyticsWorkspaceResourceId`.
+
+Setting both `deployCentralLogAnalytics=true` and
+`existingLogAnalyticsWorkspaceResourceId` at the same time, or setting
+`deploySentinel=true` without either a new or an existing workspace
+configured, is an invalid configuration. Rather than silently deploying
+nothing or returning an empty effective workspace ID, the module fails the
+deployment explicitly with a configuration-error resource so the mistake is
+caught immediately.
 
 Setting `deploySentinel=true` additionally onboards Microsoft Sentinel onto
 the effective workspace (new or existing), which adds per-GB Sentinel
 analysis charges on top of Log Analytics ingestion cost. This module does not
 configure analytics rules, automation rules, connectors, workbooks,
 incidents, or Defender plans, and it never deletes or replaces a supplied
-existing workspace.
+existing workspace. Teardown only deletes the `rg-<namePrefix>-monitoring`
+resource group when `deployCentralLogAnalytics=true` (that is, only when this
+project created it); a supplied existing workspace or resource group is
+never touched by teardown.
 
 ## Required permissions
 
@@ -298,14 +307,18 @@ export ESLZ_TEARDOWN_CONFIRMATION="DELETE-ESLZ-DEMO"
 The script:
 
 1. deletes the two optional evidence resource groups and waits for completion;
-2. deletes the seven demo role assignments for the five groups by principal and scope;
-3. removes policy assignments, then policy definitions;
-4. moves both subscriptions back to the supplied tenant-root management group;
-5. deletes leaf management groups and then the dedicated demo root.
+2. deletes the demo-created monitoring resource group (`rg-<namePrefix>-monitoring`)
+   and waits for completion, but only when `deployCentralLogAnalytics=true`;
+3. deletes the seven demo role assignments for the five groups by principal and scope;
+4. removes policy assignments, then policy definitions;
+5. moves both subscriptions back to the supplied tenant-root management group;
+6. deletes leaf management groups and then the dedicated demo root.
 
-It never deletes subscriptions or Entra groups. A dry run is the default. If
-other resources or assignments have been added under the hierarchy, Azure will
-refuse management-group deletion; inspect and remove those items deliberately.
+It never deletes subscriptions, Entra groups, or a customer-supplied existing
+Log Analytics workspace referenced via `existingLogAnalyticsWorkspaceResourceId`.
+A dry run is the default. If other resources or assignments have been added
+under the hierarchy, Azure will refuse management-group deletion; inspect and
+remove those items deliberately.
 
 ## Project layout
 

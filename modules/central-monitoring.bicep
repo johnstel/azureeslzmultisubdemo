@@ -36,13 +36,28 @@ param tags object
 
 // Explicit opt-in is required before any metered resource is declared. Requesting a new
 // workspace while also supplying an existing workspace resource ID is a conflicting
-// configuration, so both code paths are suppressed and no resource is created.
+// configuration. Enabling Sentinel without any effective workspace is an incomplete
+// configuration. Both cases must fail the deployment explicitly rather than silently
+// deploying nothing, so a deliberately unresolvable resource type is used as a guard:
+// it is never registered as an Azure resource provider, so Azure Resource Manager
+// rejects the deployment before any billable resource is created, and the resource
+// name below surfaces the specific configuration error in the deployment failure.
 var newWorkspaceRequested = deployCentralLogAnalytics
 var existingWorkspaceSupplied = !empty(existingLogAnalyticsWorkspaceResourceId)
 var conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied
-var createNewWorkspace = newWorkspaceRequested && !conflictingMonitoringInputs
-var useExistingWorkspace = existingWorkspaceSupplied && !conflictingMonitoringInputs
+var sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied
+var hasMonitoringConfigurationError = conflictingMonitoringInputs || sentinelRequiresEffectiveWorkspace
+var createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError
+var useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError
 var resourceGroupName = 'rg-${namePrefix}-monitoring'
+
+resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@2024-01-01' = if (conflictingMonitoringInputs) {
+  name: 'deployCentralLogAnalytics-and-existingLogAnalyticsWorkspaceResourceId-are-mutually-exclusive-set-only-one'
+}
+
+resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@2024-01-01' = if (sentinelRequiresEffectiveWorkspace) {
+  name: 'deploySentinel-requires-deployCentralLogAnalytics-true-or-a-non-empty-existingLogAnalyticsWorkspaceResourceId'
+}
 
 resource monitoringResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = if (createNewWorkspace) {
   name: resourceGroupName
@@ -60,7 +75,7 @@ module newWorkspace 'central-monitoring-workspace.bicep' = if (createNewWorkspac
     dailyQuotaGb: dailyQuotaGb
     retentionInDays: retentionInDays
     tags: tags
-    deploySentinel: deploySentinel && !conflictingMonitoringInputs
+    deploySentinel: deploySentinel && !hasMonitoringConfigurationError
   }
   dependsOn: [
     monitoringResourceGroup
@@ -89,8 +104,11 @@ output effectiveLogAnalyticsWorkspaceResourceId string = createNewWorkspace
   ? newWorkspace.outputs.workspaceResourceId
   : (useExistingWorkspace ? existingLogAnalyticsWorkspaceResourceId : '')
 
-@description('True when the configuration requested both a new workspace and an existing workspace at the same time. Callers must resolve this before relying on the effective workspace ID.')
+@description('True when the configuration requested both a new workspace and an existing workspace at the same time. When true, the deployment fails explicitly via a configuration-error guard resource rather than silently deploying nothing.')
 output conflictingMonitoringInputs bool = conflictingMonitoringInputs
+
+@description('True when Sentinel was requested without either a new or an existing effective workspace. When true, the deployment fails explicitly via a configuration-error guard resource rather than silently disabling Sentinel.')
+output sentinelRequiresEffectiveWorkspace bool = sentinelRequiresEffectiveWorkspace
 
 @description('True when Microsoft Sentinel is enabled on the effective workspace.')
 output sentinelEnabled bool = (createNewWorkspace || useExistingWorkspace) && deploySentinel

@@ -19,7 +19,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/9 Validate repository versioning and branch guidance...'
+    Write-Host '1/14 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -37,12 +37,12 @@ try {
         }
     }
 
-    Write-Host '2/9 Build the complete tenant template...'
+    Write-Host '2/14 Build the complete tenant template...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
 
-    Write-Host '3/9 Validate both parameter templates...'
+    Write-Host '3/14 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -59,7 +59,7 @@ try {
         --outfile (Join-Path $TempDir 'main.parameters.json')
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
 
-    Write-Host '4/9 Confirm there are exactly two subscription associations...'
+    Write-Host '4/14 Confirm there are exactly two subscription associations...'
     $compiledText = Get-Content -LiteralPath $compiledTemplate -Raw
     $associationCount = ([regex]::Matches(
         $compiledText,
@@ -69,11 +69,11 @@ try {
         Stop-Test "Expected 2 subscription association resources, found $associationCount."
     }
 
-    Write-Host '5/9 Confirm no paid always-on resource types are declared...'
+    Write-Host '5/14 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
     $bicepFiles = @(
         Get-Item (Join-Path $ProjectDir 'main.bicep')
         Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
-            Where-Object { $_.Name -ne 'policy-library.bicep' }
+            Where-Object { $_.Name -notin @('policy-library.bicep', 'central-monitoring.bicep', 'central-monitoring-workspace.bicep', 'central-monitoring-sentinel.bicep') }
     )
     $prohibitedPattern = 'Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)'
     foreach ($bicepFile in $bicepFiles) {
@@ -82,14 +82,14 @@ try {
         }
     }
 
-    Write-Host '6/9 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/14 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/9 Confirm five Entra group parameters and guarded lifecycle scripts...'
+    Write-Host '7/14 Confirm five Entra group parameters and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
@@ -108,7 +108,7 @@ try {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/9 Confirm the region policy safely permits global resources...'
+    Write-Host '8/14 Confirm the region policy safely permits global resources...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -120,7 +120,77 @@ try {
         }
     }
 
-    Write-Host '9/9 Parse every PowerShell lifecycle and test script...'
+    Write-Host '9/14 Confirm central monitoring defaults create no metered resources...'
+    if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
+        Stop-Test 'deployCentralLogAnalytics must default to false.'
+    }
+    if ($parameterTemplate.parameters.deploySentinel.value -ne $false) {
+        Stop-Test 'deploySentinel must default to false.'
+    }
+    if ($parameterTemplate.parameters.existingLogAnalyticsWorkspaceResourceId.value -ne '') {
+        Stop-Test 'existingLogAnalyticsWorkspaceResourceId must default to an empty string.'
+    }
+    $centralMonitoringText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/central-monitoring.bicep') -Raw
+    foreach ($requiredText in @(
+        'param deployCentralLogAnalytics bool = false',
+        'param deploySentinel bool = false',
+        "param existingLogAnalyticsWorkspaceResourceId string = ''"
+    )) {
+        if (-not $centralMonitoringText.Contains($requiredText)) {
+            Stop-Test "central-monitoring.bicep is missing safe default: $requiredText"
+        }
+    }
+
+    Write-Host '10/14 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    foreach ($requiredText in @(
+        'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
+        'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
+        'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError',
+        'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError'
+    )) {
+        if (-not $centralMonitoringText.Contains($requiredText)) {
+            Stop-Test "central-monitoring.bicep is missing guard logic: $requiredText"
+        }
+    }
+
+    Write-Host '11/14 Confirm the central monitoring module exposes an effective workspace ID output...'
+    if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
+        Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
+    }
+    if (-not $mainBicepText.Contains('centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId')) {
+        Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
+    }
+
+    Write-Host '12/14 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    foreach ($requiredText in @(
+        "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
+        'if (conflictingMonitoringInputs)',
+        "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
+        'if (sentinelRequiresEffectiveWorkspace)'
+    )) {
+        if (-not $centralMonitoringText.Contains($requiredText)) {
+            Stop-Test "central-monitoring.bicep is missing configuration-error guard: $requiredText"
+        }
+    }
+
+    Write-Host '13/14 Confirm teardown scripts only remove a demo-created monitoring resource group and never touch a supplied existing workspace...'
+    $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
+    $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring')) {
+        if (-not $teardownShText.Contains($requiredText)) {
+            Stop-Test "scripts/teardown.sh is missing monitoring teardown safety text: $requiredText"
+        }
+    }
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring')) {
+        if (-not $teardownPs1Text.Contains($requiredText)) {
+            Stop-Test "scripts/teardown.ps1 is missing monitoring teardown safety text: $requiredText"
+        }
+    }
+    if ($teardownShText -match 'existingLogAnalyticsWorkspaceResourceId' -or $teardownPs1Text -match 'existingLogAnalyticsWorkspaceResourceId') {
+        Stop-Test 'Teardown scripts must never reference a supplied existing workspace for deletion.'
+    }
+
+    Write-Host '14/14 Parse every PowerShell lifecycle and test script...'
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
         Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'
