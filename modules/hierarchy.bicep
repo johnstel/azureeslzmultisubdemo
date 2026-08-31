@@ -20,6 +20,17 @@ param criticalInfrastructureManagementGroupId string
 @description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch, used only when enableCriticalInfrastructure is true.')
 param criticalInfrastructureSubscriptionIds array = []
 
+var normalizedCriticalInfrastructureSubscriptionIds = [for subscriptionId in criticalInfrastructureSubscriptionIds: toLower(subscriptionId)]
+var hasDuplicateCriticalInfrastructureSubscriptionIds = length(normalizedCriticalInfrastructureSubscriptionIds) != length(union(normalizedCriticalInfrastructureSubscriptionIds, []))
+var criticalInfrastructureSubscriptionIdsOverlapRequiredSubscriptions = contains(normalizedCriticalInfrastructureSubscriptionIds, toLower(connectivitySubscriptionId)) || contains(normalizedCriticalInfrastructureSubscriptionIds, toLower(workloadSubscriptionId))
+var criticalInfrastructureManagementGroupIdValidated = !enableCriticalInfrastructure
+  ? criticalInfrastructureManagementGroupId
+  : (hasDuplicateCriticalInfrastructureSubscriptionIds
+      ? fail('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs.')
+      : (criticalInfrastructureSubscriptionIdsOverlapRequiredSubscriptions
+          ? fail('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.')
+          : criticalInfrastructureManagementGroupId))
+
 resource demoRoot 'Microsoft.Management/managementGroups@2023-04-01' = {
   name: demoRootManagementGroupId
   properties: {
@@ -91,7 +102,7 @@ resource workloadSubscription 'Microsoft.Management/managementGroups/subscriptio
 }
 
 resource criticalInfrastructure 'Microsoft.Management/managementGroups@2023-04-01' = if (enableCriticalInfrastructure) {
-  name: criticalInfrastructureManagementGroupId
+  name: criticalInfrastructureManagementGroupIdValidated
   properties: {
     displayName: 'Critical Infrastructure'
     details: {

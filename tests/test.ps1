@@ -46,7 +46,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/10 Validate repository versioning and branch guidance...'
+    Write-Host '1/12 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -64,12 +64,12 @@ try {
         }
     }
 
-    Write-Host '2/10 Build the complete tenant template...'
+    Write-Host '2/12 Build the complete tenant template...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
 
-    Write-Host '3/10 Validate both parameter templates...'
+    Write-Host '3/12 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -86,7 +86,7 @@ try {
         --outfile (Join-Path $TempDir 'main.parameters.json')
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
 
-    Write-Host '4/10 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/12 Confirm there are exactly two unconditional subscription associations...'
     $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -97,7 +97,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/10 Confirm no paid always-on resource types are declared...'
+    Write-Host '5/12 Confirm no paid always-on resource types are declared...'
     $bicepFiles = @(
         Get-Item (Join-Path $ProjectDir 'main.bicep')
         Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
@@ -110,14 +110,14 @@ try {
         }
     }
 
-    Write-Host '6/10 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/12 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/10 Confirm five Entra group parameters and guarded lifecycle scripts...'
+    Write-Host '7/12 Confirm five Entra group parameters and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
@@ -136,7 +136,7 @@ try {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/10 Confirm the region policy safely permits global resources...'
+    Write-Host '8/12 Confirm the region policy safely permits global resources...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -148,7 +148,7 @@ try {
         }
     }
 
-    Write-Host '9/10 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/12 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -188,7 +188,57 @@ try {
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/10 Parse every PowerShell lifecycle and test script...'
+    Write-Host '10/12 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
+        Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
+    }
+    if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId") {
+        Stop-Test 'Missing overlap validation for criticalInfrastructureSubscriptionIds.'
+    }
+    $criticalInfraValidatedVariables = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        if (-not ($node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments')) {
+            return $false
+        }
+        if (-not ($node.PSObject.Properties['properties'] -and $node.properties.PSObject.Properties['template'])) {
+            return $false
+        }
+        if (-not $node.properties.template.PSObject.Properties['variables']) {
+            return $false
+        }
+        $templateVariables = $node.properties.template.variables
+        return ($templateVariables.PSObject.Properties['hasDuplicateCriticalInfrastructureSubscriptionIds'] -and
+            $templateVariables.PSObject.Properties['criticalInfrastructureSubscriptionIdsOverlapRequiredSubscriptions'] -and
+            $templateVariables.PSObject.Properties['criticalInfrastructureManagementGroupIdValidated'] -and
+            $templateVariables.criticalInfrastructureManagementGroupIdValidated -match 'fail\(')
+    }
+    if (@($criticalInfraValidatedVariables).Count -ne 1) {
+        Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
+    }
+
+    Write-Host '11/12 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
+    $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
+    $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
+    $landingZonesDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-landingzones"' | Select-Object -First 1).LineNumber)
+    if (-not $criticalSubMoveLineSh -or -not $criticalMgDeleteLineSh -or -not $landingZonesDeleteLineSh) {
+        Stop-Test 'teardown.sh is missing the critical infrastructure subscription move or management group deletion.'
+    }
+    if (-not ($criticalSubMoveLineSh -lt $criticalMgDeleteLineSh -and $criticalMgDeleteLineSh -lt $landingZonesDeleteLineSh)) {
+        Stop-Test 'teardown.sh must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
+    }
+    $teardownPs1Lines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1')
+    $criticalSubMoveLinePs1 = (($teardownPs1Lines | Select-String -Pattern 'az account management-group subscription add --name \$tenantRoot --subscription \$criticalSubscription' | Select-Object -First 1).LineNumber)
+    $criticalMgDeleteLinePs1 = (($teardownPs1Lines | Select-String -Pattern '\$managementGroups \+= "\$prefix-criticalinfra"' | Select-Object -First 1).LineNumber)
+    $landingZonesDeleteLinePs1 = (($teardownPs1Lines | Select-String -Pattern '\$managementGroups \+= "\$prefix-landingzones"' | Select-Object -First 1).LineNumber)
+    if (-not $criticalSubMoveLinePs1 -or -not $criticalMgDeleteLinePs1 -or -not $landingZonesDeleteLinePs1) {
+        Stop-Test 'teardown.ps1 is missing the critical infrastructure subscription move or management group deletion.'
+    }
+    if (-not ($criticalSubMoveLinePs1 -lt $criticalMgDeleteLinePs1 -and $criticalMgDeleteLinePs1 -lt $landingZonesDeleteLinePs1)) {
+        Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
+    }
+
+    Write-Host '12/12 Parse every PowerShell lifecycle and test script...'
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
         Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'
