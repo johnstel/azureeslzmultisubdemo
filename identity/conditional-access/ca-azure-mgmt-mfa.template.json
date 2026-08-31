@@ -3,7 +3,7 @@
   "state": "enabledForReportingButNotEnforced",
   "conditions": {
     "users": {
-      "includeRoles": ["All users"],
+      "includeUsers": ["All"],
       "excludeGroups": [
         "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID"
       ]
@@ -22,5 +22,5 @@
     "placeholder": "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID",
     "description": "Object ID of the tenant's emergency-access (break-glass) group. Break-glass accounts must be excluded from this policy so an identity-provider or network outage can never prevent tenant recovery. A future apply workflow must fail closed if this placeholder is still present."
   },
-  "notes": "Report-only demo input for a Microsoft Graph conditionalAccessPolicies resource targeting the built-in 'Microsoft Azure Management' service principal (appId 797f4846-ba00-4fd7-ba43-dac1f8f63013), which covers Azure Resource Manager, the Azure portal, Azure CLI, and Azure PowerShell. Not applied to any tenant by this repository. Before controlled deployment: (1) replace the emergency-access placeholder, (2) confirm Entra ID P1 (minimum) or P2 licensing for all in-scope users, (3) consider narrowing 'includeRoles: All users' to only users with any Azure RBAC role once role-assignment scoping is available, (4) review sign-in logs during the report-only period."
+  "notes": "Report-only demo input for a Microsoft Graph conditionalAccessPolicies resource targeting the built-in 'Microsoft Azure Management' service principal (appId 797f4846-ba00-4fd7-ba43-dac1f8f63013, documented in identity/schema/known-entra-ids.json), which covers Azure Resource Manager, the Azure portal, Azure CLI, and Azure PowerShell. conditions.users.includeUsers uses the Graph-compatible literal 'All' for an all-users subject; the earlier non-Graph 'All users' role-display-name value has been removed. Not applied to any tenant by this repository. Before controlled deployment: (1) replace the emergency-access placeholder, (2) confirm Entra ID P1 (minimum) or P2 licensing for all in-scope users, (3) consider narrowing includeUsers to only users with any Azure RBAC role once role-assignment scoping is available, (4) review sign-in logs during the report-only period."
 }

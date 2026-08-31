@@ -37,6 +37,7 @@ identity/
   schema/
     conditional-access-policy.schema.json  JSON Schema for the Conditional Access templates
     pim-activation-policy.schema.json      JSON Schema for the PIM templates
+    known-entra-ids.json                   Public, tenant-independent Microsoft Entra/Graph constants (directory role template IDs, built-in authentication-strength policy IDs, the Microsoft Azure Management app ID) referenced by the templates and validators above
 ```
 
 Every Conditional Access template defaults to
@@ -46,6 +47,22 @@ justification, notification, and a bounded activation duration required.
 Neither can be silently changed to an enforcing/permanent shape without
 editing the JSON, and `scripts/validate-identity-artifacts.sh` /
 `scripts/validate-identity-artifacts.ps1` fail the build if anyone does.
+
+Every field follows the shape Microsoft Graph actually expects for a
+`conditionalAccessPolicy` resource:
+
+- `conditions.users.includeUsers` uses the Graph literals `All`, `None`, or
+  `GuestsOrExternalUsers`, or a user object ID — never a role display name.
+- `conditions.users.includeRoles` contains only Microsoft Entra built-in
+  directory role **template IDs** (GUIDs), never display names such as
+  `Global Administrator` or the non-Graph value `All users`. The canonical
+  IDs are recorded once in `identity/schema/known-entra-ids.json` and reused
+  by every template and validator.
+- `grantControls.authenticationStrength` is a Graph relationship object
+  (`{ "id": "<authenticationStrengthPolicy id>", "displayName": "..." }`),
+  never a string inside `grantControls.builtInControls`. The built-in
+  Phishing-resistant MFA policy id (`00000000-0000-0000-0000-000000000004`)
+  is also recorded in `identity/schema/known-entra-ids.json`.
 
 ## Required Entra licenses
 
@@ -93,10 +110,11 @@ every Conditional Access policy, and monitor sign-ins to them with an alert.
 
 ## Workload identities
 
-- The Azure management MFA and legacy-auth policies target `"All users"`.
-  Workload identities (service principals, managed identities) are governed
-  separately from user Conditional Access by design; do not add service
-  principals to `includeUsers`/`includeRoles` in these templates.
+- The Azure management MFA and legacy-auth policies target
+  `conditions.users.includeUsers: ["All"]`. Workload identities (service
+  principals, managed identities) are governed separately from user
+  Conditional Access by design; do not add service principals to
+  `includeUsers`/`includeRoles` in these templates.
 - If workload-identity Conditional Access is later required (Entra ID
   Workload Identities Premium), create a dedicated template under
   `identity/conditional-access/` scoped to `conditions.clientApplications`
@@ -110,14 +128,20 @@ every Conditional Access policy, and monitor sign-ins to them with an alert.
 1. Deploy/keep every template in this folder in report-only (`state`) /
    eligible (`assignmentType`) mode — this is the default and the only mode
    this repository supports.
-2. Replace every `REPLACE_WITH_*` emergency-access placeholder with a real,
-   monitored object ID.
-3. Run `scripts/validate-identity-artifacts.sh` (or `.ps1`) and confirm it
-   passes.
-4. Review Entra sign-in logs and the PIM audit history for the report-only
+2. Run `scripts/validate-identity-artifacts.sh` (or `.ps1`) in the default
+   `--mode template` to confirm the committed templates still have every
+   `REPLACE_WITH_*` placeholder intact and contain no tenant-specific GUID.
+3. Copy the `identity/` tree to a local, gitignored location (never commit
+   the copy) and replace every `REPLACE_WITH_*` emergency-access placeholder
+   with a real, monitored object ID.
+4. Re-run the validator against that local copy in `--mode populated`
+   (`--path`/`-Path` pointing at the copy) to confirm every placeholder was
+   actually replaced with a valid object ID and every other report-only/
+   eligible-only/grant-control rule still holds.
+5. Review Entra sign-in logs and the PIM audit history for the report-only
    period (Microsoft recommends at least one full business cycle, commonly
    two weeks or more) to confirm no unexpected user or workload is impacted.
-5. Only then, in a separate, explicitly reviewed change, apply one policy at
+6. Only then, in a separate, explicitly reviewed change, apply one policy at
    a time through Microsoft Graph (outside the scope of this repository) and
    re-observe before applying the next.
 
@@ -146,6 +170,10 @@ every Conditional Access policy, and monitor sign-ins to them with an alert.
 
 ## Static validation (no tenant contact)
 
+Template mode (default) validates the committed templates under `identity/`
+and requires every emergency-access placeholder to remain an unpopulated
+`REPLACE_WITH_*` value:
+
 ```bash
 ./scripts/validate-identity-artifacts.sh
 ```
@@ -154,15 +182,43 @@ every Conditional Access policy, and monitor sign-ins to them with an alert.
 .\scripts\validate-identity-artifacts.ps1
 ```
 
-Both scripts are also invoked as the final step of `tests/test.sh` and
-`tests/test.ps1`. They check, purely by reading the JSON files in this
-repository:
+Populated mode validates a local, gitignored copy of the templates after an
+operator has replaced the placeholders with real object IDs, without ever
+calling Microsoft Graph. It refuses to run against the tracked `identity/`
+folder so populated, tenant-specific values are never committed:
+
+```bash
+./scripts/validate-identity-artifacts.sh --mode populated --path /path/to/local/identity
+```
+
+```powershell
+.\scripts\validate-identity-artifacts.ps1 -Mode populated -Path C:\path\to\local\identity
+```
+
+Both scripts are also invoked (in the default template mode) as the final
+step of `tests/test.sh` and `tests/test.ps1`. In every mode they check,
+purely by reading JSON files on local disk:
 
 - every Conditional Access template stays report-only by default;
 - every PIM template stays eligible (never permanent) with approval, MFA,
   justification, and notifications required, and a 1–8 hour activation
   window;
-- the emergency-access placeholder is present, non-empty, and (for
-  Conditional Access) actually excluded;
-- no tenant-specific GUID (other than the public, well-known Microsoft Azure
-  Management application ID) appears anywhere under `identity/`.
+- the emergency-access placeholder is present and, depending on mode, either
+  an unpopulated `REPLACE_WITH_*` value or a syntactically valid object ID —
+  and (for Conditional Access) is actually excluded;
+- `conditions.users` uses Graph-compatible subject values: `includeUsers`
+  only contains `All`, `None`, `GuestsOrExternalUsers`, or object IDs, and
+  `includeRoles` only contains known directory role template IDs (GUIDs),
+  never display names or `All users`;
+- `conditions.applications.includeApplications` and
+  `conditions.clientAppTypes` are non-empty, and each of the three named
+  Conditional Access templates matches its intended subject, application,
+  client-type, and grant-control combination (for example,
+  `ca-block-legacy-auth` must scope `clientAppTypes` to legacy protocols only
+  and grant `block`);
+- `grantControls.authenticationStrength`, when present, references a known
+  built-in `authenticationStrengthPolicy` id and is never duplicated as a
+  `grantControls.builtInControls` string;
+- in template mode only, no tenant-specific GUID (other than the public,
+  well-known Microsoft constants in `identity/schema/known-entra-ids.json`)
+  appears anywhere under `identity/`.

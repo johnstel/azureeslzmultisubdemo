@@ -1,0 +1,19 @@
+{
+  "$comment": "Public, tenant-independent Microsoft Entra / Microsoft Graph constant identifiers referenced by the identity/ demo artifacts and their validators. None of these values are tenant-specific, secret, or customer-specific; they are documented, built-in identifiers that are identical in every Microsoft Entra tenant.",
+  "directoryRoleTemplateIds": {
+    "Global Administrator": "62e90394-69f5-4237-9190-012177145e10",
+    "Privileged Role Administrator": "e8611ab8-c189-46e8-94e1-60213ab1f814",
+    "Security Administrator": "194ae4cb-b126-40b2-bd5b-6091b380977d",
+    "Conditional Access Administrator": "b1be1c3e-b65d-4f19-8427-f6fa0d97feb9",
+    "Application Administrator": "9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3",
+    "Cloud Application Administrator": "158c047a-c907-4556-b7ef-446551a6b5f7"
+  },
+  "authenticationStrengthPolicyIds": {
+    "Multifactor authentication": "00000000-0000-0000-0000-000000000002",
+    "Passwordless MFA": "00000000-0000-0000-0000-000000000003",
+    "Phishing-resistant MFA": "00000000-0000-0000-0000-000000000004"
+  },
+  "wellKnownServicePrincipalAppIds": {
+    "Microsoft Azure Management": "797f4846-ba00-4fd7-ba43-dac1f8f63013"
+  }
+}

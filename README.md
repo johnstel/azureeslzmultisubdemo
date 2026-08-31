@@ -319,6 +319,7 @@ identity/
   schema/
     conditional-access-policy.schema.json
     pim-activation-policy.schema.json
+    known-entra-ids.json
 modules/
   hierarchy.bicep
   policy-library.bicep
