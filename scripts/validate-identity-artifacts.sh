@@ -96,6 +96,16 @@ phishing_resistant_id="$(jq -r '.authenticationStrengthPolicyIds["Phishing-resis
 azure_mgmt_app_id="$(jq -r '.wellKnownServicePrincipalAppIds["Microsoft Azure Management"]' "${known_ids_file}")"
 read_lines_into known_role_ids < <(jq -r '.directoryRoleTemplateIds[]' "${known_ids_file}")
 read_lines_into known_auth_strength_ids < <(jq -r '.authenticationStrengthPolicyIds[]' "${known_ids_file}")
+read_lines_into known_auth_context_ids < <(jq -r '.authenticationContextClassReferenceIds | with_entries(select(.key != "$comment")) | .[]' "${known_ids_file}")
+
+auth_context_pattern='^c([1-9]|1[0-9]|2[0-5])$'
+is_known_auth_context_id() {
+  local candidate="$1" known
+  for known in "${known_auth_context_ids[@]}"; do
+    [[ "${candidate}" == "${known}" ]] && return 0
+  done
+  return 1
+}
 
 is_known_role_id() {
   local candidate="$1" known
@@ -166,26 +176,24 @@ check_emergency_placeholder() {
   EMERGENCY_PLACEHOLDER_OUT="${placeholder}"
 }
 
-# Confirms the given placeholder (passed explicitly by the caller, normally
-# via $EMERGENCY_PLACEHOLDER_OUT immediately after check_emergency_placeholder)
-# is actually excluded via the given array field, e.g.
-# conditions.users.excludeGroups for Conditional Access.
+# Confirms the given array field, e.g. conditions.users.excludeGroups for
+# Conditional Access, equals *exactly* the single-element set containing the
+# placeholder passed explicitly by the caller (normally via
+# $EMERGENCY_PLACEHOLDER_OUT immediately after check_emergency_placeholder).
+# This is an exact match, not a containment check: an arbitrary extra
+# excludeGroups entry (beyond the one declared emergency-access placeholder)
+# must fail, so a template cannot silently exclude additional, undeclared
+# groups from a report-only safety control.
 check_placeholder_excluded_from() {
   local template="$1" name="$2" array_field="$3" placeholder="$4"
-  local array_count contains_placeholder
-
-  array_count="$(jq "[.${array_field}[]] | length" "${template}")"
-  [[ "${array_count}" -ge 1 ]] || \
-    fail "${name} ${array_field} must not be empty; the emergency-access placeholder must be excluded."
-
-  contains_placeholder="$(jq --arg p "${placeholder}" "[.${array_field}[] | select(. == \$p)] | length" "${template}")"
-  [[ "${contains_placeholder}" -ge 1 ]] || \
-    fail "${name} ${array_field} must include the declared emergencyAccessExclusion.placeholder."
+  assert_exact_string_array "${template}" "${name}" ".${array_field}" \
+    "${array_field}" "${placeholder}"
 }
 
 
 
 ca_count=0
+ca_auth_context_values=()
 for template in "${ca_dir}"/*.template.json; do
   [[ -e "${template}" ]] || fail "No Conditional Access templates found in ${ca_dir}"
   ca_count=$((ca_count + 1))
@@ -242,6 +250,26 @@ for template in "${ca_dir}"/*.template.json; do
   client_app_type_count="$(jq '.conditions.clientAppTypes | length' "${template}")"
   [[ "${client_app_type_count}" -ge 1 ]] || fail "${name} conditions.clientAppTypes must not be empty."
 
+  # Authentication context class references (optional): if declared, every
+  # entry must be a valid Graph 'c1'..'c25' claim id, and known from
+  # identity/schema/known-entra-ids.json. Collected across all templates so
+  # a coherence check after both directories are processed can confirm every
+  # PIM activation.authenticationContext has a matching, declared, report-only
+  # Conditional Access policy actually enforcing it.
+  auth_context_present="$(jq '.conditions.applications | has("includeAuthenticationContextClassReferences")' "${template}")"
+  if [[ "${auth_context_present}" == "true" ]]; then
+    read_lines_into auth_contexts < <(jq -r '.conditions.applications.includeAuthenticationContextClassReferences[]' "${template}")
+    [[ "${#auth_contexts[@]}" -ge 1 ]] || \
+      fail "${name} conditions.applications.includeAuthenticationContextClassReferences must not be empty."
+    for value in "${auth_contexts[@]}"; do
+      [[ "${value}" =~ ${auth_context_pattern} ]] || \
+        fail "${name} conditions.applications.includeAuthenticationContextClassReferences entry '${value}' must be a Graph authenticationContextClassReference id ('c1'..'c25')."
+      is_known_auth_context_id "${value}" || \
+        fail "${name} conditions.applications.includeAuthenticationContextClassReferences entry '${value}' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
+      ca_auth_context_values+=("${value}")
+    done
+  fi
+
   # Grant controls: authenticationStrength must be modeled as its own Graph
   # relationship object (id + displayName), never as a builtInControls
   # string entry.
@@ -271,10 +299,14 @@ for template in "${ca_dir}"/*.template.json; do
     ca-privileged-role-mfa.template.json)
       [[ "${include_roles_present}" == "true" ]] || \
         fail "${name} must scope the subject with conditions.users.includeRoles (privileged directory roles)."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles" "${known_role_ids[@]}"
       assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeUsers' \
         "conditions.users.includeUsers"
       assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
         "conditions.applications.includeApplications" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences"
       assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
         "conditions.clientAppTypes" "all"
       [[ "${authentication_strength_present}" == "true" ]] || \
@@ -293,6 +325,8 @@ for template in "${ca_dir}"/*.template.json; do
         "conditions.users.includeRoles"
       assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
         "conditions.applications.includeApplications" "${azure_mgmt_app_id}"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences"
       assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
         "conditions.clientAppTypes" "all"
       assert_exact_string_array "${template}" "${name}" '.grantControls.builtInControls' \
@@ -309,12 +343,36 @@ for template in "${ca_dir}"/*.template.json; do
         "conditions.users.includeRoles"
       assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
         "conditions.applications.includeApplications" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences"
       assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
         "conditions.clientAppTypes" "exchangeActiveSync" "other"
       assert_exact_string_array "${template}" "${name}" '.grantControls.builtInControls' \
         "grantControls.builtInControls" "block"
       assert_absent_or_empty "${template}" "${name}" '.grantControls.authenticationStrength' \
         "grantControls.authenticationStrength"
+      ;;
+    ca-pim-activation-mfa.template.json)
+      [[ "${include_users_present}" == "true" ]] || \
+        fail "${name} must scope the subject to all users with conditions.users.includeUsers."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles"
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications" "All"
+      [[ "${auth_context_present}" == "true" ]] || \
+        fail "${name} conditions.applications.includeAuthenticationContextClassReferences must be set (this policy exists to enforce the PIM activation authentication context)."
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences" "c1"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "all"
+      [[ "${authentication_strength_present}" == "true" ]] || \
+        fail "${name} grantControls.authenticationStrength must be set."
+      [[ "${auth_strength_id}" == "${phishing_resistant_id}" ]] || \
+        fail "${name} grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy (${phishing_resistant_id})."
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)"
       ;;
   esac
 
@@ -324,6 +382,7 @@ done
 printf 'Conditional Access templates validated (mode=%s): %s\n' "${mode}" "${ca_count}"
 
 pim_count=0
+pim_auth_context_values=()
 for template in "${pim_dir}"/*.template.json; do
   [[ -e "${template}" ]] || fail "No PIM templates found in ${pim_dir}"
   pim_count=$((pim_count + 1))
@@ -366,7 +425,11 @@ for template in "${pim_dir}"/*.template.json; do
     fail "${name} activation.maximumActivationDurationHours must be an integer between 1 and 8, found '${duration}'."
 
   auth_context="$(jq -r '.activation.authenticationContext' "${template}")"
-  [[ -n "${auth_context}" ]] || fail "${name} activation.authenticationContext must be set."
+  [[ "${auth_context}" =~ ${auth_context_pattern} ]] || \
+    fail "${name} activation.authenticationContext must be a Graph authenticationContextClassReference id ('c1'..'c25'), found '${auth_context}'."
+  is_known_auth_context_id "${auth_context}" || \
+    fail "${name} activation.authenticationContext '${auth_context}' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
+  pim_auth_context_values+=("${auth_context}")
 
   check_emergency_placeholder "${template}" "${name}"
 
@@ -374,6 +437,21 @@ for template in "${pim_dir}"/*.template.json; do
   [[ -n "${notes}" ]] || fail "${name} must document rollout/licensing notes."
 done
 printf 'PIM activation templates validated (mode=%s): %s\n' "${mode}" "${pim_count}"
+
+# Coherence check: every PIM activation.authenticationContext must have a
+# matching, declared Conditional Access policy (from the loop above) whose
+# conditions.applications.includeAuthenticationContextClassReferences
+# actually enforces that context. Otherwise a PIM policy could reference an
+# authentication context that no report-only Conditional Access policy in
+# this repository enforces, leaving the Graph workflow incoherent.
+for pim_context in "${pim_auth_context_values[@]}"; do
+  found=false
+  for ca_context in "${ca_auth_context_values[@]}"; do
+    [[ "${pim_context}" == "${ca_context}" ]] && found=true
+  done
+  [[ "${found}" == true ]] || \
+    fail "PIM activation.authenticationContext '${pim_context}' has no matching Conditional Access policy declaring it in conditions.applications.includeAuthenticationContextClassReferences; add one under ${ca_dir} so the PIM activation control is actually enforced."
+done
 
 if [[ "${mode}" == "template" ]]; then
   # Confirm no tenant-specific identifiers (GUIDs) leak into any identity

@@ -7,7 +7,7 @@
       "REPLACE_WITH_PIM_APPROVER_GROUP_OBJECT_ID"
     ],
     "requireMultiFactorAuthentication": true,
-    "authenticationContext": "Phishing-resistant MFA",
+    "authenticationContext": "c1",
     "requireJustification": true,
     "maximumActivationDurationHours": 4
   },
@@ -21,5 +21,5 @@
     "placeholder": "REPLACE_WITH_EMERGENCY_ACCESS_ACCOUNT_OBJECT_ID",
     "description": "Object ID of a permanent, non-PIM-managed emergency-access (break-glass) account for this role. This role's PIM policy must never govern the break-glass account. A future apply workflow must fail closed if this placeholder is still present."
   },
-  "notes": "Demo input describing the intended PIM role-settings/activation policy for the Privileged Role Administrator directory role, which can itself manage PIM assignments and therefore requires the same rigor as Global Administrator. Not applied to any tenant by this repository. Before controlled deployment: (1) replace both placeholders, (2) confirm Entra ID P2 licensing, (3) verify the emergency-access account, (4) roll out only after the Conditional Access privileged-role MFA policy has been reviewed in report-only mode."
+  "notes": "Demo input describing the intended PIM role-settings/activation policy for the Privileged Role Administrator directory role, which can itself manage PIM assignments and therefore requires the same rigor as Global Administrator. Not applied to any tenant by this repository. activation.authenticationContext='c1' references the same Microsoft Graph authenticationContextClassReference documented in identity/schema/known-entra-ids.json ('PIM privileged-role activation') that identity/conditional-access/ca-pim-activation-mfa.template.json enforces with phishing-resistant MFA; that Conditional Access policy must be reviewed and enabled alongside this PIM policy. Before controlled deployment: (1) replace both placeholders, (2) confirm Entra ID P2 licensing, (3) verify the emergency-access account, (4) roll out only after the Conditional Access privileged-role MFA and PIM-activation authentication-context policies have been reviewed in report-only mode."
 }

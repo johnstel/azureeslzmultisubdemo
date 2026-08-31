@@ -53,8 +53,8 @@
         },
         "authenticationContext": {
           "type": "string",
-          "minLength": 1,
-          "description": "Name of the phishing-resistant authentication-strength / Conditional Access authentication context required at activation."
+          "pattern": "^c([1-9]|1[0-9]|2[0-5])$",
+          "description": "Microsoft Graph authenticationContextClassReference id ('c1'..'c25') required at activation. This is a fixed, tenant-independent Graph claim value, not a tenant-specific placeholder; it must match the id used by the corresponding report-only Conditional Access policy's conditions.applications.includeAuthenticationContextClassReferences (see identity/conditional-access and identity/schema/known-entra-ids.json) so the two artifact types stay coherent."
         },
         "requireJustification": {
           "type": "boolean",
@@ -86,8 +86,8 @@
         },
         "placeholder": {
           "type": "string",
-          "pattern": "^REPLACE_WITH_.+$",
-          "description": "Object ID of the emergency-access/break-glass account that must remain permanently assigned outside this eligible/approval workflow. Must be replaced before any apply workflow runs."
+          "pattern": "^(REPLACE_WITH_.+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+          "description": "Object ID of the emergency-access/break-glass account that must remain permanently assigned outside this eligible/approval workflow. In the committed template this must remain a REPLACE_WITH_* placeholder; a locally populated (never committed) copy replaces it with a real account object ID before any apply workflow runs. See scripts/validate-identity-artifacts.sh --mode."
         },
         "description": {
           "type": "string",

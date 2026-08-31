@@ -1,0 +1,30 @@
+{
+  "displayName": "Demo - Require phishing-resistant MFA for PIM privileged-role activation (report-only)",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "users": {
+      "includeUsers": ["All"],
+      "excludeGroups": [
+        "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID"
+      ]
+    },
+    "applications": {
+      "includeApplications": ["All"],
+      "includeAuthenticationContextClassReferences": ["c1"]
+    },
+    "clientAppTypes": ["all"]
+  },
+  "grantControls": {
+    "operator": "OR",
+    "authenticationStrength": {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "displayName": "Phishing-resistant MFA"
+    }
+  },
+  "emergencyAccessExclusion": {
+    "required": true,
+    "placeholder": "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID",
+    "description": "Object ID of the tenant's emergency-access (break-glass) group. Break-glass accounts must never be governed by PIM activation controls, so they must remain excluded from this policy as well. A future apply workflow must fail closed if this placeholder is still present."
+  },
+  "notes": "Report-only demo input for a Microsoft Graph conditionalAccessPolicies resource scoped by conditions.applications.includeAuthenticationContextClassReferences=['c1'], the same authenticationContextClassReference id documented in identity/schema/known-entra-ids.json ('PIM privileged-role activation') and referenced by activation.authenticationContext in identity/pim/pim-activation-global-administrator.template.json and identity/pim/pim-activation-privileged-role-administrator.template.json. When a user activates one of those eligible PIM roles, Entra raises the 'c1' claim and this policy requires the built-in 'Phishing-resistant MFA' authentication strength before the activation can complete; without this policy declared and enabled, the PIM policies' authenticationContext setting has no Conditional Access policy to enforce it. Not applied to any tenant by this repository. Before controlled deployment: (1) create the 'c1' authentication context in Entra ID > Conditional Access > Authentication context (tenant admins choose its display name/description) if it does not already exist, (2) replace the emergency-access placeholder, (3) confirm Entra ID P2 (or Microsoft Entra Suite / EMS E5 equivalent) licensing for Conditional Access authentication contexts and strengths, (4) review sign-in logs for the report-only period before switching state to 'enabled', (5) enable this policy together with (not before) the corresponding PIM role-activation policies so the two controls move in lockstep."
+}

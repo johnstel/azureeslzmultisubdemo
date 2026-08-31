@@ -63,6 +63,8 @@ $phishingResistantId = $knownIds.authenticationStrengthPolicyIds.'Phishing-resis
 $azureMgmtAppId = $knownIds.wellKnownServicePrincipalAppIds.'Microsoft Azure Management'
 $knownRoleIds = @($knownIds.directoryRoleTemplateIds.PSObject.Properties | ForEach-Object { $_.Value })
 $knownAuthStrengthIds = @($knownIds.authenticationStrengthPolicyIds.PSObject.Properties | ForEach-Object { $_.Value })
+$knownAuthContextIds = @($knownIds.authenticationContextClassReferenceIds.PSObject.Properties | Where-Object { $_.Name -ne '$comment' } | ForEach-Object { $_.Value })
+$authContextPattern = '^c([1-9]|1[0-9]|2[0-5])$'
 
 function Test-EmergencyPlaceholder {
     param($Policy, [string]$Name)
@@ -87,15 +89,16 @@ function Test-EmergencyPlaceholder {
     return $placeholderValue
 }
 
+# Confirms the given array (e.g. conditions.users.excludeGroups) equals
+# *exactly* the single-element set containing the placeholder. This is an
+# exact match, not a containment check: an arbitrary extra excludeGroups
+# entry (beyond the one declared emergency-access placeholder) must fail, so
+# a template cannot silently exclude additional, undeclared groups from a
+# report-only safety control.
 function Test-PlaceholderExcludedFrom {
     param([string[]]$ArrayValues, [string]$PlaceholderValue, [string]$Name, [string]$FieldName)
 
-    if ($ArrayValues.Count -eq 0) {
-        Stop-Validation "$Name $FieldName must not be empty; the emergency-access placeholder must be excluded."
-    }
-    if (-not ($ArrayValues -contains $PlaceholderValue)) {
-        Stop-Validation "$Name $FieldName must include the declared emergencyAccessExclusion.placeholder."
-    }
+    Assert-ExactStringArray -ActualValues $ArrayValues -ExpectedValues @($PlaceholderValue) -Name $Name -Description $FieldName
 }
 
 # Compares the given array (sorted) against the sorted set of expected
@@ -137,6 +140,7 @@ if (-not (Test-Path -LiteralPath $pimDir)) { Stop-Validation "Missing directory:
 $caTemplates = @(Get-ChildItem -LiteralPath $caDir -Filter '*.template.json')
 if ($caTemplates.Count -eq 0) { Stop-Validation "No Conditional Access templates found in $caDir" }
 
+$caAuthContextValues = @()
 foreach ($templateFile in $caTemplates) {
     $name = $templateFile.Name
     $policy = Get-Content -LiteralPath $templateFile.FullName -Raw | ConvertFrom-Json
@@ -192,6 +196,30 @@ foreach ($templateFile in $caTemplates) {
     $clientAppTypes = @($policy.conditions.clientAppTypes)
     if ($clientAppTypes.Count -eq 0) { Stop-Validation "$name conditions.clientAppTypes must not be empty." }
 
+    # Authentication context class references (optional): if declared,
+    # every entry must be a valid Graph 'c1'..'c25' claim id, and known from
+    # identity/schema/known-entra-ids.json. Collected across all templates
+    # so a coherence check after both directories are processed can confirm
+    # every PIM activation.authenticationContext has a matching, declared,
+    # report-only Conditional Access policy actually enforcing it.
+    $authContextPresent = $null -ne $policy.conditions.applications.PSObject.Properties['includeAuthenticationContextClassReferences']
+    $authContexts = @()
+    if ($authContextPresent) {
+        $authContexts = @($policy.conditions.applications.includeAuthenticationContextClassReferences)
+        if ($authContexts.Count -eq 0) {
+            Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences must not be empty."
+        }
+        foreach ($value in $authContexts) {
+            if ($value -notmatch $authContextPattern) {
+                Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences entry '$value' must be a Graph authenticationContextClassReference id ('c1'..'c25')."
+            }
+            if ($knownAuthContextIds -notcontains $value) {
+                Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences entry '$value' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
+            }
+            $caAuthContextValues += $value
+        }
+    }
+
     # Grant controls: authenticationStrength must be modeled as its own
     # Graph relationship object (id + displayName), never as a
     # builtInControls string entry.
@@ -221,8 +249,10 @@ foreach ($templateFile in $caTemplates) {
     switch ($name) {
         'ca-privileged-role-mfa.template.json' {
             if (-not $includeRolesPresent) { Stop-Validation "$name must scope the subject with conditions.users.includeRoles (privileged directory roles)." }
+            Assert-ExactStringArray -ActualValues $includeRoles -ExpectedValues @($knownRoleIds) -Name $name -Description 'conditions.users.includeRoles'
             Assert-AbsentOrEmpty -ActualValues $includeUsers -Name $name -Description 'conditions.users.includeUsers'
             Assert-ExactStringArray -ActualValues $applications -ExpectedValues @('All') -Name $name -Description 'conditions.applications.includeApplications'
+            Assert-AbsentOrEmpty -ActualValues $authContexts -Name $name -Description 'conditions.applications.includeAuthenticationContextClassReferences'
             Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('all') -Name $name -Description 'conditions.clientAppTypes'
             if (-not $authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be set." }
             if ($authStrengthId -ne $phishingResistantId) {
@@ -235,6 +265,7 @@ foreach ($templateFile in $caTemplates) {
             Assert-ExactStringArray -ActualValues $includeUsers -ExpectedValues @('All') -Name $name -Description 'conditions.users.includeUsers'
             Assert-AbsentOrEmpty -ActualValues $includeRoles -Name $name -Description 'conditions.users.includeRoles'
             Assert-ExactStringArray -ActualValues $applications -ExpectedValues @($azureMgmtAppId) -Name $name -Description 'conditions.applications.includeApplications'
+            Assert-AbsentOrEmpty -ActualValues $authContexts -Name $name -Description 'conditions.applications.includeAuthenticationContextClassReferences'
             Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('all') -Name $name -Description 'conditions.clientAppTypes'
             Assert-ExactStringArray -ActualValues $builtInControls -ExpectedValues @('mfa') -Name $name -Description 'grantControls.builtInControls'
             if ($authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be absent." }
@@ -244,9 +275,24 @@ foreach ($templateFile in $caTemplates) {
             Assert-ExactStringArray -ActualValues $includeUsers -ExpectedValues @('All') -Name $name -Description 'conditions.users.includeUsers'
             Assert-AbsentOrEmpty -ActualValues $includeRoles -Name $name -Description 'conditions.users.includeRoles'
             Assert-ExactStringArray -ActualValues $applications -ExpectedValues @('All') -Name $name -Description 'conditions.applications.includeApplications'
+            Assert-AbsentOrEmpty -ActualValues $authContexts -Name $name -Description 'conditions.applications.includeAuthenticationContextClassReferences'
             Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('exchangeActiveSync', 'other') -Name $name -Description 'conditions.clientAppTypes'
             Assert-ExactStringArray -ActualValues $builtInControls -ExpectedValues @('block') -Name $name -Description 'grantControls.builtInControls'
             if ($authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be absent." }
+        }
+        'ca-pim-activation-mfa.template.json' {
+            if (-not $includeUsersPresent) { Stop-Validation "$name must scope the subject to all users with conditions.users.includeUsers." }
+            Assert-ExactStringArray -ActualValues $includeUsers -ExpectedValues @('All') -Name $name -Description 'conditions.users.includeUsers'
+            Assert-AbsentOrEmpty -ActualValues $includeRoles -Name $name -Description 'conditions.users.includeRoles'
+            Assert-ExactStringArray -ActualValues $applications -ExpectedValues @('All') -Name $name -Description 'conditions.applications.includeApplications'
+            if (-not $authContextPresent) { Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences must be set (this policy exists to enforce the PIM activation authentication context)." }
+            Assert-ExactStringArray -ActualValues $authContexts -ExpectedValues @('c1') -Name $name -Description 'conditions.applications.includeAuthenticationContextClassReferences'
+            Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('all') -Name $name -Description 'conditions.clientAppTypes'
+            if (-not $authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be set." }
+            if ($authStrengthId -ne $phishingResistantId) {
+                Stop-Validation "$name grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy ($phishingResistantId)."
+            }
+            Assert-AbsentOrEmpty -ActualValues $builtInControls -Name $name -Description 'grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)'
         }
     }
 
@@ -259,6 +305,7 @@ Write-Host "Conditional Access templates validated (mode=$Mode): $($caTemplates.
 $pimTemplates = @(Get-ChildItem -LiteralPath $pimDir -Filter '*.template.json')
 if ($pimTemplates.Count -eq 0) { Stop-Validation "No PIM templates found in $pimDir" }
 
+$pimAuthContextValues = @()
 foreach ($templateFile in $pimTemplates) {
     $name = $templateFile.Name
     $policy = Get-Content -LiteralPath $templateFile.FullName -Raw | ConvertFrom-Json
@@ -300,9 +347,14 @@ foreach ($templateFile in $pimTemplates) {
         Stop-Validation "$name activation.maximumActivationDurationHours must be an integer between 1 and 8, found '$duration'."
     }
 
-    if ([string]::IsNullOrWhiteSpace($policy.activation.authenticationContext)) {
-        Stop-Validation "$name activation.authenticationContext must be set."
+    $authContext = $policy.activation.authenticationContext
+    if ($authContext -notmatch $authContextPattern) {
+        Stop-Validation "$name activation.authenticationContext must be a Graph authenticationContextClassReference id ('c1'..'c25'), found '$authContext'."
     }
+    if ($knownAuthContextIds -notcontains $authContext) {
+        Stop-Validation "$name activation.authenticationContext '$authContext' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
+    }
+    $pimAuthContextValues += $authContext
 
     Test-EmergencyPlaceholder -Policy $policy -Name $name | Out-Null
 
@@ -311,6 +363,18 @@ foreach ($templateFile in $pimTemplates) {
     }
 }
 Write-Host "PIM activation templates validated (mode=$Mode): $($pimTemplates.Count)"
+
+# Coherence check: every PIM activation.authenticationContext must have a
+# matching, declared Conditional Access policy (from the loop above) whose
+# conditions.applications.includeAuthenticationContextClassReferences
+# actually enforces that context. Otherwise a PIM policy could reference an
+# authentication context that no report-only Conditional Access policy in
+# this repository enforces, leaving the Graph workflow incoherent.
+foreach ($pimContext in $pimAuthContextValues) {
+    if ($caAuthContextValues -notcontains $pimContext) {
+        Stop-Validation "PIM activation.authenticationContext '$pimContext' has no matching Conditional Access policy declaring it in conditions.applications.includeAuthenticationContextClassReferences; add one under $caDir so the PIM activation control is actually enforced."
+    }
+}
 
 if ($Mode -eq 'template') {
     # Confirm no tenant-specific identifiers (GUIDs) leak into any identity

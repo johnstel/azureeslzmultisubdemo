@@ -69,11 +69,21 @@
         "applications": {
           "type": "object",
           "required": ["includeApplications"],
+          "additionalProperties": false,
           "properties": {
             "includeApplications": {
               "type": "array",
               "minItems": 1,
               "items": { "type": "string" }
+            },
+            "includeAuthenticationContextClassReferences": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^c([1-9]|1[0-9]|2[0-5])$"
+              },
+              "description": "Microsoft Graph authenticationContextClassReference id(s) ('c1'..'c25') that scope this policy to a specific claim raised by a resource, e.g. by PIM role activation. Fixed, tenant-independent Graph claim values documented in identity/schema/known-entra-ids.json; must stay coherent with any identity/pim/*.template.json activation.authenticationContext that references the same id."
             }
           }
         },

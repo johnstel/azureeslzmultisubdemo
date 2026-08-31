@@ -260,6 +260,91 @@ try {
     }
     Expect-IdentityValidationFailure -Description 'broadened grant controls on privileged-role-mfa' -Arguments @('-Path', $identityNegDir)
 
+    # Case: ca-privileged-role-mfa must require the exact set of six
+    # privileged directory role template IDs; an extra, unrecognized role
+    # must fail.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-privileged-role-mfa.template.json') -Mutate {
+        param($policy)
+        $policy.conditions.users.includeRoles = @($policy.conditions.users.includeRoles) + 'fedcba98-7654-3210-fedc-ba9876543210'
+    }
+    Expect-IdentityValidationFailure -Description 'extra unrecognized role added to privileged-role-mfa' -Arguments @('-Path', $identityNegDir)
+
+    # Case: ca-privileged-role-mfa must reject a removed (dropped) required role.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-privileged-role-mfa.template.json') -Mutate {
+        param($policy)
+        $policy.conditions.users.includeRoles = @($policy.conditions.users.includeRoles)[0..4]
+    }
+    Expect-IdentityValidationFailure -Description 'required role removed from privileged-role-mfa' -Arguments @('-Path', $identityNegDir)
+
+    # Case: excludeGroups must equal exactly the declared emergency-access
+    # placeholder; an arbitrary extra excluded group must fail.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-privileged-role-mfa.template.json') -Mutate {
+        param($policy)
+        $policy.conditions.users.excludeGroups = @($policy.conditions.users.excludeGroups) + 'REPLACE_WITH_EXTRA_GROUP'
+    }
+    Expect-IdentityValidationFailure -Description 'arbitrary extra excludeGroups entry' -Arguments @('-Path', $identityNegDir)
+
+    # Case: default (template) mode must reject a PIM
+    # emergencyAccessExclusion.placeholder that is already a populated GUID
+    # instead of an unpopulated REPLACE_WITH_* placeholder (the PIM schema
+    # structurally allows either form; template mode must still narrow it to
+    # the placeholder form).
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'pim/pim-activation-global-administrator.template.json') -Mutate {
+        param($policy)
+        $policy.emergencyAccessExclusion.placeholder = '44444444-4444-4444-4444-444444444444'
+    }
+    Expect-IdentityValidationFailure -Description 'populated PIM emergency-access GUID in template mode' -Arguments @('-Path', $identityNegDir)
+
+    # Case: -Mode populated must reject a PIM emergencyAccessExclusion.placeholder
+    # left as an unresolved REPLACE_WITH_* placeholder.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identityPopDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'pim/pim-activation-global-administrator.template.json') -Mutate {
+        param($policy)
+        $policy.emergencyAccessExclusion.placeholder = 'REPLACE_WITH_EMERGENCY_ACCESS_ACCOUNT_OBJECT_ID'
+    }
+    Expect-IdentityValidationFailure -Description 'unresolved PIM emergency-access placeholder in populated mode' -Arguments @('-Mode', 'populated', '-Path', $identityNegDir)
+
+    # Case: PIM activation.authenticationContext must be a Graph
+    # authenticationContextClassReference id ('c1'..'c25'), not a free-text
+    # display name.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'pim/pim-activation-global-administrator.template.json') -Mutate {
+        param($policy)
+        $policy.activation.authenticationContext = 'Phishing-resistant MFA'
+    }
+    Expect-IdentityValidationFailure -Description 'invalid PIM authenticationContext display name' -Arguments @('-Path', $identityNegDir)
+
+    # Case: every PIM activation.authenticationContext must have a matching,
+    # declared Conditional Access policy enforcing that authentication
+    # context; removing the enforcing policy (while the PIM template still
+    # references it) must fail even though every individual template stays
+    # schema-valid.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Remove-Item -LiteralPath (Join-Path $identityNegDir 'conditional-access/ca-pim-activation-mfa.template.json') -Force
+    Expect-IdentityValidationFailure -Description 'PIM authenticationContext with no matching Conditional Access policy' -Arguments @('-Path', $identityNegDir)
+
+    # Case: ca-pim-activation-mfa must declare the exact expected
+    # authentication context set; broadening it (even with a duplicate,
+    # already-known entry) must fail the exact-match check.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-pim-activation-mfa.template.json') -Mutate {
+        param($policy)
+        $policy.conditions.applications.includeAuthenticationContextClassReferences = @('c1', 'c1')
+    }
+    Expect-IdentityValidationFailure -Description 'broadened authentication context set on ca-pim-activation-mfa' -Arguments @('-Path', $identityNegDir)
+
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 

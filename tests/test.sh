@@ -199,6 +199,73 @@ jq '.grantControls.builtInControls = ["mfa"]' \
   && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-privileged-role-mfa.template.json"
 expect_identity_validation_failure "broadened grant controls on privileged-role-mfa" --path "${IDENTITY_NEG_DIR}"
 
+# Case: ca-privileged-role-mfa must require the exact set of six privileged
+# directory role template IDs; an extra, unrecognized role must fail.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.conditions.users.includeRoles += ["fedcba98-7654-3210-fedc-ba9876543210"]' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-privileged-role-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-privileged-role-mfa.template.json"
+expect_identity_validation_failure "extra unrecognized role added to privileged-role-mfa" --path "${IDENTITY_NEG_DIR}"
+
+# Case: ca-privileged-role-mfa must reject a removed (dropped) required role.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.conditions.users.includeRoles = .conditions.users.includeRoles[0:5]' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-privileged-role-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-privileged-role-mfa.template.json"
+expect_identity_validation_failure "required role removed from privileged-role-mfa" --path "${IDENTITY_NEG_DIR}"
+
+# Case: excludeGroups must equal exactly the declared emergency-access
+# placeholder; an arbitrary extra excluded group must fail.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.conditions.users.excludeGroups += ["REPLACE_WITH_EXTRA_GROUP"]' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-privileged-role-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-privileged-role-mfa.template.json"
+expect_identity_validation_failure "arbitrary extra excludeGroups entry" --path "${IDENTITY_NEG_DIR}"
+
+# Case: template mode must reject a PIM emergencyAccessExclusion.placeholder
+# that is already a populated GUID instead of an unpopulated REPLACE_WITH_*
+# placeholder (the PIM schema structurally allows either form; template
+# mode must still narrow it to the placeholder form).
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.emergencyAccessExclusion.placeholder = "44444444-4444-4444-4444-444444444444"' \
+  "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+expect_identity_validation_failure "populated PIM emergency-access GUID in template mode" --path "${IDENTITY_NEG_DIR}"
+
+# Case: populated mode must reject a PIM emergencyAccessExclusion.placeholder
+# left as an unresolved REPLACE_WITH_* placeholder.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_POP_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.emergencyAccessExclusion.placeholder = "REPLACE_WITH_EMERGENCY_ACCESS_ACCOUNT_OBJECT_ID"' \
+  "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+expect_identity_validation_failure "unresolved PIM emergency-access placeholder in populated mode" --mode populated --path "${IDENTITY_NEG_DIR}"
+
+# Case: PIM activation.authenticationContext must be a Graph
+# authenticationContextClassReference id ('c1'..'c25'), not a free-text
+# display name.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.activation.authenticationContext = "Phishing-resistant MFA"' \
+  "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+expect_identity_validation_failure "invalid PIM authenticationContext display name" --path "${IDENTITY_NEG_DIR}"
+
+# Case: every PIM activation.authenticationContext must have a matching,
+# declared Conditional Access policy enforcing that authentication context;
+# removing the enforcing policy (while the PIM template still references it)
+# must fail even though every individual template stays schema-valid.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+rm -f "${IDENTITY_NEG_DIR}/conditional-access/ca-pim-activation-mfa.template.json"
+expect_identity_validation_failure "PIM authenticationContext with no matching Conditional Access policy" --path "${IDENTITY_NEG_DIR}"
+
+# Case: ca-pim-activation-mfa must declare the exact expected authentication
+# context set; broadening it (even with a duplicate, already-known entry)
+# must fail the exact-match check.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.conditions.applications.includeAuthenticationContextClassReferences = ["c1", "c1"]' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-pim-activation-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-pim-activation-mfa.template.json"
+expect_identity_validation_failure "broadened authentication context set on ca-pim-activation-mfa" --path "${IDENTITY_NEG_DIR}"
+
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
 printf '\nAll local validation and safety tests passed.\n'

@@ -31,6 +31,7 @@ identity/
     ca-privileged-role-mfa.template.json   Phishing-resistant MFA for privileged directory roles
     ca-azure-mgmt-mfa.template.json        MFA for the Microsoft Azure Management application
     ca-block-legacy-auth.template.json     Blocks legacy authentication protocols
+    ca-pim-activation-mfa.template.json    Phishing-resistant MFA for the PIM privileged-role-activation authentication context
   pim/
     pim-activation-global-administrator.template.json
     pim-activation-privileged-role-administrator.template.json
@@ -57,12 +58,25 @@ Every field follows the shape Microsoft Graph actually expects for a
   directory role **template IDs** (GUIDs), never display names such as
   `Global Administrator` or the non-Graph value `All users`. The canonical
   IDs are recorded once in `identity/schema/known-entra-ids.json` and reused
-  by every template and validator.
+  by every template and validator. `ca-privileged-role-mfa.template.json`
+  must reference **exactly** the six intended privileged role IDs — the
+  validators reject the set if a role is missing or if any extra role
+  (recognized or not) is added.
 - `grantControls.authenticationStrength` is a Graph relationship object
   (`{ "id": "<authenticationStrengthPolicy id>", "displayName": "..." }`),
   never a string inside `grantControls.builtInControls`. The built-in
   Phishing-resistant MFA policy id (`00000000-0000-0000-0000-000000000004`)
   is also recorded in `identity/schema/known-entra-ids.json`.
+- `conditions.applications.includeAuthenticationContextClassReferences`, when
+  present, contains only Graph `authenticationContextClassReference` ids
+  (`c1`–`c25`) recorded in `identity/schema/known-entra-ids.json` — never a
+  display name. `ca-pim-activation-mfa.template.json` is the Conditional
+  Access side of the `c1` ("PIM privileged-role activation") authentication
+  context: it enforces phishing-resistant MFA whenever that context is
+  invoked, and every PIM template's `activation.authenticationContext` must
+  reference a `c1`–`c25` id that some committed Conditional Access template
+  actually declares — the validators cross-check this and fail if a PIM
+  template references a context with no enforcing Conditional Access policy.
 
 ## Required Entra licenses
 
@@ -96,9 +110,18 @@ an `emergencyAccessExclusion` object with `required: true` and a
 `scripts/validate-identity-artifacts.sh` / `.ps1`:
 
 - Conditional Access templates fail validation unless the emergency-access
-  placeholder both exists **and** appears in `conditions.users.excludeGroups`.
+  placeholder both exists **and** is the **only** entry in
+  `conditions.users.excludeGroups` — an arbitrary extra excluded group is
+  rejected just like a missing one, so the exclusion scope cannot be quietly
+  broadened or diluted.
 - PIM templates fail validation unless the emergency-access placeholder
   exists in `emergencyAccessExclusion`.
+
+Both `emergencyAccessExclusion.placeholder` (PIM) and `activation.approvers`
+(PIM) are schema-valid as either an unpopulated `REPLACE_WITH_*` value or a
+syntactically valid object ID; the validators — not the schema — narrow this
+per mode: template mode requires the unpopulated placeholder form, populated
+mode requires a real object ID and rejects any leftover placeholder.
 
 **Any future apply workflow must run this validation before calling
 Microsoft Graph, and must refuse to apply a template whose placeholder still
@@ -204,26 +227,33 @@ purely by reading JSON files on local disk:
   justification, and notifications required, and a 1–8 hour activation
   window;
 - the emergency-access placeholder (Conditional Access) and every PIM
-  `activation.approvers` entry are present and, depending on mode, either an
-  unpopulated `REPLACE_WITH_*` value or a syntactically valid object ID —
-  and (for Conditional Access) the emergency-access placeholder is actually
-  excluded;
+  `activation.approvers` entry and `emergencyAccessExclusion.placeholder` are
+  present and, depending on mode, either an unpopulated `REPLACE_WITH_*`
+  value or a syntactically valid object ID — and (for Conditional Access) the
+  emergency-access placeholder is the only `conditions.users.excludeGroups`
+  entry;
 - `conditions.users` uses Graph-compatible subject values: `includeUsers`
   only contains `All`, `None`, `GuestsOrExternalUsers`, or object IDs, and
   `includeRoles` only contains known directory role template IDs (GUIDs),
   never display names or `All users`;
 - `conditions.applications.includeApplications` and
-  `conditions.clientAppTypes` are non-empty, and each of the three named
+  `conditions.clientAppTypes` are non-empty, and each of the four named
   Conditional Access templates matches its intended subject, application,
   client-type, and grant-control combination **exactly** — not just a
   superset — so a template cannot be silently broadened (for example,
   `ca-block-legacy-auth` must scope `clientAppTypes` to exactly the legacy
-  protocol set and grant exactly `block`; `ca-privileged-role-mfa` must not
-  also declare `includeUsers` or an additional `builtInControls` entry
-  alongside its `authenticationStrength` relationship);
+  protocol set and grant exactly `block`; `ca-privileged-role-mfa` must
+  reference exactly the six intended privileged role IDs and must not also
+  declare `includeUsers` or an additional `builtInControls` entry alongside
+  its `authenticationStrength` relationship);
 - `grantControls.authenticationStrength`, when present, references a known
   built-in `authenticationStrengthPolicy` id and is never duplicated as a
   `grantControls.builtInControls` string;
+- every PIM `activation.authenticationContext` and every Conditional Access
+  `includeAuthenticationContextClassReferences` entry is a known Graph
+  `authenticationContextClassReference` id (`c1`–`c25`), never a display
+  name, and every PIM-referenced authentication context has at least one
+  committed Conditional Access template enforcing it;
 - in template mode only, no tenant-specific GUID (other than the public,
   well-known Microsoft constants in `identity/schema/known-entra-ids.json`)
   appears anywhere under `identity/`.

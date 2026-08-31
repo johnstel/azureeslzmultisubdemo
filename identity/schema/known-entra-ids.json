@@ -13,6 +13,10 @@
     "Passwordless MFA": "00000000-0000-0000-0000-000000000003",
     "Phishing-resistant MFA": "00000000-0000-0000-0000-000000000004"
   },
+  "authenticationContextClassReferenceIds": {
+    "$comment": "Microsoft Graph authenticationContextClassReferences use fixed, tenant-independent 'c1'..'c25' ids; only the displayName/description that a tenant admin assigns to each id in Entra ID > Conditional Access > Authentication context is tenant-specific (and is intentionally not recorded here). 'c1' is this repository's own documented demo convention for 'PIM privileged-role activation', shared by identity/pim/*.template.json's activation.authenticationContext and identity/conditional-access/ca-pim-activation-mfa.template.json's conditions.applications.includeAuthenticationContextClassReferences so the two artifact types reference the same Graph-compatible claim value.",
+    "PIM privileged-role activation": "c1"
+  },
   "wellKnownServicePrincipalAppIds": {
     "Microsoft Azure Management": "797f4846-ba00-4fd7-ba43-dac1f8f63013"
   }

@@ -313,6 +313,7 @@ identity/
     ca-privileged-role-mfa.template.json
     ca-azure-mgmt-mfa.template.json
     ca-block-legacy-auth.template.json
+    ca-pim-activation-mfa.template.json
   pim/
     pim-activation-global-administrator.template.json
     pim-activation-privileged-role-administrator.template.json
