@@ -134,9 +134,13 @@ analysis charges on top of Log Analytics ingestion cost. This module does not
 configure analytics rules, automation rules, connectors, workbooks,
 incidents, or Defender plans, and it never deletes or replaces a supplied
 existing workspace. Teardown only deletes the `rg-<namePrefix>-monitoring`
-resource group when `deployCentralLogAnalytics=true` (that is, only when this
-project created it); a supplied existing workspace or resource group is
-never touched by teardown.
+resource group when `deployCentralLogAnalytics=true` **and** no existing
+workspace ID was supplied (that is, only when this project actually created
+it); a conflicting configuration never creates the group, so teardown never
+deletes it either. Teardown also parses `existingLogAnalyticsWorkspaceResourceId`
+and skips deleting any resource group — including the generated
+`rg-<namePrefix>-connectivity` group — whose subscription and name match the
+supplied existing workspace, even if the names happen to collide.
 
 ## Required permissions
 
@@ -306,9 +310,12 @@ export ESLZ_TEARDOWN_CONFIRMATION="DELETE-ESLZ-DEMO"
 
 The script:
 
-1. deletes the two optional evidence resource groups and waits for completion;
+1. deletes the two optional evidence resource groups and waits for completion,
+   unless a supplied existing workspace resource group happens to share the
+   same subscription and name, in which case that group is skipped;
 2. deletes the demo-created monitoring resource group (`rg-<namePrefix>-monitoring`)
-   and waits for completion, but only when `deployCentralLogAnalytics=true`;
+   and waits for completion, but only when `deployCentralLogAnalytics=true`
+   **and** no existing workspace ID was supplied;
 3. deletes the seven demo role assignments for the five groups by principal and scope;
 4. removes policy assignments, then policy definitions;
 5. moves both subscriptions back to the supplied tenant-root management group;

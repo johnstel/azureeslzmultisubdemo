@@ -39,8 +39,11 @@ try {
 
     Write-Host '2/14 Build the complete tenant template...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
-    & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate
+    $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
+    if ($buildOutput -match 'BCP318') {
+        Stop-Test 'main.bicep build must not emit a BCP318 nullable-module-output warning.'
+    }
 
     Write-Host '3/14 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
@@ -173,21 +176,18 @@ try {
         }
     }
 
-    Write-Host '13/14 Confirm teardown scripts only remove a demo-created monitoring resource group and never touch a supplied existing workspace...'
+    Write-Host '13/14 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
-    foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring')) {
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
         if (-not $teardownShText.Contains($requiredText)) {
             Stop-Test "scripts/teardown.sh is missing monitoring teardown safety text: $requiredText"
         }
     }
-    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring')) {
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'Test-ProtectedExistingWorkspaceGroup', 'monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and [string]::IsNullOrWhiteSpace($existingWorkspaceResourceId)', 'Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup')) {
         if (-not $teardownPs1Text.Contains($requiredText)) {
             Stop-Test "scripts/teardown.ps1 is missing monitoring teardown safety text: $requiredText"
         }
-    }
-    if ($teardownShText -match 'existingLogAnalyticsWorkspaceResourceId' -or $teardownPs1Text -match 'existingLogAnalyticsWorkspaceResourceId') {
-        Stop-Test 'Teardown scripts must never reference a supplied existing workspace for deletion.'
     }
 
     Write-Host '14/14 Parse every PowerShell lifecycle and test script...'

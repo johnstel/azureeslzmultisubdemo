@@ -73,17 +73,96 @@ $auditorsGroup = Get-Value 'readOnlyAuditorsGroupObjectId'
 # Optional: defaults to $false when absent so older parameter files remain safe to tear down.
 $centralLogAnalyticsEnabled = Get-OptionalBoolValue 'deployCentralLogAnalytics' $false
 
+function Get-OptionalStringValue {
+    param(
+        [string]$Name,
+        [string]$Default
+    )
+    $property = $parameters.parameters.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value.value) {
+        return $Default
+    }
+    return [string]$property.Value.value
+}
+
+# Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
+# subscription and resource group are read-only protected inputs and must never be deleted
+# by this script, regardless of any naming collision with a generated resource group name.
+$existingWorkspaceResourceId = Get-OptionalStringValue 'existingLogAnalyticsWorkspaceResourceId' ''
+$existingWorkspaceSubscription = ''
+$existingWorkspaceResourceGroup = ''
+if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceId)) {
+    # Resource ID shape: /subscriptions/<sub>/resourceGroups/<rg>/providers/<ns>/<type>/<name>
+    $existingWorkspaceIdParts = $existingWorkspaceResourceId -split '/'
+    if ($existingWorkspaceIdParts.Length -gt 2) { $existingWorkspaceSubscription = $existingWorkspaceIdParts[2] }
+    if ($existingWorkspaceIdParts.Length -gt 4) { $existingWorkspaceResourceGroup = $existingWorkspaceIdParts[4] }
+}
+
 $demoRootScope = "/providers/Microsoft.Management/managementGroups/$prefix"
 $platformScope = "/providers/Microsoft.Management/managementGroups/$prefix-platform"
 $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$archetype"
 $connectivityScope = "/subscriptions/$connectivitySubscription"
 $subscriptionWorkloadScope = "/subscriptions/$workloadSubscription"
 $monitoringResourceGroupName = "rg-$prefix-monitoring"
+# The monitoring resource group is only repository-owned (and thus safe to delete) when a
+# new workspace was requested without also supplying an existing workspace resource ID. This
+# mirrors the conflict guard in modules/central-monitoring.bicep: a conflicting configuration
+# (deployCentralLogAnalytics=true AND a non-empty existingLogAnalyticsWorkspaceResourceId)
+# never creates a monitoring resource group there, so teardown must not delete one either.
+$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and [string]::IsNullOrWhiteSpace($existingWorkspaceResourceId)
+
+# Returns $true when the given subscription/resource-group pair matches the supplied
+# existing workspace's subscription/resource group, meaning it must never be deleted here.
+function Test-ProtectedExistingWorkspaceGroup {
+    param(
+        [string]$Subscription,
+        [string]$Group
+    )
+    if ([string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
+        return $false
+    }
+    return ($Subscription -ieq $existingWorkspaceSubscription) -and ($Group -ieq $existingWorkspaceResourceGroup)
+}
+
+# Deletes the named resource group only when it is not the protected existing-workspace
+# resource group. Safe to call even when the group does not exist.
+function Remove-ResourceGroupIfNotProtected {
+    param(
+        [string]$Subscription,
+        [string]$Group
+    )
+    if (Test-ProtectedExistingWorkspaceGroup -Subscription $Subscription -Group $Group) {
+        Write-Warning "SKIP: $Group matches the supplied existingLogAnalyticsWorkspaceResourceId resource group; it is never deleted by this script."
+        return
+    }
+    $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
+    if ([string]$groupExists -eq 'true') {
+        & az group delete --subscription $Subscription --name $Group --yes --no-wait
+        if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $Group." }
+    }
+}
+
+# Waits for deletion of the named resource group unless it is the protected
+# existing-workspace resource group, in which case there is nothing to wait for.
+function Wait-ResourceGroupDeletionIfNotProtected {
+    param(
+        [string]$Subscription,
+        [string]$Group
+    )
+    if (Test-ProtectedExistingWorkspaceGroup -Subscription $Subscription -Group $Group) {
+        return
+    }
+    & az group wait --subscription $Subscription --name $Group --deleted --interval 10 --timeout 900 2>$null
+}
 
 Write-Host 'TEARDOWN PLAN (reverse dependency order)'
 Write-Host "  1. Delete resource groups rg-$prefix-connectivity and rg-$prefix-$archetype-demo if present."
-if ($centralLogAnalyticsEnabled) {
-    Write-Host "  1a. Delete the demo-created monitoring resource group $monitoringResourceGroupName (deployCentralLogAnalytics=true)."
+if ($monitoringGroupIsRepoOwned) {
+    Write-Host "  1a. Delete the demo-created monitoring resource group $monitoringResourceGroupName (deployCentralLogAnalytics=true and no existing workspace supplied)."
+}
+if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
+    Write-Host ''
+    Write-Host "NOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group $existingWorkspaceResourceGroup in subscription $existingWorkspaceSubscription is protected and will never be deleted by this script, even if its name collides with a group above."
 }
 Write-Host '  2. Delete only the seven demo role assignments for the five groups at their documented scopes.'
 Write-Host '  3. Delete demo policy assignments and the five custom policy definitions.'
@@ -130,42 +209,20 @@ function Remove-PolicyAssignment {
 $connectivityResourceGroup = "rg-$prefix-connectivity"
 $workloadResourceGroup = "rg-$prefix-$archetype-demo"
 
-$connectivityExists = & az group exists `
-    --subscription $connectivitySubscription `
-    --name $connectivityResourceGroup `
-    --output tsv 2>$null
-if ([string]$connectivityExists -eq 'true') {
-    & az group delete --subscription $connectivitySubscription --name $connectivityResourceGroup --yes --no-wait
-    if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $connectivityResourceGroup." }
+Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup
+Remove-ResourceGroupIfNotProtected -Subscription $workloadSubscription -Group $workloadResourceGroup
+
+# Only delete the monitoring resource group when this repository created it (no conflicting
+# existing workspace was supplied). A supplied existing workspace/resource group is never
+# owned by this demo and must never be deleted here, even by name collision.
+if ($monitoringGroupIsRepoOwned) {
+    Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $monitoringResourceGroupName
 }
 
-$workloadExists = & az group exists `
-    --subscription $workloadSubscription `
-    --name $workloadResourceGroup `
-    --output tsv 2>$null
-if ([string]$workloadExists -eq 'true') {
-    & az group delete --subscription $workloadSubscription --name $workloadResourceGroup --yes --no-wait
-    if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $workloadResourceGroup." }
-}
-
-# Only delete the monitoring resource group when this repository created it
-# (deployCentralLogAnalytics=true). A supplied existing workspace/resource group is never
-# owned by this demo and must never be deleted here.
-if ($centralLogAnalyticsEnabled) {
-    $monitoringExists = & az group exists `
-        --subscription $connectivitySubscription `
-        --name $monitoringResourceGroupName `
-        --output tsv 2>$null
-    if ([string]$monitoringExists -eq 'true') {
-        & az group delete --subscription $connectivitySubscription --name $monitoringResourceGroupName --yes --no-wait
-        if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $monitoringResourceGroupName." }
-    }
-}
-
-& az group wait --subscription $connectivitySubscription --name $connectivityResourceGroup --deleted --interval 10 --timeout 900 2>$null
-& az group wait --subscription $workloadSubscription --name $workloadResourceGroup --deleted --interval 10 --timeout 900 2>$null
-if ($centralLogAnalyticsEnabled) {
-    & az group wait --subscription $connectivitySubscription --name $monitoringResourceGroupName --deleted --interval 10 --timeout 900 2>$null
+Wait-ResourceGroupDeletionIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup
+Wait-ResourceGroupDeletionIfNotProtected -Subscription $workloadSubscription -Group $workloadResourceGroup
+if ($monitoringGroupIsRepoOwned) {
+    Wait-ResourceGroupDeletionIfNotProtected -Subscription $connectivitySubscription -Group $monitoringResourceGroupName
 }
 
 Remove-RoleMapping $governanceGroup 'Management Group Contributor' $demoRootScope

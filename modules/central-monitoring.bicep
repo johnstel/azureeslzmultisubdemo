@@ -100,8 +100,11 @@ module existingWorkspaceSentinel 'central-monitoring-sentinel.bicep' = if (useEx
 }
 
 @description('Deterministic resource ID of the effective monitoring workspace, or empty when no valid workspace input is configured.')
+// The null-forgiving '!' operator is safe here: this branch only evaluates when
+// createNewWorkspace is true, which is the exact condition under which the newWorkspace
+// module is deployed, so it is never actually null at that point.
 output effectiveLogAnalyticsWorkspaceResourceId string = createNewWorkspace
-  ? newWorkspace.outputs.workspaceResourceId
+  ? newWorkspace!.outputs.workspaceResourceId
   : (useExistingWorkspace ? existingLogAnalyticsWorkspaceResourceId : '')
 
 @description('Always false when the deployment succeeds: true only describes the error state that the configuration-error guard resource used to fail the deployment before this output could ever be observed. Retained for documentation of the validation contract, not for runtime error handling by callers.')
