@@ -22,3 +22,5 @@ param existingLogAnalyticsWorkspaceResourceId = ''
 param centralMonitoringLocation = 'eastus2'
 param centralLogAnalyticsRetentionInDays = 30
 param centralLogAnalyticsDailyQuotaGb = -1
+param enableCriticalInfrastructure = false
+param criticalInfrastructureSubscriptionIds = []

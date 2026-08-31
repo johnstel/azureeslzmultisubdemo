@@ -104,6 +104,17 @@ if ($existingWorkspaceSupplied) {
     if ($existingWorkspaceIdParts.Length -gt 4) { $existingWorkspaceResourceGroup = $existingWorkspaceIdParts[4] }
 }
 
+$criticalEnabled = $false
+$criticalProperty = $parameters.parameters.PSObject.Properties['enableCriticalInfrastructure']
+if ($null -ne $criticalProperty -and $null -ne $criticalProperty.Value.value) {
+    $criticalEnabled = [bool]$criticalProperty.Value.value
+}
+$criticalSubscriptions = @()
+$criticalSubscriptionsProperty = $parameters.parameters.PSObject.Properties['criticalInfrastructureSubscriptionIds']
+if ($null -ne $criticalSubscriptionsProperty -and $null -ne $criticalSubscriptionsProperty.Value.value) {
+    $criticalSubscriptions = @($criticalSubscriptionsProperty.Value.value)
+}
+
 $demoRootScope = "/providers/Microsoft.Management/managementGroups/$prefix"
 $platformScope = "/providers/Microsoft.Management/managementGroups/$prefix-platform"
 $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$archetype"
@@ -174,7 +185,18 @@ if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
 Write-Host '  2. Delete only the seven demo role assignments for the five groups at their documented scopes.'
 Write-Host '  3. Delete demo policy assignments and the five custom policy definitions.'
 Write-Host "  4. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
-Write-Host "  5. Delete management groups $prefix-connectivity, $prefix-platform, $prefix-$archetype, $prefix-landingzones, then $prefix."
+$stepNumber = 5
+if ($criticalEnabled -and $criticalSubscriptions.Count -gt 0) {
+    $criticalSubscriptionsList = $criticalSubscriptions -join ', '
+    Write-Host "  $stepNumber. Move critical infrastructure subscriptions ($criticalSubscriptionsList) back to $tenantRoot."
+    $stepNumber++
+}
+if ($criticalEnabled) {
+    Write-Host "  $stepNumber. Delete management groups $prefix-connectivity, $prefix-platform, $prefix-$archetype, $prefix-criticalinfra, $prefix-landingzones, then $prefix."
+}
+else {
+    Write-Host "  $stepNumber. Delete management groups $prefix-connectivity, $prefix-platform, $prefix-$archetype, $prefix-landingzones, then $prefix."
+}
 Write-Host ''
 Write-Host 'Subscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.'
 
@@ -262,13 +284,23 @@ if ($LASTEXITCODE -ne 0) { Stop-Teardown 'Failed to move the connectivity subscr
 & az account management-group subscription add --name $tenantRoot --subscription $workloadSubscription
 if ($LASTEXITCODE -ne 0) { Stop-Teardown 'Failed to move the workload subscription.' }
 
+if ($criticalEnabled) {
+    foreach ($criticalSubscription in $criticalSubscriptions) {
+        & az account management-group subscription add --name $tenantRoot --subscription $criticalSubscription
+        if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to move critical infrastructure subscription $criticalSubscription." }
+    }
+}
+
 $managementGroups = @(
     "$prefix-connectivity",
     "$prefix-platform",
-    "$prefix-$archetype",
-    "$prefix-landingzones",
-    $prefix
+    "$prefix-$archetype"
 )
+if ($criticalEnabled) {
+    $managementGroups += "$prefix-criticalinfra"
+}
+$managementGroups += "$prefix-landingzones"
+$managementGroups += $prefix
 foreach ($managementGroup in $managementGroups) {
     & az account management-group delete --name $managementGroup
     if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to delete management group $managementGroup." }

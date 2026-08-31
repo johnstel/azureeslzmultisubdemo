@@ -67,6 +67,12 @@
     },
     "centralLogAnalyticsDailyQuotaGb": {
       "value": -1
+    },
+    "enableCriticalInfrastructure": {
+      "value": false
+    },
+    "criticalInfrastructureSubscriptionIds": {
+      "value": []
     }
   }
 }

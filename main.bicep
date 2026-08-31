@@ -115,11 +115,18 @@ param centralLogAnalyticsRetentionInDays int = 30
 @description('Daily ingestion cap in GB for a newly created central Log Analytics workspace. -1 disables the cap (cost risk); set a small positive value to bound demo ingestion cost.')
 param centralLogAnalyticsDailyQuotaGb int = -1
 
+@description('Set true to create the opt-in Critical Infrastructure management group under Landing Zones.')
+param enableCriticalInfrastructure bool = false
+
+@description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch. Only used when enableCriticalInfrastructure is true.')
+param criticalInfrastructureSubscriptionIds array = []
+
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
 var landingZonesManagementGroupId = '${namePrefix}-landingzones'
 var workloadManagementGroupId = '${namePrefix}-${workloadArchetype}'
+var criticalInfrastructureManagementGroupId = '${namePrefix}-criticalinfra'
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -134,6 +141,9 @@ module hierarchy 'modules/hierarchy.bicep' = {
     workloadArchetype: workloadArchetype
     connectivitySubscriptionId: connectivitySubscriptionId
     workloadSubscriptionId: workloadSubscriptionId
+    enableCriticalInfrastructure: enableCriticalInfrastructure
+    criticalInfrastructureManagementGroupId: criticalInfrastructureManagementGroupId
+    criticalInfrastructureSubscriptionIds: criticalInfrastructureSubscriptionIds
   }
 }
 
@@ -317,10 +327,12 @@ output hierarchy object = {
   connectivity: connectivityManagementGroupId
   landingZones: landingZonesManagementGroupId
   workload: workloadManagementGroupId
+  criticalInfrastructure: hierarchy.outputs.criticalInfrastructureManagementGroupId
 }
 output denyPolicyEnforcementMode string = denyPolicyEnforcementMode
 output roleAssignmentsEnabled bool = deployRoleAssignments
 output evidenceResourcesEnabled bool = deployEvidenceResources
+output criticalInfrastructureEnabled bool = enableCriticalInfrastructure
 output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
