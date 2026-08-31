@@ -76,7 +76,7 @@
         },
         "majorVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
         "verifiedVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
-        "sourceUrl": { "type": ["string", "null"] },
+        "sourceUrl": { "type": ["string", "null"], "format": "uri" },
         "verifiedOn": { "type": "string", "format": "date" },
         "verificationMethod": {
           "type": "string",

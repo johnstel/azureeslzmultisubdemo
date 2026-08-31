@@ -41,11 +41,16 @@ def is_valid_calendar_date:
   end;
 
 # Real `format: uri` semantics for the absolute http(s) URIs used throughout
-# this catalog: requires a scheme plus a non-empty host, so a scheme-only
-# value like "http://" (no host) is rejected even though it matches a naive
-# "^https?://" prefix check.
+# this catalog: requires a scheme, a non-empty host with no forbidden host
+# characters, and no whitespace anywhere in the value (URIs cannot legally
+# contain a literal space/tab/newline), matching against the *entire* string
+# (anchored start AND end) rather than only a prefix -- a prefix-only anchor
+# like "^https?://[^/:?#]+" would wrongly accept "https://example.com/a b"
+# because everything after the matched host prefix is never examined.
 def is_valid_http_uri:
-  type == "string" and test("^https?://[^/:?#]+");
+  type == "string" and
+  (test("\\s") | not) and
+  test("^https?://[^\\s/:?#]+(:[0-9]+)?(/[^\\s]*)?$");
 
 # Emits `label` for every element of `arr` that is not a non-empty string.
 # No-op (and does not itself flag anything) if `arr` is not an array; the
@@ -97,6 +102,7 @@ def bad_pattern_items(arr; re; msg):
     (if ($c.mechanism | has("category")) and (($c.mechanism.category | type) != "string") then "\($id): mechanism.category must be a string" else empty end),
     (if ($c.mechanism | has("notes")) and (($c.mechanism.notes | type) != "string") then "\($id): mechanism.notes must be a string" else empty end),
     (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and (($c.mechanism.sourceUrl | type) != "string") then "\($id): mechanism.sourceUrl must be string or null" else empty end),
+    (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and ($c.mechanism.sourceUrl | type == "string") and ($c.mechanism.sourceUrl | is_valid_http_uri | not) then "\($id): mechanism.sourceUrl is not a well-formed absolute http(s) URI with a non-empty host" else empty end),
     (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and ($c.mechanism.sourceUrl | matches_safely("raw\\.githubusercontent\\.com")) and ($c.mechanism.sourceUrl | type == "string" and endswith("/")) then "\($id): mechanism.sourceUrl points at a directory listing" else empty end),
     (if ($c.mechanism.builtIn == true and (($c.mechanism.verificationMethod == "raw-json") or ($c.mechanism.verificationMethod == "initiative-json-member"))) and (($c.mechanism.definitionId? // "") | matches_safely(guid_re) | not) then "\($id): definitionId is not a well-formed GUID for a directly-verified built-in" else empty end),
     (if ($c.supportedEffects? // null | type) != "array" or (($c.supportedEffects // []) | length) < 1 then "\($id): supportedEffects missing/empty" else empty end),

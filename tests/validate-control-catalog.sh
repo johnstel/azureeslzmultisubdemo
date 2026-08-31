@@ -124,17 +124,22 @@ with open(schema_path, encoding="utf-8") as f:
 jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
 
 # jsonschema's built-in "uri" format checker accepts RFC 3986-valid URIs with
-# an empty authority (e.g. "http://" is syntactically a valid URI), so it does
-# not by itself reject a scheme-only sourceIssue/sourceUrl. Enforce the
-# stricter "absolute http(s) URI with a non-empty host" rule this catalog
-# actually needs, matching the equivalent check in the jq/PowerShell fallbacks.
-http_host_re = re.compile(r"^https?://[^/:?#]+")
-if not http_host_re.match(catalog.get("sourceIssue", "") or ""):
-    sys.exit(f"sourceIssue is not an absolute http(s) URI with a non-empty host: {catalog.get('sourceIssue')!r}")
+# an empty authority (e.g. "http://" is syntactically a valid URI) and does
+# not reject embedded whitespace in the path/query/fragment (e.g.
+# "https://example.com/a b" is accepted by a naive prefix-only check). Enforce
+# the stricter "absolute http(s) URI, non-empty host, no whitespace anywhere"
+# rule this catalog actually needs, matched against the *entire* string
+# (fullmatch), consistent with the jq/PowerShell fallbacks.
+http_uri_re = re.compile(r"^https?://[^\s/:?#]+(:[0-9]+)?(/[^\s]*)?$")
+def is_valid_http_uri(value):
+    return isinstance(value, str) and http_uri_re.fullmatch(value) is not None
+
+if not is_valid_http_uri(catalog.get("sourceIssue")):
+    sys.exit(f"sourceIssue is not a well-formed absolute http(s) URI with a non-empty host: {catalog.get('sourceIssue')!r}")
 for control in catalog.get("controls", []):
     source_url = (control.get("mechanism") or {}).get("sourceUrl")
-    if source_url is not None and not http_host_re.match(source_url):
-        sys.exit(f"{control.get('id')}: mechanism.sourceUrl is not an absolute http(s) URI with a non-empty host: {source_url!r}")
+    if source_url is not None and not is_valid_http_uri(source_url):
+        sys.exit(f"{control.get('id')}: mechanism.sourceUrl is not a well-formed absolute http(s) URI with a non-empty host: {source_url!r}")
 PYEOF
 else
   printf '  (python3 + jsonschema not available; falling back to the full schema-equivalent jq re-implementation in tests/control-catalog-schema-check.jq.)\n'
@@ -217,13 +222,10 @@ while IFS= read -r caution; do
   [[ "${normalized_matrix}" == *"${normalized_caution}"* ]] || fail "Matrix does not represent a declared caution: ${caution}"
 done < <(jq -r '.cautions[]' "${CATALOG}")
 
-# Every overlapNotes entry's note text must be represented in the "Overlap
-# notes" section (again normalized, since the matrix bolds the topic and may
-# format inline code differently).
-while IFS= read -r note; do
-  normalized_note="$(printf '%s' "${note}" | normalize)"
-  [[ "${normalized_matrix}" == *"${normalized_note}"* ]] || fail "Matrix Overlap notes section does not represent a declared overlapNotes entry: ${note}"
-done < <(jq -r '.overlapNotes[].note' "${CATALOG}")
+# Overlap-notes pairs are validated structurally and bidirectionally below
+# (exact {topic, note} multiset comparison), which subsumes a one-way
+# substring check and additionally catches a stale topic reusing an existing
+# note, or a topic whose note text was changed in only one place.
 
 # --- Structural bidirectional checks: domain sections, cautions, overlap topics ---
 # Unlike the substring checks above (which only prove every JSON entry is
@@ -286,19 +288,34 @@ normalized_matrix_cautions="$(printf '%s\n' "${matrix_cautions}" | while IFS= re
 normalized_json_cautions="$(jq -r '.cautions[]' "${CATALOG}" | while IFS= read -r line; do printf '%s\n' "${line}" | normalize; done | sort -u)"
 [[ "${normalized_matrix_cautions}" == "${normalized_json_cautions}" ]] || fail "The matrix's \"Important caveats\" bullets do not exactly match the JSON catalog's .cautions[] (an entry was added, removed, or reworded in only one place). Matrix: [$(printf '%s' "${normalized_matrix_cautions}" | tr '\n' ';')] JSON: [$(printf '%s' "${normalized_json_cautions}" | tr '\n' ';')]"
 
-# Exact bidirectional set comparison of Overlap-notes {topic} entries: parse
-# the "- **Topic:** note" bullets under "## Overlap notes" and compare the
-# topic set (not just note substrings) against JSON .overlapNotes[].topic.
-matrix_overlap_topics="$(awk '
+# Exact bidirectional multiset comparison of Overlap-notes {topic, note}
+# pairs: parse the "- **Topic:** note" bullets under "## Overlap notes" and
+# compare the complete (topic, note) pair set (not merely the topic set with
+# a separate one-way note substring search) against JSON .overlapNotes[]. A
+# multiset (not a de-duplicated set) is compared so a duplicated bullet in
+# either the matrix or the JSON is also caught. This catches a matrix bullet
+# that reuses an existing topic but carries stale/reworded note text, which a
+# topic-only comparison would miss.
+matrix_overlap_pairs="$(awk '
   /^## Overlap notes/ { flag = 1; next }
   /^## / { if (flag) exit }
   flag && /^- \*\*/ {
-    sub(/^- \*\*/, "")
-    sub(/:\*\*.*$/, "")
-    print
+    line = $0
+    sub(/^- \*\*/, "", line)
+    colon = index(line, ":**")
+    topic = substr(line, 1, colon - 1)
+    note = substr(line, colon + 3)
+    sub(/^ */, "", note)
+    print topic "\t" note
   }
-' "${MATRIX}" | sort -u)"
-json_overlap_topics="$(jq -r '.overlapNotes[].topic' "${CATALOG}" | sort -u)"
-[[ "${matrix_overlap_topics}" == "${json_overlap_topics}" ]] || fail "The matrix's \"Overlap notes\" topic bullets do not exactly match the JSON catalog's .overlapNotes[].topic set (a topic was added, removed, or renamed in only one place). Matrix topics: [$(printf '%s' "${matrix_overlap_topics}" | tr '\n' ';')] JSON topics: [$(printf '%s' "${json_overlap_topics}" | tr '\n' ';')]"
+' "${MATRIX}")"
+normalized_matrix_overlap_pairs="$(printf '%s\n' "${matrix_overlap_pairs}" | while IFS=$'\t' read -r topic note; do
+  [[ -n "${topic}" || -n "${note}" ]] || continue
+  printf '%s\t%s\n' "$(printf '%s' "${topic}" | normalize)" "$(printf '%s' "${note}" | normalize)"
+done | sort)"
+normalized_json_overlap_pairs="$(jq -r '.overlapNotes[] | .topic + "\t" + .note' "${CATALOG}" | while IFS=$'\t' read -r topic note; do
+  printf '%s\t%s\n' "$(printf '%s' "${topic}" | normalize)" "$(printf '%s' "${note}" | normalize)"
+done | sort)"
+[[ "${normalized_matrix_overlap_pairs}" == "${normalized_json_overlap_pairs}" ]] || fail "The matrix's \"Overlap notes\" {topic, note} bullets do not exactly match the JSON catalog's .overlapNotes[] (a topic/note pair was added, removed, or reworded in only one place). Matrix pairs: [$(printf '%s' "${normalized_matrix_overlap_pairs}" | tr '\n' ';')] JSON pairs: [$(printf '%s' "${normalized_json_overlap_pairs}" | tr '\n' ';')]"
 
 printf '\nControl catalog validation passed.\n'

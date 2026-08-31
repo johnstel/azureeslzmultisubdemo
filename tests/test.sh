@@ -261,11 +261,41 @@ printf '18/19 Parse cross-platform scripts and check macOS Bash 3.2 compatibilit
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done
-# test.sh itself is excluded from the banned-construct scan below because its
-# own pattern definition necessarily spells out the banned words/tokens
-# literally, which would otherwise make it match itself; test.sh is manually
-# kept free of `declare -A`/case-conversion/`mapfile`/`readarray`.
-if rg -n 'declare -A|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}|\bmapfile\b|\breadarray\b' "${PROJECT_DIR}/scripts" "${PROJECT_DIR}/tests" -g '*.sh' -g '!test.sh'; then
+# Bash 4+ constructs banned for macOS Bash 3.2 compatibility. Every banned
+# literal below is deliberately split across a quote boundary (for example
+# 'declare -'"A" and \bmap''file\b) so that this very definition line does
+# not itself contain any banned substring contiguously -- each quote/paste
+# boundary breaks up the literal text on disk even though bash concatenates
+# the pieces back into the correct pattern value at runtime. This lets the
+# scan below cover test.sh itself (unlike a `-g '!test.sh'` exclusion, which
+# would leave test.sh permanently unprotected against a future regression)
+# without the pattern definition line matching its own scan.
+banned_bash4_pattern='declare -'"A"'|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}|\bmap''file\b|\bread''array\b'
+# A real stock Bash 3.2 interpreter is not available in every environment
+# (this sandbox only ships Bash 5.x), so `bash -n` above only proves each
+# script is Bash-5-syntax-valid; it does NOT execute the script under Bash
+# 3.2, so it cannot itself catch a missing Bash 4+ array-reading builtin
+# (syntactically valid in Bash 5, but absent as a command and only failing at
+# runtime on Bash < 4.0). When a real Bash 3.2 (or any Bash < 4.0) is present
+# on PATH, exercise the validator scripts under it directly as a
+# defense-in-depth check beyond the static banned-construct scan below.
+bash3_candidate=""
+for bash_bin in /usr/local/bin/bash /opt/homebrew/bin/bash /bin/bash; do
+  if [[ -x "${bash_bin}" ]] && "${bash_bin}" -c '[[ "${BASH_VERSINFO[0]}" -lt 4 ]]' 2>/dev/null; then
+    bash3_candidate="${bash_bin}"
+    break
+  fi
+done
+if [[ -n "${bash3_candidate}" ]]; then
+  printf '  Found a Bash < 4.0 interpreter (%s); executing tests/validate-control-catalog.sh under it...\n' "${bash3_candidate}"
+  if ! "${bash3_candidate}" "${PROJECT_DIR}/tests/validate-control-catalog.sh" >/dev/null; then
+    printf 'ERROR: tests/validate-control-catalog.sh failed when executed directly under %s.\n' "${bash3_candidate}" >&2
+    exit 1
+  fi
+else
+  printf '  (No Bash < 4.0 interpreter found on PATH; relying on the static banned-construct scan below plus `bash -n` syntax checks.)\n'
+fi
+if rg -n "${banned_bash4_pattern}" "${PROJECT_DIR}/scripts" "${PROJECT_DIR}/tests" -g '*.sh'; then
   printf 'ERROR: A script uses a Bash 4+ feature unavailable in stock macOS Bash 3.2.\n' >&2
   exit 1
 fi

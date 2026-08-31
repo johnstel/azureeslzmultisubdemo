@@ -143,6 +143,7 @@ if ($pythonCmd) {
 if ($jsonschemaAvailable) {
     $pyScript = @'
 import json
+import re
 import sys
 
 import jsonschema
@@ -153,6 +154,24 @@ with open(catalog_path, encoding="utf-8") as f:
 with open(schema_path, encoding="utf-8") as f:
     schema = json.load(f)
 jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
+
+# jsonschema's built-in "uri" format checker accepts RFC 3986-valid URIs with
+# an empty authority (e.g. "http://" is syntactically a valid URI) and does
+# not reject embedded whitespace in the path/query/fragment (e.g.
+# "https://example.com/a b" is accepted by a naive prefix-only check). Enforce
+# the stricter "absolute http(s) URI, non-empty host, no whitespace anywhere"
+# rule this catalog actually needs, matched against the *entire* string
+# (fullmatch), consistent with the jq/Bash fallbacks.
+http_uri_re = re.compile(r"^https?://[^\s/:?#]+(:[0-9]+)?(/[^\s]*)?$")
+def is_valid_http_uri(value):
+    return isinstance(value, str) and http_uri_re.fullmatch(value) is not None
+
+if not is_valid_http_uri(catalog.get("sourceIssue")):
+    sys.exit(f"sourceIssue is not a well-formed absolute http(s) URI with a non-empty host: {catalog.get('sourceIssue')!r}")
+for control in catalog.get("controls", []):
+    source_url = (control.get("mechanism") or {}).get("sourceUrl")
+    if source_url is not None and not is_valid_http_uri(source_url):
+        sys.exit(f"{control.get('id')}: mechanism.sourceUrl is not a well-formed absolute http(s) URI with a non-empty host: {source_url!r}")
 '@
     $tmpPy = New-TemporaryFile
     Set-Content -LiteralPath $tmpPy -Value $pyScript
@@ -183,12 +202,17 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         }
     }
     # Real `format: uri` semantics for the absolute http(s) URIs used
-    # throughout this catalog: requires a scheme plus a non-empty host, so a
-    # scheme-only value like "http://" (no host) is rejected even though it is
-    # a syntactically valid URI per RFC 3986.
+    # throughout this catalog: requires a scheme, a non-empty host with no
+    # forbidden host characters, and no whitespace anywhere in the value
+    # (URIs cannot legally contain a literal space/tab/newline), matched
+    # against the *entire* string -- a prefix-only match like
+    # '^https?://[^/:?#]+' would wrongly accept "https://example.com/a b"
+    # because everything after the matched host prefix is never examined.
     function Test-ValidHttpUri {
         param($Value)
-        return (Test-NonEmptyString $Value) -and ($Value -match '^https?://[^/:?#]+')
+        if (-not (Test-NonEmptyString $Value)) { return $false }
+        if ($Value -match '\s') { return $false }
+        return $Value -match '^https?://[^\s/:?#]+(:[0-9]+)?(/[^\s]*)?$'
     }
 
     function Get-Prop {
@@ -307,6 +331,7 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         # non-string sourceUrl (e.g. the boolean $false, or 0) is not silently
         # skipped by PowerShell's implicit boolean coercion of that value.
         if ((Test-Prop $mechanism 'sourceUrl') -and ($null -ne $sourceUrl) -and ($sourceUrl -isnot [string])) { $schemaErrors.Add("${cid}: mechanism.sourceUrl must be string or null") }
+        if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and (-not (Test-ValidHttpUri $sourceUrl))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl is not a well-formed absolute http(s) URI with a non-empty host") }
         if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and ($sourceUrl -match 'raw\.githubusercontent\.com') -and ($sourceUrl.EndsWith('/'))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl points at a directory listing") }
         $builtIn = Get-Prop $mechanism 'builtIn'
         $definitionId = Get-Prop $mechanism 'definitionId'
@@ -427,12 +452,10 @@ foreach ($caution in @($catalog.cautions)) {
         Stop-Test "Matrix does not represent a declared caution: $caution"
     }
 }
-foreach ($overlapNote in @($catalog.overlapNotes)) {
-    $normalizedNote = Get-NormalizedText $overlapNote.note
-    if (-not $normalizedMatrix.Contains($normalizedNote)) {
-        Stop-Test "Matrix Overlap notes section does not represent a declared overlapNotes entry: $($overlapNote.note)"
-    }
-}
+# Overlap-notes pairs are validated structurally and bidirectionally below
+# (exact {topic, note} multiset comparison), which subsumes a one-way
+# substring check and additionally catches a stale topic reusing an existing
+# note, or a topic whose note text was changed in only one place.
 
 # --- Structural bidirectional checks: domain sections, cautions, overlap topics ---
 # Unlike the substring checks above (which only prove every JSON entry is
@@ -501,21 +524,30 @@ if ($cautionsDiff) {
     Stop-Test "The matrix's `"Important caveats`" bullets do not exactly match the JSON catalog's .cautions[] (an entry was added, removed, or reworded in only one place). Matrix: [$($normalizedMatrixCautions -join ';')] JSON: [$($normalizedJsonCautions -join ';')]"
 }
 
-# Exact bidirectional set comparison of Overlap-notes {topic} entries: parse
-# the "- **Topic:** note" bullets under "## Overlap notes" and compare the
-# topic set (not just note substrings) against JSON .overlapNotes[].topic.
-$matrixOverlapTopics = New-Object System.Collections.Generic.List[string]
+# Exact bidirectional multiset comparison of Overlap-notes {topic, note}
+# pairs: parse the "- **Topic:** note" bullets under "## Overlap notes" and
+# compare the complete (topic, note) pair set (not merely the topic set with
+# a separate one-way note substring search) against JSON .overlapNotes[]. A
+# multiset (not de-duplicated) comparison is used so a duplicated bullet in
+# either the matrix or the JSON is also caught. This catches a matrix bullet
+# that reuses an existing topic but carries stale/reworded note text, which a
+# topic-only comparison would miss.
+$matrixOverlapPairs = New-Object System.Collections.Generic.List[string]
 $inOverlap = $false
 foreach ($line in $matrixLines) {
     if ($line -match '^## Overlap notes') { $inOverlap = $true; continue }
     if ($inOverlap -and $line -match '^## ') { break }
-    if ($inOverlap -and $line -match '^- \*\*(.+?):\*\*') { $matrixOverlapTopics.Add($Matches[1]) }
+    if ($inOverlap -and $line -match '^- \*\*(.+?):\*\*\s*(.*)$') {
+        $normalizedTopic = Get-NormalizedText $Matches[1]
+        $normalizedNote = Get-NormalizedText $Matches[2]
+        $matrixOverlapPairs.Add("$normalizedTopic`t$normalizedNote")
+    }
 }
-$sortedMatrixOverlapTopics = @($matrixOverlapTopics | Sort-Object -Unique)
-$sortedJsonOverlapTopics = @(@($catalog.overlapNotes) | ForEach-Object { $_.topic } | Sort-Object -Unique)
-$overlapTopicsDiff = Compare-Object -ReferenceObject $sortedJsonOverlapTopics -DifferenceObject $sortedMatrixOverlapTopics
-if ($overlapTopicsDiff) {
-    Stop-Test "The matrix's `"Overlap notes`" topic bullets do not exactly match the JSON catalog's .overlapNotes[].topic set (a topic was added, removed, or renamed in only one place). Matrix topics: [$($sortedMatrixOverlapTopics -join ';')] JSON topics: [$($sortedJsonOverlapTopics -join ';')]"
+$sortedMatrixOverlapPairs = @($matrixOverlapPairs | Sort-Object)
+$sortedJsonOverlapPairs = @(@($catalog.overlapNotes) | ForEach-Object { "$(Get-NormalizedText $_.topic)`t$(Get-NormalizedText $_.note)" } | Sort-Object)
+$overlapPairsDiff = Compare-Object -ReferenceObject $sortedJsonOverlapPairs -DifferenceObject $sortedMatrixOverlapPairs
+if ($overlapPairsDiff) {
+    Stop-Test "The matrix's `"Overlap notes`" {topic, note} bullets do not exactly match the JSON catalog's .overlapNotes[] (a topic/note pair was added, removed, or reworded in only one place). Matrix pairs: [$($sortedMatrixOverlapPairs -join ';')] JSON pairs: [$($sortedJsonOverlapPairs -join ';')]"
 }
 
 Write-Host ''
