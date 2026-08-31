@@ -486,6 +486,47 @@ jq '.activation.maximumActivationDurationHours = 2.5' \
   && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
 expect_identity_validation_failure "fractional PIM maximumActivationDurationHours value" --path "${IDENTITY_NEG_DIR}"
 
+# Case: the full JSON Schema (not just hand-picked field checks) must be
+# enforced. additionalProperties: false means an unknown/unexpected field on
+# a Conditional Access template must fail even though every field the
+# manual checks inspect is otherwise valid.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '. + {unknownField: "not part of the schema"}' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-azure-mgmt-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-azure-mgmt-mfa.template.json"
+expect_identity_validation_failure "unknown property rejected by Conditional Access JSON Schema (additionalProperties: false)" --path "${IDENTITY_NEG_DIR}"
+
+# Case: same additionalProperties: false enforcement for the PIM schema, at
+# a nested level (activation), not just at the document root.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.activation += {unknownField: "not part of the schema"}' \
+  "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+expect_identity_validation_failure "unknown nested property rejected by PIM JSON Schema (additionalProperties: false)" --path "${IDENTITY_NEG_DIR}"
+
+# Case: the JSON Schema's "type": "integer" must reject a non-integer value
+# for maximumActivationDurationHours even independent of the dedicated
+# range/type check above (schema-level enforcement, not just the manual
+# field check).
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.activation.maximumActivationDurationHours = "4"' \
+  "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+expect_identity_validation_failure "string-typed PIM maximumActivationDurationHours rejected by JSON Schema" --path "${IDENTITY_NEG_DIR}"
+
+# Case: the populated-mode tracked-folder containment check must canonicalize
+# both the requested --path and the tracked identity/ folder before
+# comparing, so unnormalized bypass forms cannot slip a real, tenant-specific
+# populated copy into the tracked identity/ folder undetected.
+expect_identity_validation_failure "populated mode bypass via unnormalized relative './identity' path" --mode populated --path "${PROJECT_DIR}/./identity"
+expect_identity_validation_failure "populated mode bypass via unnormalized absolute path with a nested '..' segment" --mode populated --path "${PROJECT_DIR}/identity/conditional-access/../../identity"
+(
+  cd "${PROJECT_DIR}" && expect_identity_validation_failure "populated mode bypass via unnormalized relative 'scripts/../identity' path" --mode populated --path "scripts/../identity"
+)
+(
+  cd "${PROJECT_DIR}" && expect_identity_validation_failure "populated mode bypass via unnormalized relative './identity' path from repo root" --mode populated --path "./identity"
+)
+
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
 printf '\nAll local validation and safety tests passed.\n'

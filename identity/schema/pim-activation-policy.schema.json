@@ -33,6 +33,7 @@
         "requireJustification",
         "maximumActivationDurationHours"
       ],
+      "additionalProperties": false,
       "properties": {
         "requireApproval": {
           "type": "boolean",
@@ -70,6 +71,7 @@
     "notifications": {
       "type": "object",
       "required": ["notifyAdminsOnActivation", "notifyApproversOnActivationRequest", "notifyAssigneeOnActivation"],
+      "additionalProperties": false,
       "properties": {
         "notifyAdminsOnActivation": { "type": "boolean", "const": true },
         "notifyApproversOnActivationRequest": { "type": "boolean", "const": true },
@@ -79,6 +81,7 @@
     "emergencyAccessExclusion": {
       "type": "object",
       "required": ["required", "placeholder", "description"],
+      "additionalProperties": false,
       "properties": {
         "required": {
           "type": "boolean",

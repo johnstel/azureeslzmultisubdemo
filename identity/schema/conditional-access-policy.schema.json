@@ -32,7 +32,7 @@
     "conditions": {
       "type": "object",
       "required": ["users", "applications", "clientAppTypes"],
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "users": {
           "type": "object",
@@ -162,6 +162,7 @@
     "emergencyAccessExclusion": {
       "type": "object",
       "required": ["required", "placeholder", "description"],
+      "additionalProperties": false,
       "properties": {
         "required": {
           "type": "boolean",

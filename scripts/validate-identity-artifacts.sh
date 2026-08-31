@@ -78,9 +78,23 @@ case "${mode}" in
   *) fail "--mode must be 'template' or 'populated', found '${mode}'." ;;
 esac
 
+# Canonicalize a directory path (resolving '.', '..', and symlinks) using
+# only POSIX `cd`/`pwd -P`, so this works without a GNU-specific `realpath`
+# binary (portable to stock macOS/BSD as well as Linux). This is required
+# before the populated-mode tracked-folder containment check below: a naive
+# string comparison against the raw --path argument can be bypassed with
+# unnormalized forms such as './identity', '/repo/./identity', or
+# 'scripts/../identity' that still resolve to the tracked identity/ folder.
+canonicalize_dir() {
+  local __dir="$1"
+  ( cd "${__dir}" 2>/dev/null && pwd -P ) || fail "Directory not found: ${__dir}"
+}
+
 if [[ "${mode}" == "populated" ]]; then
-  case "${identity_dir}" in
-    "${PROJECT_DIR}/identity"|"${PROJECT_DIR}/identity"/*)
+  canonical_identity_dir="$(canonicalize_dir "${identity_dir}")"
+  canonical_tracked_dir="$(canonicalize_dir "${PROJECT_DIR}/identity")"
+  case "${canonical_identity_dir}" in
+    "${canonical_tracked_dir}"|"${canonical_tracked_dir}"/*)
       fail "--mode populated must validate a path outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first."
       ;;
   esac
@@ -88,6 +102,119 @@ fi
 
 known_ids_file="${PROJECT_DIR}/identity/schema/known-entra-ids.json"
 [[ -f "${known_ids_file}" ]] || fail "Missing reference file: ${known_ids_file}"
+
+ca_schema_file="${PROJECT_DIR}/identity/schema/conditional-access-policy.schema.json"
+pim_schema_file="${PROJECT_DIR}/identity/schema/pim-activation-policy.schema.json"
+[[ -f "${ca_schema_file}" ]] || fail "Missing reference file: ${ca_schema_file}"
+[[ -f "${pim_schema_file}" ]] || fail "Missing reference file: ${pim_schema_file}"
+
+# A small, offline JSON Schema (draft-07 subset) validator implemented
+# entirely in jq (already a required dependency, so this introduces no new
+# tool/network dependency). It is deliberately general-purpose rather than
+# tailored to a specific file, so it enforces every keyword actually used by
+# identity/schema/*.schema.json -- including additionalProperties: false
+# (rejecting unknown fields), type/pattern/enum/const, $ref to local
+# #/definitions, and oneOf/anyOf/not -- as a structural safety net alongside
+# (not a replacement for) the mode-specific and cross-artifact semantic
+# checks below, which JSON Schema alone cannot express (e.g. template vs.
+# populated placeholder/GUID enforcement, exact per-template principal
+# sets, and CA<->PIM authentication-context coherence).
+read -r -d '' JQ_SCHEMA_VALIDATOR_PROGRAM << 'JQPROG' || true
+def resolve_ref($root; $ref):
+  ($ref | ltrimstr("#/") | split("/")) as $parts
+  | reduce $parts[] as $p ($root; .[$p]);
+
+def check_type($t; $inst):
+  if $t == "integer" then ($inst|type) == "number" and ($inst == ($inst|floor))
+  elif $t == "number" then ($inst|type) == "number"
+  else ($inst|type) == $t
+  end;
+
+def validate($root; $schema; $instance; $path):
+  (if ($schema | has("$ref")) then
+      validate($root; resolve_ref($root; $schema["$ref"]); $instance; $path)
+   else [] end)
+  +
+  (if ($schema | has("type")) then
+      (if check_type($schema.type; $instance) then [] else ["\($path): expected type \($schema.type) but got \($instance|type)"] end)
+   else [] end)
+  +
+  (if ($schema | has("const")) then
+      (if $instance == $schema.const then [] else ["\($path): expected const \($schema.const|tostring) but got \($instance|tostring)"] end)
+   else [] end)
+  +
+  (if ($schema | has("enum")) then
+      (if ([$schema.enum[] | select(. == $instance)] | length) > 0 then [] else ["\($path): value \($instance|tostring) not in enum"] end)
+   else [] end)
+  +
+  (if ($schema | has("pattern")) and (($instance|type) == "string") then
+      (if ($instance | test($schema.pattern)) then [] else ["\($path): value '\($instance)' does not match pattern \($schema.pattern)"] end)
+   else [] end)
+  +
+  (if ($schema | has("minLength")) and (($instance|type) == "string") then
+      (if ($instance | length) >= $schema.minLength then [] else ["\($path): string shorter than minLength \($schema.minLength)"] end)
+   else [] end)
+  +
+  (if ($instance | type) == "array" then
+      (if ($schema | has("minItems")) and (($instance|length) < $schema.minItems) then ["\($path): array has fewer than minItems \($schema.minItems)"] else [] end)
+      +
+      (if ($schema | has("items")) then
+         (reduce range(0; $instance|length) as $i ([]; . + validate($root; $schema.items; $instance[$i]; "\($path)[\($i)]")))
+       else [] end)
+   else [] end)
+  +
+  (if ($instance|type) == "number" then
+      (if ($schema | has("minimum")) and ($instance < $schema.minimum) then ["\($path): \($instance) less than minimum \($schema.minimum)"] else [] end)
+      +
+      (if ($schema | has("maximum")) and ($instance > $schema.maximum) then ["\($path): \($instance) greater than maximum \($schema.maximum)"] else [] end)
+   else [] end)
+  +
+  (if ($instance|type) == "object" then
+      (if ($schema | has("required")) then
+          [ $schema.required[] as $req | select(($instance | has($req)) | not) | "\($path): missing required property '\($req)'" ]
+       else [] end)
+      +
+      (if ($schema | has("properties")) then
+          (reduce ($schema.properties | keys_unsorted[]) as $k
+            ([]; if ($instance | has($k)) then . + validate($root; $schema.properties[$k]; $instance[$k]; "\($path)/\($k)") else . end))
+       else [] end)
+      +
+      (if ($schema | has("additionalProperties")) and ($schema.additionalProperties == false) then
+          (($schema.properties // {} | keys_unsorted)) as $allowed
+          | [ ($instance | keys_unsorted[]) as $key | select(($allowed | index($key)) == null) | "\($path): additional property '\($key)' not allowed by schema" ]
+       else [] end)
+   else [] end)
+  +
+  (if ($schema | has("oneOf")) then
+      ([ $schema.oneOf[] as $s | (validate($root; $s; $instance; $path) | length == 0) ]) as $results
+      | ($results | map(select(.)) | length) as $passCount
+      | (if $passCount == 1 then [] else ["\($path): value must match exactly one schema in oneOf, matched \($passCount)"] end)
+   else [] end)
+  +
+  (if ($schema | has("anyOf")) then
+      ([ $schema.anyOf[] as $s | (validate($root; $s; $instance; $path) | length == 0) ]) as $results
+      | (if ($results | any) then [] else ["\($path): value must match at least one schema in anyOf"] end)
+   else [] end)
+  +
+  (if ($schema | has("not")) then
+      (if (validate($root; $schema.not; $instance; $path) | length) == 0 then ["\($path): value must not match schema in 'not'"] else [] end)
+   else [] end);
+
+($root[0]) as $schema
+| ($instance[0]) as $inst
+| validate($schema; $schema; $inst; "")
+JQPROG
+
+# Validates $2 (a JSON artifact file) against $1 (a JSON Schema file),
+# failing with every collected violation if the instance does not conform.
+validate_against_schema() {
+  local schema_file="$1" template="$2" name="$3"
+  local schema_errors
+  schema_errors="$(jq -n --slurpfile root "${schema_file}" --slurpfile instance "${template}" "${JQ_SCHEMA_VALIDATOR_PROGRAM}")"
+  [[ "$(printf '%s' "${schema_errors}" | jq 'length')" -eq 0 ]] || \
+    fail "${name} failed JSON Schema validation ($(basename "${schema_file}")):
+$(printf '%s' "${schema_errors}" | jq -r '.[] | "  - " + .')"
+}
 
 guid_pattern='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 is_guid() { [[ "$1" =~ $guid_pattern ]]; }
@@ -200,6 +327,7 @@ for template in "${ca_dir}"/*.template.json; do
   name="$(basename "${template}")"
 
   jq empty "${template}" || fail "${name} is not valid JSON."
+  validate_against_schema "${ca_schema_file}" "${template}" "${name}"
 
   state="$(jq -r '.state' "${template}")"
   [[ "${state}" == "enabledForReportingButNotEnforced" ]] || \
@@ -401,6 +529,7 @@ for template in "${pim_dir}"/*.template.json; do
   name="$(basename "${template}")"
 
   jq empty "${template}" || fail "${name} is not valid JSON."
+  validate_against_schema "${pim_schema_file}" "${template}" "${name}"
 
   assignment_type="$(jq -r '.assignmentType' "${template}")"
   [[ "${assignment_type}" == "eligible" ]] || \

@@ -53,6 +53,29 @@ $knownIdsPath = Join-Path $ProjectDir 'identity/schema/known-entra-ids.json'
 if (-not (Test-Path -LiteralPath $knownIdsPath)) { Stop-Validation "Missing reference file: $knownIdsPath" }
 $knownIds = Get-Content -LiteralPath $knownIdsPath -Raw | ConvertFrom-Json
 
+$caSchemaPath = Join-Path $ProjectDir 'identity/schema/conditional-access-policy.schema.json'
+$pimSchemaPath = Join-Path $ProjectDir 'identity/schema/pim-activation-policy.schema.json'
+if (-not (Test-Path -LiteralPath $caSchemaPath)) { Stop-Validation "Missing reference file: $caSchemaPath" }
+if (-not (Test-Path -LiteralPath $pimSchemaPath)) { Stop-Validation "Missing reference file: $pimSchemaPath" }
+$caSchemaJson = Get-Content -LiteralPath $caSchemaPath -Raw
+$pimSchemaJson = Get-Content -LiteralPath $pimSchemaPath -Raw
+
+# Enforces the full JSON Schema (additionalProperties: false, type/pattern/
+# enum/const, $ref, oneOf/anyOf/not, etc.) using PowerShell's built-in
+# Test-Json cmdlet (Microsoft.PowerShell.Utility, no new tool/network
+# dependency). This is a structural safety net alongside -- not a
+# replacement for -- the mode-specific and cross-artifact semantic checks
+# elsewhere in this script, which JSON Schema alone cannot express.
+function Test-JsonSchemaCompliance {
+    param([string]$Json, [string]$SchemaJson, [string]$Name, [string]$SchemaFileName)
+    $errorMessages = @()
+    $isValid = Test-Json -Json $Json -Schema $SchemaJson -ErrorVariable schemaErrors -ErrorAction SilentlyContinue
+    if (-not $isValid) {
+        foreach ($schemaError in $schemaErrors) { $errorMessages += "  - $($schemaError.Exception.Message)" }
+        Stop-Validation "$Name failed JSON Schema validation ($SchemaFileName):`n$($errorMessages -join "`n")"
+    }
+}
+
 $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 function Test-Guid {
     param([string]$Value)
@@ -143,7 +166,9 @@ if ($caTemplates.Count -eq 0) { Stop-Validation "No Conditional Access templates
 $caAuthContextValues = @()
 foreach ($templateFile in $caTemplates) {
     $name = $templateFile.Name
-    $policy = Get-Content -LiteralPath $templateFile.FullName -Raw | ConvertFrom-Json
+    $rawJson = Get-Content -LiteralPath $templateFile.FullName -Raw
+    $policy = $rawJson | ConvertFrom-Json
+    Test-JsonSchemaCompliance -Json $rawJson -SchemaJson $caSchemaJson -Name $name -SchemaFileName (Split-Path -Leaf $caSchemaPath)
 
     if ($policy.state -cne 'enabledForReportingButNotEnforced') {
         Stop-Validation "$name must default to state=enabledForReportingButNotEnforced (report-only), found '$($policy.state)'."
@@ -318,7 +343,9 @@ if ($pimTemplates.Count -eq 0) { Stop-Validation "No PIM templates found in $pim
 $pimAuthContextValues = @()
 foreach ($templateFile in $pimTemplates) {
     $name = $templateFile.Name
-    $policy = Get-Content -LiteralPath $templateFile.FullName -Raw | ConvertFrom-Json
+    $rawJson = Get-Content -LiteralPath $templateFile.FullName -Raw
+    $policy = $rawJson | ConvertFrom-Json
+    Test-JsonSchemaCompliance -Json $rawJson -SchemaJson $pimSchemaJson -Name $name -SchemaFileName (Split-Path -Leaf $pimSchemaPath)
 
     if ($policy.assignmentType -cne 'eligible') {
         Stop-Validation "$name assignmentType must be 'eligible' (never permanent), found '$($policy.assignmentType)'."

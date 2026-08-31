@@ -694,6 +694,46 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     }
     Expect-IdentityValidationFailure -Description 'fractional PIM maximumActivationDurationHours value' -Arguments @('-Path', $identityNegDir)
 
+    # Case: an unknown top-level property must be rejected by the Conditional
+    # Access JSON Schema (additionalProperties: false), not just by the
+    # hand-picked semantic field checks.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-azure-mgmt-mfa.template.json') -Mutate {
+        param($policy)
+        $policy | Add-Member -MemberType NoteProperty -Name 'unknownField' -Value 'unexpected'
+    }
+    Expect-IdentityValidationFailure -Description 'unknown top-level property rejected by Conditional Access JSON Schema (additionalProperties: false)' -Arguments @('-Path', $identityNegDir)
+
+    # Case: an unknown property nested under PIM activation must also be
+    # rejected by the JSON Schema, proving additionalProperties: false is
+    # enforced at nested object levels too, not just the document root.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'pim/pim-activation-global-administrator.template.json') -Mutate {
+        param($policy)
+        $policy.activation | Add-Member -MemberType NoteProperty -Name 'unknownField' -Value 'unexpected'
+    }
+    Expect-IdentityValidationFailure -Description 'unknown nested property rejected by PIM JSON Schema (additionalProperties: false)' -Arguments @('-Path', $identityNegDir)
+
+    # Case: the JSON Schema's "type": "integer" constraint must reject a
+    # string-typed value even when its content parses as a whole number,
+    # distinct from the dedicated fractional-value check above (which
+    # exercises the manual numeric-range check rather than schema typing).
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'pim/pim-activation-global-administrator.template.json') -Mutate {
+        param($policy)
+        $policy.activation.maximumActivationDurationHours = '4'
+    }
+    Expect-IdentityValidationFailure -Description 'string-typed PIM maximumActivationDurationHours rejected by JSON Schema type: integer' -Arguments @('-Path', $identityNegDir)
+
+    # Case: -Mode populated must reject unnormalized bypass attempts against
+    # the tracked identity/ folder guard, even though Resolve-Path already
+    # canonicalizes both sides of the comparison.
+    Expect-IdentityValidationFailure -Description "populated mode bypass via unnormalized relative './identity' path" -Arguments @('-Mode', 'populated', '-Path', (Join-Path $ProjectDir './identity'))
+    Expect-IdentityValidationFailure -Description "populated mode bypass via unnormalized absolute path with a nested '..' segment" -Arguments @('-Mode', 'populated', '-Path', (Join-Path $ProjectDir 'identity/conditional-access/../../identity'))
+
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 
