@@ -98,6 +98,35 @@ canonicalize_dir() {
   ( cd "${__dir}" 2>/dev/null && pwd -P ) || fail "Directory not found: ${__dir}"
 }
 
+# Resolves an existing file to its final filesystem target: like
+# canonicalize_dir() for its parent directory (which fully dereferences any
+# symlinked directory components via `cd`), plus dereferencing the file's own
+# leaf component if it is itself a symlink (or a chain of symlinks). A single
+# resolution is not sufficient: a symlink's target may itself pass through
+# further symlinked directories, so each iteration re-canonicalizes the new
+# parent directory before checking whether the leaf is still a symlink. A
+# bounded iteration count guards against a symlink cycle.
+canonicalize_file() {
+  local __path="$1"
+  local __dir __base __resolved __iterations=0 __link_target
+  __dir="$(dirname "${__path}")"
+  __base="$(basename "${__path}")"
+  __resolved="$(canonicalize_dir "${__dir}")/${__base}"
+  while [[ -L "${__resolved}" ]]; do
+    __iterations=$((__iterations + 1))
+    [[ ${__iterations} -le 64 ]] || fail "Too many levels of symbolic links resolving ${__path} (possible link cycle)."
+    __link_target="$(readlink "${__resolved}")"
+    case "${__link_target}" in
+      /*) __resolved="${__link_target}" ;;
+      *) __resolved="$(dirname "${__resolved}")/${__link_target}" ;;
+    esac
+    __dir="$(dirname "${__resolved}")"
+    __base="$(basename "${__resolved}")"
+    __resolved="$(canonicalize_dir "${__dir}")/${__base}"
+  done
+  printf '%s' "${__resolved}"
+}
+
 # Detects whether the filesystem location containing ${canonical_path} is
 # case-insensitive, by checking whether a case-swapped variant of its final
 # path component also exists there. This probes the actual filesystem
@@ -125,24 +154,36 @@ filesystem_is_case_insensitive() {
   fi
 }
 
+# Fails if ${__resolved} (already canonicalized/dereferenced via
+# canonicalize_dir()/canonicalize_file()) is the tracked identity/ folder, or
+# lies inside it. Called not just for the requested --path root, but for
+# every subdirectory (conditional-access/, pim/) and individual template file
+# read from it in populated mode: the root can legitimately resolve outside
+# identity/ while a nested directory or file underneath it is itself a
+# symlink/alias back into the tracked, unpopulated tree, which would
+# otherwise let populated-mode validation silently read tracked templates.
+assert_outside_tracked_identity() {
+  local __resolved="$1" __description="$2"
+  local __compare_resolved __compare_tracked
+  if [[ "${IDENTITY_FS_CASE_INSENSITIVE}" == "true" ]]; then
+    __compare_resolved="$(printf '%s' "${__resolved}" | tr '[:upper:]' '[:lower:]')"
+    __compare_tracked="$(printf '%s' "${canonical_tracked_dir}" | tr '[:upper:]' '[:lower:]')"
+  else
+    __compare_resolved="${__resolved}"
+    __compare_tracked="${canonical_tracked_dir}"
+  fi
+  case "${__compare_resolved}" in
+    "${__compare_tracked}"|"${__compare_tracked}"/*)
+      fail "--mode populated must validate ${__description} outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first."
+      ;;
+  esac
+}
+
 if [[ "${mode}" == "populated" ]]; then
   canonical_identity_dir="$(canonicalize_dir "${identity_dir}")"
   canonical_tracked_dir="$(canonicalize_dir "${PROJECT_DIR}/identity")"
-  if [[ "$(filesystem_is_case_insensitive "${canonical_tracked_dir}")" == "true" ]]; then
-    # Fold both sides to a common case before comparing, so a casing
-    # variant of the tracked identity/ folder (e.g. IDENTITY, Identity) on
-    # a case-insensitive/case-preserving filesystem cannot bypass the guard.
-    compare_identity_dir="$(printf '%s' "${canonical_identity_dir}" | tr '[:upper:]' '[:lower:]')"
-    compare_tracked_dir="$(printf '%s' "${canonical_tracked_dir}" | tr '[:upper:]' '[:lower:]')"
-  else
-    compare_identity_dir="${canonical_identity_dir}"
-    compare_tracked_dir="${canonical_tracked_dir}"
-  fi
-  case "${compare_identity_dir}" in
-    "${compare_tracked_dir}"|"${compare_tracked_dir}"/*)
-      fail "--mode populated must validate a path outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first."
-      ;;
-  esac
+  IDENTITY_FS_CASE_INSENSITIVE="$(filesystem_is_case_insensitive "${canonical_tracked_dir}")"
+  assert_outside_tracked_identity "${canonical_identity_dir}" "the requested --path"
 fi
 
 known_ids_file="${PROJECT_DIR}/identity/schema/known-entra-ids.json"
@@ -320,6 +361,11 @@ pim_dir="${identity_dir}/pim"
 [[ -d "${ca_dir}" ]] || fail "Missing directory: ${ca_dir}"
 [[ -d "${pim_dir}" ]] || fail "Missing directory: ${pim_dir}"
 
+if [[ "${mode}" == "populated" ]]; then
+  assert_outside_tracked_identity "$(canonicalize_dir "${ca_dir}")" "the conditional-access/ directory"
+  assert_outside_tracked_identity "$(canonicalize_dir "${pim_dir}")" "the pim/ directory"
+fi
+
 # Validates emergencyAccessExclusion.required and .placeholder against the
 # active mode. Sets the global EMERGENCY_PLACEHOLDER_OUT variable as an
 # explicit, documented out-parameter for callers that also need to run
@@ -370,6 +416,10 @@ for template in "${ca_dir}"/*.template.json; do
   [[ -e "${template}" ]] || fail "No Conditional Access templates found in ${ca_dir}"
   ca_count=$((ca_count + 1))
   name="$(basename "${template}")"
+
+  if [[ "${mode}" == "populated" ]]; then
+    assert_outside_tracked_identity "$(canonicalize_file "${template}")" "${name}"
+  fi
 
   jq empty "${template}" || fail "${name} is not valid JSON."
   validate_against_schema "${ca_schema_file}" "${template}" "${name}"
@@ -572,6 +622,10 @@ for template in "${pim_dir}"/*.template.json; do
   [[ -e "${template}" ]] || fail "No PIM templates found in ${pim_dir}"
   pim_count=$((pim_count + 1))
   name="$(basename "${template}")"
+
+  if [[ "${mode}" == "populated" ]]; then
+    assert_outside_tracked_identity "$(canonicalize_file "${template}")" "${name}"
+  fi
 
   jq empty "${template}" || fail "${name} is not valid JSON."
   validate_against_schema "${pim_schema_file}" "${template}" "${name}"

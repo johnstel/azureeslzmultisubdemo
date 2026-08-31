@@ -304,6 +304,29 @@ expect_identity_validation_failure() {
   fi
 }
 
+# Like expect_identity_validation_failure, but also asserts the failure
+# reason: some negative fixtures would still fail even without the fix under
+# test (e.g. a nested-symlink containment bypass reusing tracked, still-
+# unpopulated templates would separately trip the REPLACE_WITH_* placeholder
+# check), which would let a regression pass this check for the wrong reason.
+# Requiring the specific containment-guard message confirms the guard itself
+# is what rejected the input.
+expect_identity_validation_failure_with_message() {
+  local description="$1"
+  local expected_message="$2"
+  shift 2
+  local output
+  if output="$("${PROJECT_DIR}/scripts/validate-identity-artifacts.sh" "$@" 2>&1)"; then
+    printf 'ERROR: validate-identity-artifacts.sh unexpectedly succeeded for case: %s\n' "${description}" >&2
+    exit 1
+  fi
+  if ! printf '%s' "${output}" | grep -qF "${expected_message}"; then
+    printf 'ERROR: validate-identity-artifacts.sh failed for case: %s, but not for the expected reason.\nExpected message to contain: %s\nActual output: %s\n' \
+      "${description}" "${expected_message}" "${output}" >&2
+    exit 1
+  fi
+}
+
 # A fully populated (fake, non-tenant) positive-control copy: every
 # REPLACE_WITH_* placeholder replaced with a syntactically valid GUID. Used
 # both to confirm --mode populated accepts a genuinely valid input, and as
@@ -535,6 +558,36 @@ IDENTITY_SYMLINK_DIR="${TEMP_DIR}/identity-symlink-alias"
 rm -rf "${IDENTITY_SYMLINK_DIR}" && ln -s "${PROJECT_DIR}/identity" "${IDENTITY_SYMLINK_DIR}"
 expect_identity_validation_failure "populated mode bypass via a symbolic link aliasing the tracked identity/ folder" --mode populated --path "${IDENTITY_SYMLINK_DIR}"
 rm -f "${IDENTITY_SYMLINK_DIR}"
+
+# Case: an otherwise-legitimate external --path root whose conditional-access/
+# or pim/ subdirectory is itself a symbolic link back into the tracked
+# identity/ folder must be rejected. Only checking the containment of the
+# requested root is not sufficient: the root can resolve outside identity/
+# while a nested directory constructed beneath it aliases the tracked,
+# unpopulated tree.
+IDENTITY_NESTED_SYMLINK_DIR="${TEMP_DIR}/identity-nested-symlink-root"
+rm -rf "${IDENTITY_NESTED_SYMLINK_DIR}" && mkdir -p "${IDENTITY_NESTED_SYMLINK_DIR}"
+ln -s "${PROJECT_DIR}/identity/conditional-access" "${IDENTITY_NESTED_SYMLINK_DIR}/conditional-access"
+ln -s "${PROJECT_DIR}/identity/pim" "${IDENTITY_NESTED_SYMLINK_DIR}/pim"
+expect_identity_validation_failure_with_message "populated mode bypass via a symbolic link aliasing the tracked conditional-access/ or pim/ subdirectory" "outside the tracked identity/ folder" --mode populated --path "${IDENTITY_NESTED_SYMLINK_DIR}"
+rm -rf "${IDENTITY_NESTED_SYMLINK_DIR}"
+
+# Case: an otherwise-legitimate external --path root with genuine, external
+# conditional-access/ and pim/ directories, but whose individual template
+# files are themselves symbolic links back into the tracked identity/
+# folder, must also be rejected. Directory-level containment checks alone do
+# not catch a symlinked leaf file.
+IDENTITY_NESTED_FILE_SYMLINK_DIR="${TEMP_DIR}/identity-nested-file-symlink-root"
+rm -rf "${IDENTITY_NESTED_FILE_SYMLINK_DIR}"
+mkdir -p "${IDENTITY_NESTED_FILE_SYMLINK_DIR}/conditional-access" "${IDENTITY_NESTED_FILE_SYMLINK_DIR}/pim"
+for f in "${PROJECT_DIR}/identity/conditional-access"/*.template.json; do
+  ln -s "${f}" "${IDENTITY_NESTED_FILE_SYMLINK_DIR}/conditional-access/$(basename "${f}")"
+done
+for f in "${PROJECT_DIR}/identity/pim"/*.template.json; do
+  ln -s "${f}" "${IDENTITY_NESTED_FILE_SYMLINK_DIR}/pim/$(basename "${f}")"
+done
+expect_identity_validation_failure_with_message "populated mode bypass via symbolic-link template files aliasing tracked identity/ templates" "outside the tracked identity/ folder" --mode populated --path "${IDENTITY_NESTED_FILE_SYMLINK_DIR}"
+rm -rf "${IDENTITY_NESTED_FILE_SYMLINK_DIR}"
 
 # Case: on a genuinely case-insensitive filesystem (default macOS APFS,
 # exFAT/vfat, some NTFS/SMB mounts), a casing variant of the tracked

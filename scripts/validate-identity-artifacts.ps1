@@ -135,11 +135,26 @@ if ($Mode -eq 'populated') {
     $trackedIdentityDir = Resolve-FinalTarget -Path (Join-Path $ProjectDir 'identity')
     $caseInsensitive = Test-FilesystemCaseInsensitive -CanonicalPath $trackedIdentityDir
     $pathComparison = if ($caseInsensitive) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
-    $isSameDir = [string]::Equals($IdentityDir, $trackedIdentityDir, $pathComparison)
-    $isDescendant = $IdentityDir.StartsWith($trackedIdentityDir + [System.IO.Path]::DirectorySeparatorChar, $pathComparison)
-    if ($isSameDir -or $isDescendant) {
-        Stop-Validation '-Mode populated must validate a path outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first.'
+
+    # Fails if $ResolvedPath (already dereferenced via Resolve-FinalTarget) is
+    # the tracked identity/ folder, or lies inside it. Called not just for
+    # the requested -Path root, but for every subdirectory
+    # (conditional-access/, pim/) and individual template file read from it
+    # in populated mode: the root can legitimately resolve outside identity/
+    # while a nested directory or file underneath it is itself a
+    # symlink/junction back into the tracked, unpopulated tree, which would
+    # otherwise let populated-mode validation silently read tracked
+    # templates.
+    function Assert-OutsideTrackedIdentity {
+        param([string]$ResolvedPath, [string]$Description)
+        $isSameDir = [string]::Equals($ResolvedPath, $trackedIdentityDir, $pathComparison)
+        $isDescendant = $ResolvedPath.StartsWith($trackedIdentityDir + [System.IO.Path]::DirectorySeparatorChar, $pathComparison)
+        if ($isSameDir -or $isDescendant) {
+            Stop-Validation "-Mode populated must validate $Description outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first."
+        }
     }
+
+    Assert-OutsideTrackedIdentity -ResolvedPath $IdentityDir -Description 'the requested -Path'
 }
 
 
@@ -254,12 +269,20 @@ $pimDir = Join-Path $IdentityDir 'pim'
 if (-not (Test-Path -LiteralPath $caDir)) { Stop-Validation "Missing directory: $caDir" }
 if (-not (Test-Path -LiteralPath $pimDir)) { Stop-Validation "Missing directory: $pimDir" }
 
+if ($Mode -eq 'populated') {
+    Assert-OutsideTrackedIdentity -ResolvedPath (Resolve-FinalTarget -Path $caDir) -Description 'the conditional-access/ directory'
+    Assert-OutsideTrackedIdentity -ResolvedPath (Resolve-FinalTarget -Path $pimDir) -Description 'the pim/ directory'
+}
+
 $caTemplates = @(Get-ChildItem -LiteralPath $caDir -Filter '*.template.json')
 if ($caTemplates.Count -eq 0) { Stop-Validation "No Conditional Access templates found in $caDir" }
 
 $caAuthContextValues = @()
 foreach ($templateFile in $caTemplates) {
     $name = $templateFile.Name
+    if ($Mode -eq 'populated') {
+        Assert-OutsideTrackedIdentity -ResolvedPath (Resolve-FinalTarget -Path $templateFile.FullName) -Description $name
+    }
     $rawJson = Get-Content -LiteralPath $templateFile.FullName -Raw
     $policy = $rawJson | ConvertFrom-Json
     Test-JsonSchemaCompliance -Json $rawJson -SchemaJson $caSchemaJson -Name $name -SchemaFileName (Split-Path -Leaf $caSchemaPath)

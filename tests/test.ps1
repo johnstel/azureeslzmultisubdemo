@@ -784,6 +784,39 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Remove-Item -LiteralPath $identityChainAliasDir -Force
         Remove-Item -LiteralPath $repoAliasDir -Force
 
+        # Case: an otherwise-legitimate external -Path root whose
+        # conditional-access/ or pim/ subdirectory is itself a symbolic link
+        # back into the tracked identity/ folder must be rejected. Checking
+        # only the containment of the requested root is not sufficient: the
+        # root can resolve outside identity/ while a nested directory
+        # constructed beneath it aliases the tracked, unpopulated tree.
+        $nestedSymlinkRoot = Join-Path $TempDir 'identity-nested-symlink-root'
+        if (Test-Path -LiteralPath $nestedSymlinkRoot) { Remove-Item -LiteralPath $nestedSymlinkRoot -Recurse -Force }
+        New-Item -ItemType Directory -Path $nestedSymlinkRoot -Force | Out-Null
+        New-Item -ItemType SymbolicLink -Path (Join-Path $nestedSymlinkRoot 'conditional-access') -Target (Join-Path $identitySrcDir 'conditional-access') | Out-Null
+        New-Item -ItemType SymbolicLink -Path (Join-Path $nestedSymlinkRoot 'pim') -Target (Join-Path $identitySrcDir 'pim') | Out-Null
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked conditional-access/ or pim/ subdirectory' -Arguments @('-Mode', 'populated', '-Path', $nestedSymlinkRoot) -ExpectedMessage 'outside the tracked identity/ folder'
+        Remove-Item -LiteralPath $nestedSymlinkRoot -Recurse -Force
+
+        # Case: an otherwise-legitimate external -Path root with genuine,
+        # external conditional-access/ and pim/ directories, but whose
+        # individual template files are themselves symbolic links back into
+        # the tracked identity/ folder, must also be rejected.
+        # Directory-level containment checks alone do not catch a symlinked
+        # leaf file.
+        $nestedFileSymlinkRoot = Join-Path $TempDir 'identity-nested-file-symlink-root'
+        if (Test-Path -LiteralPath $nestedFileSymlinkRoot) { Remove-Item -LiteralPath $nestedFileSymlinkRoot -Recurse -Force }
+        New-Item -ItemType Directory -Path (Join-Path $nestedFileSymlinkRoot 'conditional-access') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $nestedFileSymlinkRoot 'pim') -Force | Out-Null
+        Get-ChildItem -LiteralPath (Join-Path $identitySrcDir 'conditional-access') -Filter '*.template.json' | ForEach-Object {
+            New-Item -ItemType SymbolicLink -Path (Join-Path $nestedFileSymlinkRoot "conditional-access/$($_.Name)") -Target $_.FullName | Out-Null
+        }
+        Get-ChildItem -LiteralPath (Join-Path $identitySrcDir 'pim') -Filter '*.template.json' | ForEach-Object {
+            New-Item -ItemType SymbolicLink -Path (Join-Path $nestedFileSymlinkRoot "pim/$($_.Name)") -Target $_.FullName | Out-Null
+        }
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via symbolic-link template files aliasing tracked identity/ templates' -Arguments @('-Mode', 'populated', '-Path', $nestedFileSymlinkRoot) -ExpectedMessage 'outside the tracked identity/ folder'
+        Remove-Item -LiteralPath $nestedFileSymlinkRoot -Recurse -Force
+
         # Case: on a genuinely case-insensitive filesystem (default macOS
         # APFS, exFAT/vfat, some NTFS/SMB mounts), a casing variant of the
         # tracked identity/ folder (e.g. IDENTITY) transparently resolves to
@@ -819,7 +852,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
                 Copy-Item -LiteralPath $validatorPath -Destination (Join-Path $caseInsensitiveRepo 'scripts/validate-identity-artifacts.ps1')
                 Copy-Item -LiteralPath $identitySrcDir -Destination (Join-Path $caseInsensitiveRepo 'identity') -Recurse
                 $caseVariantMountPath = Join-Path $caseInsensitiveRepo 'IDENTITY'
-                Expect-IdentityValidationFailure -Description 'populated mode bypass via a casing variant of the tracked identity/ folder on a genuinely case-insensitive filesystem' -ScriptPath (Join-Path $caseInsensitiveRepo 'scripts/validate-identity-artifacts.ps1') -Arguments @('-Mode', 'populated', '-Path', $caseVariantMountPath) -ExpectedMessage 'must validate a path outside the tracked identity/ folder'
+                Expect-IdentityValidationFailure -Description 'populated mode bypass via a casing variant of the tracked identity/ folder on a genuinely case-insensitive filesystem' -ScriptPath (Join-Path $caseInsensitiveRepo 'scripts/validate-identity-artifacts.ps1') -Arguments @('-Mode', 'populated', '-Path', $caseVariantMountPath) -ExpectedMessage 'must validate the requested -Path outside the tracked identity/ folder'
                 # Give the PowerShell child process's file handles on the
                 # mount time to close before unmounting, retrying with a
                 # lazy unmount as a fallback if the mount is still briefly
@@ -852,7 +885,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         if (Test-Path -LiteralPath $repoSymlinkDir) { Remove-Item -LiteralPath $repoSymlinkDir -Force }
         New-Item -ItemType SymbolicLink -Path $repoSymlinkDir -Target $ProjectDir | Out-Null
         $aliasedValidatorPath = Join-Path $repoSymlinkDir 'scripts/validate-identity-artifacts.ps1'
-        Expect-IdentityValidationFailure -Description 'populated mode bypass via omitted -Path when the script is invoked through a symlinked repository checkout' -ScriptPath $aliasedValidatorPath -Arguments @('-Mode', 'populated') -ExpectedMessage 'must validate a path outside the tracked identity/ folder'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via omitted -Path when the script is invoked through a symlinked repository checkout' -ScriptPath $aliasedValidatorPath -Arguments @('-Mode', 'populated') -ExpectedMessage 'must validate the requested -Path outside the tracked identity/ folder'
         Remove-Item -LiteralPath $repoSymlinkDir -Force
     } else {
         # Case: a Windows reparse-point junction that targets the tracked
@@ -863,6 +896,17 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         New-Item -ItemType Junction -Path $identityJunctionDir -Target $identitySrcDir | Out-Null
         Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked identity/ folder' -Arguments @('-Mode', 'populated', '-Path', $identityJunctionDir)
         Remove-Item -LiteralPath $identityJunctionDir -Force
+
+        # Case: an otherwise-legitimate external -Path root whose
+        # conditional-access/ or pim/ subdirectory is itself a junction back
+        # into the tracked identity/ folder must be rejected.
+        $nestedJunctionRoot = Join-Path $TempDir 'identity-nested-junction-root'
+        if (Test-Path -LiteralPath $nestedJunctionRoot) { Remove-Item -LiteralPath $nestedJunctionRoot -Recurse -Force }
+        New-Item -ItemType Directory -Path $nestedJunctionRoot -Force | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $nestedJunctionRoot 'conditional-access') -Target (Join-Path $identitySrcDir 'conditional-access') | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $nestedJunctionRoot 'pim') -Target (Join-Path $identitySrcDir 'pim') | Out-Null
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked conditional-access/ or pim/ subdirectory' -Arguments @('-Mode', 'populated', '-Path', $nestedJunctionRoot) -ExpectedMessage 'outside the tracked identity/ folder'
+        Remove-Item -LiteralPath $nestedJunctionRoot -Recurse -Force
 
         # Case: Windows drive-letter paths are case-insensitive at the
         # filesystem level, so a casing variant of the tracked identity/
