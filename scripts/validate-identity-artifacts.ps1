@@ -75,11 +75,11 @@ function Test-EmergencyPlaceholder {
 
     $placeholderValue = $Policy.emergencyAccessExclusion.placeholder
     if ($Mode -eq 'template') {
-        if ($placeholderValue -notmatch '^REPLACE_WITH_.+$') {
+        if ($placeholderValue -cnotmatch '^REPLACE_WITH_.+$') {
             Stop-Validation "$Name emergencyAccessExclusion.placeholder must be an unpopulated REPLACE_WITH_* input in template mode, found '$placeholderValue'."
         }
     } else {
-        if ($placeholderValue -match '^REPLACE_WITH_.+$') {
+        if ($placeholderValue -cmatch '^REPLACE_WITH_.+$') {
             Stop-Validation "$Name emergencyAccessExclusion.placeholder still contains an unpopulated REPLACE_WITH_* value; replace it with a real object ID before populated-mode validation."
         }
         if (-not (Test-Guid $placeholderValue)) {
@@ -114,7 +114,7 @@ function Assert-ExactStringArray {
     $expectedSorted = @($ExpectedValues | Sort-Object)
     $actualJson = ($actualSorted | ConvertTo-Json -Compress -AsArray)
     $expectedJson = ($expectedSorted | ConvertTo-Json -Compress -AsArray)
-    if ($actualJson -ne $expectedJson) {
+    if ($actualJson -cne $expectedJson) {
         Stop-Validation "$Name $Description must equal exactly $expectedJson (found $actualJson)."
     }
 }
@@ -145,7 +145,7 @@ foreach ($templateFile in $caTemplates) {
     $name = $templateFile.Name
     $policy = Get-Content -LiteralPath $templateFile.FullName -Raw | ConvertFrom-Json
 
-    if ($policy.state -ne 'enabledForReportingButNotEnforced') {
+    if ($policy.state -cne 'enabledForReportingButNotEnforced') {
         Stop-Validation "$name must default to state=enabledForReportingButNotEnforced (report-only), found '$($policy.state)'."
     }
 
@@ -170,7 +170,7 @@ foreach ($templateFile in $caTemplates) {
         $includeUsers = @($policy.conditions.users.includeUsers)
         if ($includeUsers.Count -eq 0) { Stop-Validation "$name conditions.users.includeUsers must not be empty." }
         foreach ($value in $includeUsers) {
-            if ($value -notin @('All', 'None', 'GuestsOrExternalUsers') -and -not (Test-Guid $value)) {
+            if ($value -cnotin @('All', 'None', 'GuestsOrExternalUsers') -and -not (Test-Guid $value)) {
                 Stop-Validation "$name conditions.users.includeUsers entry '$value' must be 'All', 'None', 'GuestsOrExternalUsers', or a user object ID (GUID)."
             }
         }
@@ -184,14 +184,25 @@ foreach ($templateFile in $caTemplates) {
             if (-not (Test-Guid $value)) {
                 Stop-Validation "$name conditions.users.includeRoles entry '$value' must be a directory role template ID (GUID), not a display name or 'All users'."
             }
-            if ($knownRoleIds -notcontains $value) {
+            if ($knownRoleIds -cnotcontains $value) {
                 Stop-Validation "$name conditions.users.includeRoles entry '$value' is not a known directory role template ID from identity/schema/known-entra-ids.json."
             }
         }
     }
 
-    $applications = @($policy.conditions.applications.includeApplications)
-    if ($applications.Count -eq 0) { Stop-Validation "$name conditions.applications.includeApplications must not be empty." }
+    $includeApplicationsPresent = $null -ne $policy.conditions.applications.PSObject.Properties['includeApplications']
+    $authContextPresent = $null -ne $policy.conditions.applications.PSObject.Properties['includeAuthenticationContextClassReferences']
+    if (-not $includeApplicationsPresent -and -not $authContextPresent) {
+        Stop-Validation "$name conditions.applications must declare includeApplications or includeAuthenticationContextClassReferences."
+    }
+    if ($includeApplicationsPresent -and $authContextPresent) {
+        Stop-Validation "$name conditions.applications must not declare both includeApplications and includeAuthenticationContextClassReferences (mutually exclusive Graph target shape)."
+    }
+    $applications = @()
+    if ($includeApplicationsPresent) {
+        $applications = @($policy.conditions.applications.includeApplications)
+        if ($applications.Count -eq 0) { Stop-Validation "$name conditions.applications.includeApplications must not be empty." }
+    }
 
     $clientAppTypes = @($policy.conditions.clientAppTypes)
     if ($clientAppTypes.Count -eq 0) { Stop-Validation "$name conditions.clientAppTypes must not be empty." }
@@ -202,7 +213,6 @@ foreach ($templateFile in $caTemplates) {
     # so a coherence check after both directories are processed can confirm
     # every PIM activation.authenticationContext has a matching, declared,
     # report-only Conditional Access policy actually enforcing it.
-    $authContextPresent = $null -ne $policy.conditions.applications.PSObject.Properties['includeAuthenticationContextClassReferences']
     $authContexts = @()
     if ($authContextPresent) {
         $authContexts = @($policy.conditions.applications.includeAuthenticationContextClassReferences)
@@ -210,10 +220,10 @@ foreach ($templateFile in $caTemplates) {
             Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences must not be empty."
         }
         foreach ($value in $authContexts) {
-            if ($value -notmatch $authContextPattern) {
+            if ($value -cnotmatch $authContextPattern) {
                 Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences entry '$value' must be a Graph authenticationContextClassReference id ('c1'..'c25')."
             }
-            if ($knownAuthContextIds -notcontains $value) {
+            if ($knownAuthContextIds -cnotcontains $value) {
                 Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences entry '$value' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
             }
             $caAuthContextValues += $value
@@ -227,7 +237,7 @@ foreach ($templateFile in $caTemplates) {
     $authStrengthPresent = $null -ne $policy.grantControls.PSObject.Properties['authenticationStrength']
     $builtInControls = @()
     if ($builtInControlsPresent) { $builtInControls = @($policy.grantControls.builtInControls) }
-    if ($builtInControls -contains 'authenticationStrength') {
+    if ($builtInControls -ccontains 'authenticationStrength') {
         Stop-Validation "$name grantControls.builtInControls must not contain 'authenticationStrength'; use the grantControls.authenticationStrength relationship object instead."
     }
     if (-not $builtInControlsPresent -and -not $authStrengthPresent) {
@@ -236,7 +246,7 @@ foreach ($templateFile in $caTemplates) {
     $authStrengthId = $null
     if ($authStrengthPresent) {
         $authStrengthId = $policy.grantControls.authenticationStrength.id
-        if ($knownAuthStrengthIds -notcontains $authStrengthId) {
+        if ($knownAuthStrengthIds -cnotcontains $authStrengthId) {
             Stop-Validation "$name grantControls.authenticationStrength.id '$authStrengthId' is not a known built-in authenticationStrengthPolicy id from identity/schema/known-entra-ids.json."
         }
     }
@@ -255,7 +265,7 @@ foreach ($templateFile in $caTemplates) {
             Assert-AbsentOrEmpty -ActualValues $authContexts -Name $name -Description 'conditions.applications.includeAuthenticationContextClassReferences'
             Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('all') -Name $name -Description 'conditions.clientAppTypes'
             if (-not $authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be set." }
-            if ($authStrengthId -ne $phishingResistantId) {
+            if ($authStrengthId -cne $phishingResistantId) {
                 Stop-Validation "$name grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy ($phishingResistantId)."
             }
             Assert-AbsentOrEmpty -ActualValues $builtInControls -Name $name -Description 'grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)'
@@ -284,12 +294,12 @@ foreach ($templateFile in $caTemplates) {
             if (-not $includeUsersPresent) { Stop-Validation "$name must scope the subject to all users with conditions.users.includeUsers." }
             Assert-ExactStringArray -ActualValues $includeUsers -ExpectedValues @('All') -Name $name -Description 'conditions.users.includeUsers'
             Assert-AbsentOrEmpty -ActualValues $includeRoles -Name $name -Description 'conditions.users.includeRoles'
-            Assert-ExactStringArray -ActualValues $applications -ExpectedValues @('All') -Name $name -Description 'conditions.applications.includeApplications'
+            Assert-AbsentOrEmpty -ActualValues $applications -Name $name -Description 'conditions.applications.includeApplications (this policy must target only the c1 authentication context, not a broader application scope; includeApplications and includeAuthenticationContextClassReferences are mutually exclusive)'
             if (-not $authContextPresent) { Stop-Validation "$name conditions.applications.includeAuthenticationContextClassReferences must be set (this policy exists to enforce the PIM activation authentication context)." }
             Assert-ExactStringArray -ActualValues $authContexts -ExpectedValues @('c1') -Name $name -Description 'conditions.applications.includeAuthenticationContextClassReferences'
             Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('all') -Name $name -Description 'conditions.clientAppTypes'
             if (-not $authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be set." }
-            if ($authStrengthId -ne $phishingResistantId) {
+            if ($authStrengthId -cne $phishingResistantId) {
                 Stop-Validation "$name grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy ($phishingResistantId)."
             }
             Assert-AbsentOrEmpty -ActualValues $builtInControls -Name $name -Description 'grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)'
@@ -310,7 +320,7 @@ foreach ($templateFile in $pimTemplates) {
     $name = $templateFile.Name
     $policy = Get-Content -LiteralPath $templateFile.FullName -Raw | ConvertFrom-Json
 
-    if ($policy.assignmentType -ne 'eligible') {
+    if ($policy.assignmentType -cne 'eligible') {
         Stop-Validation "$name assignmentType must be 'eligible' (never permanent), found '$($policy.assignmentType)'."
     }
 
@@ -329,11 +339,11 @@ foreach ($templateFile in $pimTemplates) {
     # input in template mode, a real object ID (GUID) in populated mode.
     foreach ($approver in $approvers) {
         if ($Mode -eq 'template') {
-            if ($approver -notmatch '^REPLACE_WITH_.+$') {
+            if ($approver -cnotmatch '^REPLACE_WITH_.+$') {
                 Stop-Validation "$name activation.approvers entry '$approver' must be an unpopulated REPLACE_WITH_* input in template mode."
             }
         } else {
-            if ($approver -match '^REPLACE_WITH_.+$') {
+            if ($approver -cmatch '^REPLACE_WITH_.+$') {
                 Stop-Validation "$name activation.approvers entry '$approver' still contains an unpopulated REPLACE_WITH_* value; replace it with a real object ID before populated-mode validation."
             }
             if (-not (Test-Guid $approver)) {
@@ -343,15 +353,16 @@ foreach ($templateFile in $pimTemplates) {
     }
 
     $duration = $policy.activation.maximumActivationDurationHours
-    if ($duration -lt 1 -or $duration -gt 8) {
+    $durationIsInteger = ($duration -is [int]) -or ($duration -is [long]) -or ($duration -is [int32]) -or ($duration -is [int64])
+    if (-not $durationIsInteger -or $duration -lt 1 -or $duration -gt 8) {
         Stop-Validation "$name activation.maximumActivationDurationHours must be an integer between 1 and 8, found '$duration'."
     }
 
     $authContext = $policy.activation.authenticationContext
-    if ($authContext -notmatch $authContextPattern) {
+    if ($authContext -cnotmatch $authContextPattern) {
         Stop-Validation "$name activation.authenticationContext must be a Graph authenticationContextClassReference id ('c1'..'c25'), found '$authContext'."
     }
-    if ($knownAuthContextIds -notcontains $authContext) {
+    if ($knownAuthContextIds -cnotcontains $authContext) {
         Stop-Validation "$name activation.authenticationContext '$authContext' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
     }
     $pimAuthContextValues += $authContext
@@ -371,7 +382,7 @@ Write-Host "PIM activation templates validated (mode=$Mode): $($pimTemplates.Cou
 # authentication context that no report-only Conditional Access policy in
 # this repository enforces, leaving the Graph workflow incoherent.
 foreach ($pimContext in $pimAuthContextValues) {
-    if ($caAuthContextValues -notcontains $pimContext) {
+    if ($caAuthContextValues -cnotcontains $pimContext) {
         Stop-Validation "PIM activation.authenticationContext '$pimContext' has no matching Conditional Access policy declaring it in conditions.applications.includeAuthenticationContextClassReferences; add one under $caDir so the PIM activation control is actually enforced."
     }
 }
@@ -386,7 +397,7 @@ if ($Mode -eq 'template') {
     foreach ($jsonFile in $jsonFiles) {
         $guidMatches = [regex]::Matches((Get-Content -LiteralPath $jsonFile.FullName -Raw), $guidScanPattern)
         foreach ($match in $guidMatches) {
-            if ($allowedGuids -notcontains $match.Value) {
+            if ($allowedGuids -cnotcontains $match.Value) {
                 Stop-Validation "A tenant-specific GUID ($($match.Value)) was found in $($jsonFile.Name). Replace it with a REPLACE_WITH_* placeholder, or add it to identity/schema/known-entra-ids.json only if it is a public Microsoft constant."
             }
         }

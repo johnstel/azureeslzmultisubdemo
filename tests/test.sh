@@ -339,6 +339,50 @@ jq '.conditions.applications.includeAuthenticationContextClassReferences = ["c1"
   && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-pim-activation-mfa.template.json"
 expect_identity_validation_failure "broadened authentication context set on ca-pim-activation-mfa" --path "${IDENTITY_NEG_DIR}"
 
+# Case: ca-pim-activation-mfa must target only
+# includeAuthenticationContextClassReferences; conditions.applications is a
+# mutually exclusive Graph target shape, so re-adding includeApplications
+# alongside it must fail.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.conditions.applications.includeApplications = ["All"]' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-pim-activation-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-pim-activation-mfa.template.json"
+expect_identity_validation_failure "includeApplications re-added alongside includeAuthenticationContextClassReferences on ca-pim-activation-mfa" --path "${IDENTITY_NEG_DIR}"
+
+# Case: semantic string/enum comparisons must be case-sensitive, matching
+# Microsoft Graph's case-sensitive literals; an uppercased 'ALL' must not be
+# silently accepted as 'All'.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.conditions.users.includeUsers = ["ALL"]' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-azure-mgmt-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-azure-mgmt-mfa.template.json"
+expect_identity_validation_failure "case-mutated 'ALL' includeUsers value" --path "${IDENTITY_NEG_DIR}"
+
+# Case: an uppercased 'MFA' builtInControls entry must not be silently
+# accepted as the lowercase Graph literal 'mfa'.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.grantControls.builtInControls = ["MFA"]' \
+  "${IDENTITY_NEG_DIR}/conditional-access/ca-azure-mgmt-mfa.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/conditional-access/ca-azure-mgmt-mfa.template.json"
+expect_identity_validation_failure "case-mutated 'MFA' builtInControls value" --path "${IDENTITY_NEG_DIR}"
+
+# Case: an uppercased 'C1' PIM activation.authenticationContext must not be
+# silently accepted as the lowercase Graph claim value 'c1'.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.activation.authenticationContext = "C1"' \
+  "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+expect_identity_validation_failure "case-mutated 'C1' PIM authenticationContext value" --path "${IDENTITY_NEG_DIR}"
+
+# Case: PIM activation.maximumActivationDurationHours must be a true integer
+# from 1 through 8; a fractional value must fail even though it falls within
+# the numeric range.
+rm -rf "${IDENTITY_NEG_DIR}" && cp -r "${IDENTITY_SRC_DIR}" "${IDENTITY_NEG_DIR}"
+jq '.activation.maximumActivationDurationHours = 2.5' \
+  "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+expect_identity_validation_failure "fractional PIM maximumActivationDurationHours value" --path "${IDENTITY_NEG_DIR}"
+
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
 printf '\nAll local validation and safety tests passed.\n'

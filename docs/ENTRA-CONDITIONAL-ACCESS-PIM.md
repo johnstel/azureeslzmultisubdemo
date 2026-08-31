@@ -70,13 +70,18 @@ Every field follows the shape Microsoft Graph actually expects for a
 - `conditions.applications.includeAuthenticationContextClassReferences`, when
   present, contains only Graph `authenticationContextClassReference` ids
   (`c1`–`c25`) recorded in `identity/schema/known-entra-ids.json` — never a
-  display name. `ca-pim-activation-mfa.template.json` is the Conditional
+  display name. Microsoft Graph models `conditions.applications` as a
+  mutually exclusive choice: a policy scopes either by
+  `includeApplications` or by `includeAuthenticationContextClassReferences`,
+  never both. `ca-pim-activation-mfa.template.json` is the Conditional
   Access side of the `c1` ("PIM privileged-role activation") authentication
-  context: it enforces phishing-resistant MFA whenever that context is
-  invoked, and every PIM template's `activation.authenticationContext` must
-  reference a `c1`–`c25` id that some committed Conditional Access template
-  actually declares — the validators cross-check this and fail if a PIM
-  template references a context with no enforcing Conditional Access policy.
+  context: it scopes only by `includeAuthenticationContextClassReferences:
+  ["c1"]` (no `includeApplications`) and enforces phishing-resistant MFA
+  whenever that context is invoked, and every PIM template's
+  `activation.authenticationContext` must reference a `c1`–`c25` id that
+  some committed Conditional Access template actually declares — the
+  validators cross-check this and fail if a PIM template references a
+  context with no enforcing Conditional Access policy.
 
 ## Required Entra licenses
 
@@ -236,16 +241,19 @@ purely by reading JSON files on local disk:
   only contains `All`, `None`, `GuestsOrExternalUsers`, or object IDs, and
   `includeRoles` only contains known directory role template IDs (GUIDs),
   never display names or `All users`;
-- `conditions.applications.includeApplications` and
-  `conditions.clientAppTypes` are non-empty, and each of the four named
-  Conditional Access templates matches its intended subject, application,
-  client-type, and grant-control combination **exactly** — not just a
-  superset — so a template cannot be silently broadened (for example,
+- `conditions.applications.includeApplications` or
+  `includeAuthenticationContextClassReferences` (mutually exclusive — never
+  both) and `conditions.clientAppTypes` are non-empty, and each of the four
+  named Conditional Access templates matches its intended subject,
+  application, client-type, and grant-control combination **exactly** — not
+  just a superset — so a template cannot be silently broadened (for example,
   `ca-block-legacy-auth` must scope `clientAppTypes` to exactly the legacy
   protocol set and grant exactly `block`; `ca-privileged-role-mfa` must
   reference exactly the six intended privileged role IDs and must not also
   declare `includeUsers` or an additional `builtInControls` entry alongside
-  its `authenticationStrength` relationship);
+  its `authenticationStrength` relationship; `ca-pim-activation-mfa` must
+  scope only by `includeAuthenticationContextClassReferences` and must not
+  also declare `includeApplications`);
 - `grantControls.authenticationStrength`, when present, references a known
   built-in `authenticationStrengthPolicy` id and is never duplicated as a
   `grantControls.builtInControls` string;
@@ -254,6 +262,15 @@ purely by reading JSON files on local disk:
   `authenticationContextClassReference` id (`c1`–`c25`), never a display
   name, and every PIM-referenced authentication context has at least one
   committed Conditional Access template enforcing it;
+- every PIM `activation.maximumActivationDurationHours` is a true integer
+  from 1 through 8 (a fractional value such as `2.5` fails in both Bash and
+  PowerShell, not just against the JSON Schema);
+- all of the above literal/enum comparisons (`All`, `mfa`, `c1`,
+  `enabledForReportingButNotEnforced`, `eligible`, directory role and
+  authentication-strength/-context ids, etc.) are **case-sensitive** in both
+  the Bash and PowerShell validators, matching Microsoft Graph's
+  case-sensitive literals — a mutated value such as `ALL`, `MFA`, or `C1`
+  fails validation exactly like an unrecognized value would;
 - in template mode only, no tenant-specific GUID (other than the public,
   well-known Microsoft constants in `identity/schema/known-entra-ids.json`)
   appears anywhere under `identity/`.

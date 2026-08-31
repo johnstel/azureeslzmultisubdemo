@@ -68,7 +68,6 @@
         },
         "applications": {
           "type": "object",
-          "required": ["includeApplications"],
           "additionalProperties": false,
           "properties": {
             "includeApplications": {
@@ -85,7 +84,18 @@
               },
               "description": "Microsoft Graph authenticationContextClassReference id(s) ('c1'..'c25') that scope this policy to a specific claim raised by a resource, e.g. by PIM role activation. Fixed, tenant-independent Graph claim values documented in identity/schema/known-entra-ids.json; must stay coherent with any identity/pim/*.template.json activation.authenticationContext that references the same id."
             }
-          }
+          },
+          "oneOf": [
+            {
+              "required": ["includeApplications"],
+              "not": { "required": ["includeAuthenticationContextClassReferences"] }
+            },
+            {
+              "required": ["includeAuthenticationContextClassReferences"],
+              "not": { "required": ["includeApplications"] }
+            }
+          ],
+          "description": "Mutually exclusive Graph target shape: a policy either scopes to application(s) via includeApplications, or scopes to a specific authentication context via includeAuthenticationContextClassReferences, never both at once."
         },
         "clientAppTypes": {
           "type": "array",

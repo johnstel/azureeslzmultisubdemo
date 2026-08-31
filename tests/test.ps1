@@ -463,6 +463,60 @@ try {
     }
     Expect-IdentityValidationFailure -Description 'broadened authentication context set on ca-pim-activation-mfa' -Arguments @('-Path', $identityNegDir)
 
+    # Case: ca-pim-activation-mfa must target only
+    # includeAuthenticationContextClassReferences; conditions.applications is
+    # a mutually exclusive Graph target shape, so re-adding
+    # includeApplications alongside it must fail.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-pim-activation-mfa.template.json') -Mutate {
+        param($policy)
+        $policy.conditions.applications | Add-Member -MemberType NoteProperty -Name 'includeApplications' -Value @('All') -Force
+    }
+    Expect-IdentityValidationFailure -Description 'includeApplications re-added alongside includeAuthenticationContextClassReferences on ca-pim-activation-mfa' -Arguments @('-Path', $identityNegDir)
+
+    # Case: semantic string/enum comparisons must be case-sensitive, matching
+    # Microsoft Graph's case-sensitive literals; an uppercased 'ALL' must not
+    # be silently accepted as 'All'.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-azure-mgmt-mfa.template.json') -Mutate {
+        param($policy)
+        $policy.conditions.users.includeUsers = @('ALL')
+    }
+    Expect-IdentityValidationFailure -Description "case-mutated 'ALL' includeUsers value" -Arguments @('-Path', $identityNegDir)
+
+    # Case: an uppercased 'MFA' builtInControls entry must not be silently
+    # accepted as the lowercase Graph literal 'mfa'.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'conditional-access/ca-azure-mgmt-mfa.template.json') -Mutate {
+        param($policy)
+        $policy.grantControls.builtInControls = @('MFA')
+    }
+    Expect-IdentityValidationFailure -Description "case-mutated 'MFA' builtInControls value" -Arguments @('-Path', $identityNegDir)
+
+    # Case: an uppercased 'C1' PIM activation.authenticationContext must not
+    # be silently accepted as the lowercase Graph claim value 'c1'.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'pim/pim-activation-global-administrator.template.json') -Mutate {
+        param($policy)
+        $policy.activation.authenticationContext = 'C1'
+    }
+    Expect-IdentityValidationFailure -Description "case-mutated 'C1' PIM authenticationContext value" -Arguments @('-Path', $identityNegDir)
+
+    # Case: PIM activation.maximumActivationDurationHours must be a true
+    # integer from 1 through 8; a fractional value must fail even though it
+    # falls within the numeric range.
+    if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
+    Copy-Item -LiteralPath $identitySrcDir -Destination $identityNegDir -Recurse
+    Set-JsonProperty -FilePath (Join-Path $identityNegDir 'pim/pim-activation-global-administrator.template.json') -Mutate {
+        param($policy)
+        $policy.activation.maximumActivationDurationHours = 2.5
+    }
+    Expect-IdentityValidationFailure -Description 'fractional PIM maximumActivationDurationHours value' -Arguments @('-Path', $identityNegDir)
+
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 

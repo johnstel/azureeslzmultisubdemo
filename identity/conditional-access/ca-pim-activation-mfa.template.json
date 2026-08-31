@@ -9,7 +9,6 @@
       ]
     },
     "applications": {
-      "includeApplications": ["All"],
       "includeAuthenticationContextClassReferences": ["c1"]
     },
     "clientAppTypes": ["all"]

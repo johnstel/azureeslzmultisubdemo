@@ -242,9 +242,22 @@ for template in "${ca_dir}"/*.template.json; do
     done
   fi
 
-  # Application scope must be present and non-empty.
-  application_count="$(jq '.conditions.applications.includeApplications | length' "${template}")"
-  [[ "${application_count}" -ge 1 ]] || fail "${name} conditions.applications.includeApplications must not be empty."
+  # Application scope: Graph models this as a mutually exclusive choice
+  # between conditions.applications.includeApplications (broad application
+  # scoping) and conditions.applications.includeAuthenticationContextClassReferences
+  # (a specific authentication-context claim scope, e.g. raised by PIM role
+  # activation) -- never both on the same policy.
+  include_applications_present="$(jq '.conditions.applications | has("includeApplications")' "${template}")"
+  auth_context_present="$(jq '.conditions.applications | has("includeAuthenticationContextClassReferences")' "${template}")"
+  [[ "${include_applications_present}" == "true" || "${auth_context_present}" == "true" ]] || \
+    fail "${name} conditions.applications must declare includeApplications or includeAuthenticationContextClassReferences."
+  if [[ "${include_applications_present}" == "true" && "${auth_context_present}" == "true" ]]; then
+    fail "${name} conditions.applications must not declare both includeApplications and includeAuthenticationContextClassReferences (mutually exclusive Graph target shape)."
+  fi
+  if [[ "${include_applications_present}" == "true" ]]; then
+    application_count="$(jq '.conditions.applications.includeApplications | length' "${template}")"
+    [[ "${application_count}" -ge 1 ]] || fail "${name} conditions.applications.includeApplications must not be empty."
+  fi
 
   # Client app types must be present and non-empty.
   client_app_type_count="$(jq '.conditions.clientAppTypes | length' "${template}")"
@@ -256,7 +269,6 @@ for template in "${ca_dir}"/*.template.json; do
   # a coherence check after both directories are processed can confirm every
   # PIM activation.authenticationContext has a matching, declared, report-only
   # Conditional Access policy actually enforcing it.
-  auth_context_present="$(jq '.conditions.applications | has("includeAuthenticationContextClassReferences")' "${template}")"
   if [[ "${auth_context_present}" == "true" ]]; then
     read_lines_into auth_contexts < <(jq -r '.conditions.applications.includeAuthenticationContextClassReferences[]' "${template}")
     [[ "${#auth_contexts[@]}" -ge 1 ]] || \
@@ -359,8 +371,8 @@ for template in "${ca_dir}"/*.template.json; do
         "conditions.users.includeUsers" "All"
       assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeRoles' \
         "conditions.users.includeRoles"
-      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
-        "conditions.applications.includeApplications" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications (this policy must target only the c1 authentication context, not a broader application scope; includeApplications and includeAuthenticationContextClassReferences are mutually exclusive)"
       [[ "${auth_context_present}" == "true" ]] || \
         fail "${name} conditions.applications.includeAuthenticationContextClassReferences must be set (this policy exists to enforce the PIM activation authentication context)."
       assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
