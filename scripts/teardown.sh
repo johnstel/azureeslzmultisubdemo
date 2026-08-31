@@ -33,6 +33,11 @@ owners_group="$(value subscriptionOwnersGroupObjectId)"
 network_group="$(value networkOperatorsGroupObjectId)"
 workload_group="$(value workloadContributorsGroupObjectId)"
 auditors_group="$(value readOnlyAuditorsGroupObjectId)"
+critical_enabled="$(jq -r '.parameters.enableCriticalInfrastructure.value // false' "${PARAMETER_FILE}")"
+critical_subscriptions=()
+while IFS= read -r critical_subscription_id; do
+  [[ -n "${critical_subscription_id}" ]] && critical_subscriptions+=("${critical_subscription_id}")
+done < <(jq -r '.parameters.criticalInfrastructureSubscriptionIds.value // [] | .[]' "${PARAMETER_FILE}")
 
 demo_root_scope="/providers/Microsoft.Management/managementGroups/${prefix}"
 platform_scope="/providers/Microsoft.Management/managementGroups/${prefix}-platform"
@@ -41,13 +46,32 @@ connectivity_scope="/subscriptions/${connectivity_subscription}"
 subscription_workload_scope="/subscriptions/${workload_subscription}"
 
 print_plan() {
+  local step_number=1
   printf 'TEARDOWN PLAN (reverse dependency order)\n'
-  printf '  1. Delete resource groups rg-%s-connectivity and rg-%s-%s-demo if present.\n' "${prefix}" "${prefix}" "${archetype}"
-  printf '  2. Delete only the seven demo role assignments for the five groups at their documented scopes.\n'
-  printf '  3. Delete demo policy assignments and the five custom policy definitions.\n'
-  printf '  4. Move subscriptions %s and %s back to %s.\n' "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
-  printf '  5. Delete management groups %s-connectivity, %s-platform, %s-%s, %s-landingzones, then %s.\n' \
-    "${prefix}" "${prefix}" "${prefix}" "${archetype}" "${prefix}" "${prefix}"
+  printf '  %d. Delete resource groups rg-%s-connectivity and rg-%s-%s-demo if present.\n' "${step_number}" "${prefix}" "${prefix}" "${archetype}"
+  step_number=$((step_number + 1))
+  printf '  %d. Delete only the seven demo role assignments for the five groups at their documented scopes.\n' "${step_number}"
+  step_number=$((step_number + 1))
+  printf '  %d. Delete demo policy assignments and the five custom policy definitions.\n' "${step_number}"
+  step_number=$((step_number + 1))
+  printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
+  step_number=$((step_number + 1))
+  if [[ "${critical_enabled}" == 'true' && ${#critical_subscriptions[@]} -gt 0 ]]; then
+    local critical_subscriptions_joined="${critical_subscriptions[0]}"
+    local critical_subscription_index
+    for ((critical_subscription_index = 1; critical_subscription_index < ${#critical_subscriptions[@]}; critical_subscription_index++)); do
+      critical_subscriptions_joined="${critical_subscriptions_joined}, ${critical_subscriptions[critical_subscription_index]}"
+    done
+    printf '  %d. Move critical infrastructure subscriptions (%s) back to %s.\n' "${step_number}" "${critical_subscriptions_joined}" "${tenant_root}"
+    step_number=$((step_number + 1))
+  fi
+  if [[ "${critical_enabled}" == 'true' ]]; then
+    printf '  %d. Delete management groups %s-connectivity, %s-platform, %s-%s, %s-criticalinfra, %s-landingzones, then %s.\n' \
+      "${step_number}" "${prefix}" "${prefix}" "${prefix}" "${archetype}" "${prefix}" "${prefix}" "${prefix}"
+  else
+    printf '  %d. Delete management groups %s-connectivity, %s-platform, %s-%s, %s-landingzones, then %s.\n' \
+      "${step_number}" "${prefix}" "${prefix}" "${prefix}" "${archetype}" "${prefix}" "${prefix}"
+  fi
   printf '\nSubscriptions and Entra groups are never deleted.\n'
 }
 
@@ -123,9 +147,18 @@ done
 az account management-group subscription add --name "${tenant_root}" --subscription "${connectivity_subscription}"
 az account management-group subscription add --name "${tenant_root}" --subscription "${workload_subscription}"
 
+if [[ "${critical_enabled}" == 'true' ]]; then
+  for critical_subscription in "${critical_subscriptions[@]}"; do
+    az account management-group subscription add --name "${tenant_root}" --subscription "${critical_subscription}"
+  done
+fi
+
 az account management-group delete --name "${prefix}-connectivity"
 az account management-group delete --name "${prefix}-platform"
 az account management-group delete --name "${prefix}-${archetype}"
+if [[ "${critical_enabled}" == 'true' ]]; then
+  az account management-group delete --name "${prefix}-criticalinfra"
+fi
 az account management-group delete --name "${prefix}-landingzones"
 az account management-group delete --name "${prefix}"
 

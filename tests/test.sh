@@ -19,7 +19,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/11 Validate repository versioning and branch guidance...\n'
+printf '1/14 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -30,10 +30,10 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/11 Build the complete tenant template...\n'
+printf '2/14 Build the complete tenant template...\n'
 az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json"
 
-printf '3/11 Validate the ARM parameter template...\n'
+printf '3/14 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -43,14 +43,14 @@ az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
 
-printf '4/11 Confirm there are exactly two subscription associations...\n'
-association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions")] | length' "${TEMP_DIR}/main.json")"
+printf '4/14 Confirm there are exactly two unconditional subscription associations...\n'
+association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
-  printf 'ERROR: Expected 2 subscription association resources, found %s.\n' "${association_count}" >&2
+  printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/11 Confirm no paid always-on resource types are declared...\n'
+printf '5/14 Confirm no paid always-on resource types are declared...\n'
 if rg -n \
   "Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)" \
   "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" \
@@ -59,13 +59,13 @@ if rg -n \
   exit 1
 fi
 
-printf '6/11 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/14 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/11 Confirm five distinct Entra group parameters and guarded scripts...\n'
+printf '7/14 Confirm five distinct Entra group parameters and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 5 ]] || {
   printf 'ERROR: Expected five Entra security-group parameters.\n' >&2
@@ -76,12 +76,85 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/11 Confirm region policy safely permits global resources...\n'
+printf '8/14 Confirm region policy safely permits global resources...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
 
-printf '9/11 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '9/14 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
+rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
+rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
+jq -e '
+  .parameters.enableCriticalInfrastructure.defaultValue == false and
+  .parameters.criticalInfrastructureSubscriptionIds.defaultValue == []
+' "${TEMP_DIR}/main.json" >/dev/null
+critical_mg_count="$(jq '
+  [.. | objects
+    | select(.type? == "Microsoft.Management/managementGroups")
+    | select(.properties.displayName? == "Critical Infrastructure")
+    | select(.condition == "[parameters(\u0027enableCriticalInfrastructure\u0027)]")
+    | select(.properties.details.parent.id? | test("landingZonesManagementGroupId"))
+  ] | length
+' "${TEMP_DIR}/main.json")"
+[[ "${critical_mg_count}" -eq 1 ]] || {
+  printf 'ERROR: Expected exactly one gated Critical Infrastructure management group parented under Landing Zones.\n' >&2
+  exit 1
+}
+critical_sub_count="$(jq '
+  [.. | objects
+    | select(.type? == "Microsoft.Management/managementGroups/subscriptions")
+    | select(.condition == "[parameters(\u0027enableCriticalInfrastructure\u0027)]")
+    | select(.copy.count? == "[length(parameters(\u0027criticalInfrastructureSubscriptionIds\u0027))]")
+  ] | length
+' "${TEMP_DIR}/main.json")"
+[[ "${critical_sub_count}" -eq 1 ]] || {
+  printf 'ERROR: Expected the Critical Infrastructure subscription associations to be gated and count-bound to criticalInfrastructureSubscriptionIds.\n' >&2
+  exit 1
+}
+jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
+
+printf '10/14 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
+rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
+critical_validation_var_count="$(jq '
+  [.. | objects
+    | select(.type? == "Microsoft.Resources/deployments")
+    | .properties.template.variables
+    | select(has("hasDuplicateCriticalInfrastructureSubscriptionIds") and has("criticalInfrastructureSubscriptionIdsOverlapRequiredSubscriptions"))
+    | select(.criticalInfrastructureManagementGroupIdValidated? | contains("fail("))
+  ] | length
+' "${TEMP_DIR}/main.json")"
+[[ "${critical_validation_var_count}" -eq 1 ]] || {
+  printf 'ERROR: Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.\n' >&2
+  exit 1
+}
+
+printf '11/14 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
+critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
+landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
+[[ -n "${critical_sub_move_line}" && -n "${critical_mg_delete_line}" && -n "${landingzones_delete_line}" ]] || {
+  printf 'ERROR: teardown.sh is missing the critical infrastructure subscription move or management group deletion.\n' >&2
+  exit 1
+}
+[[ "${critical_sub_move_line}" -lt "${critical_mg_delete_line}" && "${critical_mg_delete_line}" -lt "${landingzones_delete_line}" ]] || {
+  printf 'ERROR: teardown.sh must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.\n' >&2
+  exit 1
+}
+critical_sub_move_line_ps1="$(rg -n 'az account management-group subscription add --name \$tenantRoot --subscription \$criticalSubscription' "${PROJECT_DIR}/scripts/teardown.ps1" | head -1 | cut -d: -f1)"
+critical_mg_delete_line_ps1="$(rg -n '"\$prefix-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.ps1" | head -1 | cut -d: -f1)"
+landingzones_delete_line_ps1="$(rg -n '"\$prefix-landingzones"' "${PROJECT_DIR}/scripts/teardown.ps1" | head -1 | cut -d: -f1)"
+[[ -n "${critical_sub_move_line_ps1}" && -n "${critical_mg_delete_line_ps1}" && -n "${landingzones_delete_line_ps1}" ]] || {
+  printf 'ERROR: teardown.ps1 is missing the critical infrastructure subscription move or management group deletion.\n' >&2
+  exit 1
+}
+[[ "${critical_sub_move_line_ps1}" -lt "${critical_mg_delete_line_ps1}" && "${critical_mg_delete_line_ps1}" -lt "${landingzones_delete_line_ps1}" ]] || {
+  printf 'ERROR: teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.\n' >&2
+  exit 1
+}
+
+printf '12/14 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done
@@ -111,10 +184,10 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '10/11 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '13/14 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '11/11 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '14/14 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"

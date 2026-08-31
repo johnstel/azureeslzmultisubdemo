@@ -49,6 +49,12 @@
     },
     "evidenceLocation": {
       "value": "eastus2"
+    },
+    "enableCriticalInfrastructure": {
+      "value": false
+    },
+    "criticalInfrastructureSubscriptionIds": {
+      "value": []
     }
   }
 }
