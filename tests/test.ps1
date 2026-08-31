@@ -19,7 +19,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/14 Validate repository versioning and branch guidance...'
+    Write-Host '1/15 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -37,7 +37,7 @@ try {
         }
     }
 
-    Write-Host '2/14 Build the complete tenant template...'
+    Write-Host '2/15 Build the complete tenant template...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -45,7 +45,7 @@ try {
         Stop-Test 'main.bicep build must not emit a BCP318 nullable-module-output warning.'
     }
 
-    Write-Host '3/14 Validate both parameter templates...'
+    Write-Host '3/15 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -62,7 +62,7 @@ try {
         --outfile (Join-Path $TempDir 'main.parameters.json')
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
 
-    Write-Host '4/14 Confirm there are exactly two subscription associations...'
+    Write-Host '4/15 Confirm there are exactly two subscription associations...'
     $compiledText = Get-Content -LiteralPath $compiledTemplate -Raw
     $associationCount = ([regex]::Matches(
         $compiledText,
@@ -72,7 +72,7 @@ try {
         Stop-Test "Expected 2 subscription association resources, found $associationCount."
     }
 
-    Write-Host '5/14 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    Write-Host '5/15 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
     $bicepFiles = @(
         Get-Item (Join-Path $ProjectDir 'main.bicep')
         Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
@@ -85,14 +85,14 @@ try {
         }
     }
 
-    Write-Host '6/14 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/15 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/14 Confirm five Entra group parameters and guarded lifecycle scripts...'
+    Write-Host '7/15 Confirm five Entra group parameters and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
@@ -111,7 +111,7 @@ try {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/14 Confirm the region policy safely permits global resources...'
+    Write-Host '8/15 Confirm the region policy safely permits global resources...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -123,7 +123,7 @@ try {
         }
     }
 
-    Write-Host '9/14 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '9/15 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -144,7 +144,7 @@ try {
         }
     }
 
-    Write-Host '10/14 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '10/15 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -156,7 +156,7 @@ try {
         }
     }
 
-    Write-Host '11/14 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '11/15 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -164,7 +164,7 @@ try {
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '12/14 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '12/15 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -176,7 +176,7 @@ try {
         }
     }
 
-    Write-Host '13/14 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '13/15 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -184,13 +184,77 @@ try {
             Stop-Test "scripts/teardown.sh is missing monitoring teardown safety text: $requiredText"
         }
     }
-    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'Test-ProtectedExistingWorkspaceGroup', 'monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and [string]::IsNullOrWhiteSpace($existingWorkspaceResourceId)', 'Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup')) {
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'Test-ProtectedExistingWorkspaceGroup', '$existingWorkspaceSupplied = $existingWorkspaceResourceId.Length -gt 0', '$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied', 'Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup')) {
         if (-not $teardownPs1Text.Contains($requiredText)) {
             Stop-Test "scripts/teardown.ps1 is missing monitoring teardown safety text: $requiredText"
         }
     }
+    if ($teardownPs1Text.Contains('IsNullOrWhiteSpace($existingWorkspaceResourceId)')) {
+        Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
+    }
 
-    Write-Host '14/14 Parse every PowerShell lifecycle and test script...'
+    Write-Host '14/15 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    $mockBinDir = Join-Path $TempDir 'mockbin'
+    New-Item -ItemType Directory -Path $mockBinDir | Out-Null
+    $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
+    $mockAzPath = Join-Path $mockBinDir 'az'
+    @'
+#!/usr/bin/env bash
+echo "$*" >> "${AZ_CALL_LOG}"
+if [[ "$1" == 'group' && "$2" == 'exists' ]]; then
+  echo 'true'
+  exit 0
+fi
+exit 0
+'@ | Set-Content -LiteralPath $mockAzPath -NoNewline
+    if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod +x $mockAzPath }
+
+    $whitespaceParamFile = Join-Path $TempDir 'whitespace.parameters.json'
+    $templateJson = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
+    $templateJson.parameters.tenantRootManagementGroupId.value = 'mg-root'
+    $templateJson.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
+    $templateJson.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
+    $templateJson.parameters.governanceAdminsGroupObjectId.value = '33333333-3333-3333-3333-333333333333'
+    $templateJson.parameters.subscriptionOwnersGroupObjectId.value = '44444444-4444-4444-4444-444444444444'
+    $templateJson.parameters.networkOperatorsGroupObjectId.value = '55555555-5555-5555-5555-555555555555'
+    $templateJson.parameters.workloadContributorsGroupObjectId.value = '66666666-6666-6666-6666-666666666666'
+    $templateJson.parameters.readOnlyAuditorsGroupObjectId.value = '77777777-7777-7777-7777-777777777777'
+    $templateJson.parameters.deployCentralLogAnalytics.value = $true
+    $templateJson.parameters.existingLogAnalyticsWorkspaceResourceId.value = '   '
+    $templateJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $whitespaceParamFile
+
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
+        New-Item -ItemType File -Path $azCallLog | Out-Null
+        $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
+        $env:AZ_CALL_LOG = $azCallLog
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        'eslz-demo' | & bash (Join-Path $ProjectDir 'scripts/teardown.sh') $whitespaceParamFile --execute | Out-Null
+        Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
+        Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+        $azCalls = Get-Content -LiteralPath $azCallLog -Raw
+        if ($azCalls -match 'rg-eslz-demo-monitoring') {
+            Stop-Test 'teardown.sh must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+        }
+    }
+
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
+        New-Item -ItemType File -Path $azCallLog | Out-Null
+        $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
+        $env:AZ_CALL_LOG = $azCallLog
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        $ps1Script = Join-Path $ProjectDir 'scripts/teardown.ps1'
+        & bash -c "echo 'eslz-demo' | pwsh -NoLogo -NoProfile -File '$ps1Script' '$whitespaceParamFile' -Execute" | Out-Null
+        Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
+        Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+        $azCalls = Get-Content -LiteralPath $azCallLog -Raw
+        if ($azCalls -match 'rg-eslz-demo-monitoring') {
+            Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+        }
+    }
+
+    Write-Host '15/15 Parse every PowerShell lifecycle and test script...'
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
         Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'

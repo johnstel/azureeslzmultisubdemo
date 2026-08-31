@@ -88,10 +88,16 @@ $centralLogAnalyticsEnabled = Get-OptionalBoolValue 'deployCentralLogAnalytics' 
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
 # by this script, regardless of any naming collision with a generated resource group name.
+# Presence is determined by string length only (matching Bicep's empty() and Bash's -n/-z
+# tests), NOT by IsNullOrWhiteSpace: Bicep's conflict guard treats any non-empty string
+# (including a whitespace-only one) as "an existing workspace was supplied", so teardown
+# must use the identical semantics or it could misclassify the monitoring resource group as
+# repository-owned when Bicep actually refused to create it.
 $existingWorkspaceResourceId = Get-OptionalStringValue 'existingLogAnalyticsWorkspaceResourceId' ''
+$existingWorkspaceSupplied = $existingWorkspaceResourceId.Length -gt 0
 $existingWorkspaceSubscription = ''
 $existingWorkspaceResourceGroup = ''
-if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceId)) {
+if ($existingWorkspaceSupplied) {
     # Resource ID shape: /subscriptions/<sub>/resourceGroups/<rg>/providers/<ns>/<type>/<name>
     $existingWorkspaceIdParts = $existingWorkspaceResourceId -split '/'
     if ($existingWorkspaceIdParts.Length -gt 2) { $existingWorkspaceSubscription = $existingWorkspaceIdParts[2] }
@@ -107,9 +113,10 @@ $monitoringResourceGroupName = "rg-$prefix-monitoring"
 # The monitoring resource group is only repository-owned (and thus safe to delete) when a
 # new workspace was requested without also supplying an existing workspace resource ID. This
 # mirrors the conflict guard in modules/central-monitoring.bicep: a conflicting configuration
-# (deployCentralLogAnalytics=true AND a non-empty existingLogAnalyticsWorkspaceResourceId)
-# never creates a monitoring resource group there, so teardown must not delete one either.
-$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and [string]::IsNullOrWhiteSpace($existingWorkspaceResourceId)
+# (deployCentralLogAnalytics=true AND a non-empty existingLogAnalyticsWorkspaceResourceId,
+# including a whitespace-only one) never creates a monitoring resource group there, so
+# teardown must not delete one either.
+$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied
 
 # Returns $true when the given subscription/resource-group pair matches the supplied
 # existing workspace's subscription/resource group, meaning it must never be deleted here.
