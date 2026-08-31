@@ -93,7 +93,7 @@ param deploySentinel bool = false
 @description('Resource ID of an existing customer-owned Log Analytics workspace to reuse as the effective monitoring workspace. This is the default integration path and must not be set at the same time as deployCentralLogAnalytics=true.')
 param existingLogAnalyticsWorkspaceResourceId string = ''
 
-@description('Region for a newly created central Log Analytics workspace. Ignored when reusing an existing workspace.')
+@description('Region for a newly created central Log Analytics workspace, restricted to the same continental-US allowlist as evidenceLocation to stay within this demo policy and cost scope. Ignored when reusing an existing workspace.')
 @allowed([
   'centralus'
   'eastus'

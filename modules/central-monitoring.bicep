@@ -86,7 +86,7 @@ module existingWorkspaceSentinel 'central-monitoring-sentinel.bicep' = if (useEx
 
 @description('Deterministic resource ID of the effective monitoring workspace, or empty when no valid workspace input is configured.')
 output effectiveLogAnalyticsWorkspaceResourceId string = createNewWorkspace
-  ? (newWorkspace.?outputs.?workspaceResourceId ?? '')
+  ? newWorkspace.outputs.workspaceResourceId
   : (useExistingWorkspace ? existingLogAnalyticsWorkspaceResourceId : '')
 
 @description('True when the configuration requested both a new workspace and an existing workspace at the same time. Callers must resolve this before relying on the effective workspace ID.')
