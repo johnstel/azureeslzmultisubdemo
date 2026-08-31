@@ -156,7 +156,113 @@ jsonschema.validate(catalog, schema)
     Remove-Item -LiteralPath $tmpPy -ErrorAction SilentlyContinue
     if ($schemaExit -ne 0) { Stop-Test 'Catalog failed JSON Schema validation.' }
 } else {
-    Write-Host '  (python3 + jsonschema not available; relying on the hand-rolled field/enum checks in steps 3-8, which mirror the schema.)'
+    Write-Host '  (python3 + jsonschema not available; falling back to the full schema-equivalent native-PowerShell re-implementation below.)'
+
+    $classificationEnum = @('azure-policy', 'entra-pim', 'defender-cspm-ciem', 'shared-service-architecture', 'manual-evidence')
+    $phaseEnum = @('audit-only', 'deny-do-not-enforce', 'deployifnotexists-opt-in', 'manual-evidence')
+    $dateRe = '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+    $schemaErrors = New-Object System.Collections.Generic.List[string]
+
+    function Get-Prop {
+        param($Object, [string]$Name)
+        if ($null -eq $Object) { return $null }
+        if (Get-Member -InputObject $Object -Name $Name -MemberType NoteProperty -ErrorAction SilentlyContinue) {
+            return $Object.$Name
+        }
+        return $null
+    }
+    function Test-NonEmptyString {
+        param($Value)
+        return ($null -ne $Value) -and ($Value -is [string]) -and ($Value.Length -ge 1)
+    }
+    function Test-Prop {
+        param($Object, [string]$Name)
+        return [bool](Get-Member -InputObject $Object -Name $Name -MemberType NoteProperty -ErrorAction SilentlyContinue)
+    }
+
+    if (-not (Test-NonEmptyString (Get-Prop $catalog '$schema'))) { $schemaErrors.Add('top-level: missing/invalid $schema') }
+    if (-not (Test-NonEmptyString (Get-Prop $catalog 'catalogVersion'))) { $schemaErrors.Add('top-level: missing/invalid catalogVersion') }
+    $generatedOn = Get-Prop $catalog 'generatedOn'
+    if (-not (Test-NonEmptyString $generatedOn) -or ($generatedOn -notmatch $dateRe)) { $schemaErrors.Add('top-level: missing/invalid generatedOn date') }
+    if (-not (Test-NonEmptyString (Get-Prop $catalog 'purpose'))) { $schemaErrors.Add('top-level: missing/invalid purpose') }
+    $sourceIssue = Get-Prop $catalog 'sourceIssue'
+    if (-not (Test-NonEmptyString $sourceIssue) -or ($sourceIssue -notmatch '^https?://')) { $schemaErrors.Add('top-level: missing/invalid sourceIssue uri') }
+    $classificationValues = @(Get-Prop $catalog 'classificationValues')
+    if ($classificationValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid classificationValues') }
+    if (($classificationValues | Select-Object -Unique).Count -ne $classificationValues.Count) { $schemaErrors.Add('top-level: classificationValues entries are not unique') }
+    $phaseValues = @(Get-Prop $catalog 'enforcementPhaseValues')
+    if ($phaseValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid enforcementPhaseValues') }
+    if (($phaseValues | Select-Object -Unique).Count -ne $phaseValues.Count) { $schemaErrors.Add('top-level: enforcementPhaseValues entries are not unique') }
+    if (-not (Test-Prop $catalog 'cautions')) { $schemaErrors.Add('top-level: missing/invalid cautions array') }
+    foreach ($caution in @(Get-Prop $catalog 'cautions')) {
+        if ($caution -isnot [string]) { $schemaErrors.Add('top-level: a cautions entry is not a string') }
+    }
+    if (-not (Test-Prop $catalog 'overlapNotes')) { $schemaErrors.Add('top-level: missing/invalid overlapNotes array') }
+    foreach ($overlap in @(Get-Prop $catalog 'overlapNotes')) {
+        if (-not (Test-NonEmptyString (Get-Prop $overlap 'topic')) -or -not (Test-NonEmptyString (Get-Prop $overlap 'note'))) {
+            $schemaErrors.Add('overlapNotes: an entry is missing a non-empty topic/note')
+        }
+    }
+    if ($controls.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid controls array') }
+
+    foreach ($control in $controls) {
+        $controlId = Get-Prop $control 'id'
+        $cid = if ($controlId) { $controlId } else { '?' }
+        if (-not (Test-NonEmptyString $controlId) -or ($controlId -notmatch $idPattern)) { $schemaErrors.Add("${cid}: invalid or malformed id") }
+        if (-not (Test-NonEmptyString (Get-Prop $control 'domain'))) { $schemaErrors.Add("${cid}: missing/invalid domain") }
+        if (-not (Test-NonEmptyString (Get-Prop $control 'customerRequirement'))) { $schemaErrors.Add("${cid}: missing/invalid customerRequirement") }
+        if (-not (Test-NonEmptyString (Get-Prop $control 'scope'))) { $schemaErrors.Add("${cid}: missing/invalid scope") }
+        $classification = Get-Prop $control 'classification'
+        if ($classificationEnum -notcontains $classification) { $schemaErrors.Add("${cid}: undeclared classification '$classification'") }
+        $mechanism = Get-Prop $control 'mechanism'
+        if ($mechanism -isnot [PSCustomObject]) { $schemaErrors.Add("${cid}: missing mechanism object") }
+        if (-not (Test-NonEmptyString (Get-Prop $mechanism 'kind'))) { $schemaErrors.Add("${cid}: mechanism.kind missing/invalid") }
+        if ((Get-Prop $mechanism 'builtIn') -isnot [bool]) { $schemaErrors.Add("${cid}: mechanism.builtIn missing/invalid") }
+        if (-not (Test-NonEmptyString (Get-Prop $mechanism 'displayName'))) { $schemaErrors.Add("${cid}: mechanism.displayName missing/invalid") }
+        $verifiedOn = Get-Prop $mechanism 'verifiedOn'
+        if (-not (Test-NonEmptyString $verifiedOn) -or ($verifiedOn -notmatch $dateRe)) { $schemaErrors.Add("${cid}: mechanism.verifiedOn missing/invalid date") }
+        $verificationMethod = Get-Prop $mechanism 'verificationMethod'
+        if ($verificationMethods -notcontains $verificationMethod) { $schemaErrors.Add("${cid}: undeclared mechanism.verificationMethod '$verificationMethod'") }
+        $majorVersion = Get-Prop $mechanism 'majorVersion'
+        if ((Test-Prop $mechanism 'majorVersion') -and (-not (Test-NonEmptyString $majorVersion) -or $majorVersion -in @('unknown', 'n/a'))) { $schemaErrors.Add("${cid}: mechanism.majorVersion invalid or placeholder") }
+        $verifiedVersion = Get-Prop $mechanism 'verifiedVersion'
+        if ((Test-Prop $mechanism 'verifiedVersion') -and (-not (Test-NonEmptyString $verifiedVersion) -or $verifiedVersion -in @('unknown', 'n/a'))) { $schemaErrors.Add("${cid}: mechanism.verifiedVersion invalid or placeholder") }
+        $sourceUrl = Get-Prop $mechanism 'sourceUrl'
+        if ((Test-Prop $mechanism 'sourceUrl') -and $sourceUrl -and ($sourceUrl -isnot [string])) { $schemaErrors.Add("${cid}: mechanism.sourceUrl must be string or null") }
+        if ((Test-Prop $mechanism 'sourceUrl') -and $sourceUrl -and ($sourceUrl -match 'raw\.githubusercontent\.com') -and ($sourceUrl.EndsWith('/'))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl points at a directory listing") }
+        $builtIn = Get-Prop $mechanism 'builtIn'
+        $definitionId = Get-Prop $mechanism 'definitionId'
+        $verifiedDirectly = @('raw-json', 'initiative-json-member') -contains $verificationMethod
+        if (($builtIn -eq $true) -and $verifiedDirectly -and (-not $definitionId -or $definitionId -notmatch $guidPattern)) {
+            $schemaErrors.Add("${cid}: definitionId is not a well-formed GUID for a directly-verified built-in")
+        }
+        $effects = @(Get-Prop $control 'supportedEffects')
+        if ($effects.Count -lt 1) { $schemaErrors.Add("${cid}: supportedEffects missing/empty") }
+        foreach ($effect in $effects) { if (-not (Test-NonEmptyString $effect)) { $schemaErrors.Add("${cid}: a supportedEffects entry is not a non-empty string") } }
+        if (-not (Test-Prop $control 'requiredParameters')) { $schemaErrors.Add("${cid}: requiredParameters must be an array") }
+        $roleDefinitionIds = @(Get-Prop $control 'roleDefinitionIds')
+        if (-not (Test-Prop $control 'roleDefinitionIds')) { $schemaErrors.Add("${cid}: roleDefinitionIds must be an array") }
+        foreach ($roleId in $roleDefinitionIds) { if ($roleId -notmatch $guidPattern) { $schemaErrors.Add("${cid}: a roleDefinitionIds entry is not a well-formed bare GUID") } }
+        $remediationIdentityRequired = Get-Prop $control 'remediationIdentityRequired'
+        if ($remediationIdentityRequired -isnot [bool]) { $schemaErrors.Add("${cid}: remediationIdentityRequired missing/invalid") }
+        $hasRolesVary = Test-Prop $control 'rolesVaryByMember'
+        $rolesVaryByMember = Get-Prop $control 'rolesVaryByMember'
+        if ($hasRolesVary -and $rolesVaryByMember -isnot [bool]) { $schemaErrors.Add("${cid}: rolesVaryByMember must be boolean") }
+        $rolesVaryTrue = $hasRolesVary -and ($rolesVaryByMember -eq $true)
+        if (($remediationIdentityRequired -eq $true) -and ($roleDefinitionIds.Count -eq 0) -and (-not $rolesVaryTrue)) {
+            $schemaErrors.Add("${cid}: remediationIdentityRequired=true without a populated roleDefinitionIds array or rolesVaryByMember=true")
+        }
+        if (-not (Test-Prop $control 'dependencies')) { $schemaErrors.Add("${cid}: dependencies must be an array") }
+        foreach ($dependency in @(Get-Prop $control 'dependencies')) { if ($dependency -notmatch $idPattern) { $schemaErrors.Add("${cid}: a dependencies entry is not a well-formed control id") } }
+        $enforcementPhase = Get-Prop $control 'enforcementPhase'
+        if ($phaseValues -notcontains $enforcementPhase) { $schemaErrors.Add("${cid}: undeclared enforcementPhase '$enforcementPhase'") }
+        if (-not (Test-NonEmptyString (Get-Prop $control 'evidenceSource'))) { $schemaErrors.Add("${cid}: missing/invalid evidenceSource") }
+    }
+
+    if ($schemaErrors.Count -gt 0) {
+        $formattedErrors = ($schemaErrors | ForEach-Object { "  - $_" }) -join "`n"
+        Stop-Test "Catalog failed the offline schema-equivalent validation:`n${formattedErrors}"
+    }
 }
 
 Write-Host '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...'

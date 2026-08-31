@@ -123,7 +123,13 @@ with open(schema_path, encoding="utf-8") as f:
 jsonschema.validate(catalog, schema)
 PYEOF
 else
-  printf '  (python3 + jsonschema not available; relying on the hand-rolled field/enum checks in steps 3-8, which mirror the schema.)\n'
+  printf '  (python3 + jsonschema not available; falling back to the full schema-equivalent jq re-implementation in tests/control-catalog-schema-check.jq.)\n'
+  schema_errors="$(jq -f "${SCRIPT_DIR}/control-catalog-schema-check.jq" "${CATALOG}")"
+  [[ "$(printf '%s' "${schema_errors}" | jq 'length')" -eq 0 ]] || {
+    printf 'ERROR: Catalog failed the offline schema-equivalent validation:\n' >&2
+    printf '%s\n' "${schema_errors}" | jq -r '.[] | "  - " + .' >&2
+    exit 1
+  }
 fi
 
 printf '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...\n'

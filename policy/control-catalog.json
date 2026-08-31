@@ -1345,7 +1345,7 @@
         "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/AzureSecurityCenter.json",
         "verificationMethod": "raw-json",
         "category": "Security Center",
-        "notes": "This initiative is updated in place very frequently (metadata.version increments often); re-fetch the raw JSON immediately before each assignment to confirm the current version. There is no separate 'MCSB v2' preview initiative GUID as of the verification date; effects vary per member policy."
+        "notes": "This initiative is updated in place very frequently (metadata.version increments often); re-fetch the raw JSON immediately before each assignment to confirm the current version. A separate, distinct 'Microsoft cloud security benchmark v2' initiative also exists (GUID e3ec7e09-768c-4b64-882c-fcada3772047, metadata.version 1.6.0, 730 members, file MCSBv2.json) -- a prior revision of this note incorrectly stated no v2 GUID exists; this record continues to track v1 (the GUID currently surfaced by the Defender for Cloud regulatory compliance dashboard as of the verification date) and v2 should be independently re-verified before any future switch."
       },
       "supportedEffects": [
         "Audit",
@@ -1355,12 +1355,12 @@
       ],
       "requiredParameters": [],
       "roleDefinitionIds": [],
-      "remediationIdentityRequired": true,
+      "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself. supportedEffects is the verified union of the initiative's own top-level effect-parameter allowedValues (163 of 226 members expose an assignable effect parameter with allowedValues Audit/AuditIfNotExists/Deny/Disabled); the remaining members (mostly Defender-plan DeployIfNotExists sub-policies with no exposed override) run at their own fixed default and are not independently selectable through this initiative's parameters. This initiative composes ~230 member policy/initiative references, each of which embeds its own then.details.roleDefinitionIds where a remediation identity is required; enumerating every member's role list here is out of scope for a single-record field. Consult the individual member policy in the source URL for the exact roles required by a given member before assignment.",
-      "rolesVaryByMember": true
+      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself. supportedEffects is the verified union of the initiative's 283 exposed effect parameters' allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across 226 total member policy references. Of those 226, 56 are not parameterized for effect at the initiative level (fixed to the member policy's own default); a sample of 9 of those 56 was fetched directly and every one resolved to a fixed Audit- or Deny-effect policy (file names ending _Audit/_Deny/_AuditDeny, the standard Azure Policy naming convention for non-remediating policies), consistent with MCSB's role as a read-only compliance-assessment benchmark rather than an auto-remediation initiative. No DeployIfNotExists/Modify (remediation-capable) member was found; remediationIdentityRequired is therefore false and no roleDefinitionIds are required for this initiative.",
+      "rolesVaryByMember": false
     },
     {
       "id": "REQ-BASE-02",
@@ -1389,14 +1389,14 @@
       ],
       "requiredParameters": [],
       "roleDefinitionIds": [],
-      "remediationIdentityRequired": true,
+      "remediationIdentityRequired": false,
       "dependencies": [
         "REQ-BASE-01"
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of the initiative's 103 exposed effect parameters' allowedValues (Audit/AuditIfNotExists/Deny/Disabled). This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
-      "rolesVaryByMember": true
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of the initiative's 113 exposed effect parameters' allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across 108 total member policy references. Of those 108, only 1 (policyDefinitionReferenceId 06a78e20-9358-41c9-923c-fb736d382a4d, 'Audit VMs that do not use managed disks') is not parameterized for effect at the initiative level; it was fetched directly and confirmed fixed at a plain 'audit' effect. No DeployIfNotExists/Modify (remediation-capable) member exists in this initiative; remediationIdentityRequired is therefore false and no roleDefinitionIds are required.",
+      "rolesVaryByMember": false
     },
     {
       "id": "REQ-BASE-03",
@@ -1422,15 +1422,17 @@
         "Disabled"
       ],
       "requiredParameters": [],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-BASE-01"
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance. supportedEffects is the verified union of the initiative's 77 exposed effect parameters' allowedValues (Audit/Deny/Disabled \u2014 no AuditIfNotExists is exposed at the initiative level for this regulatory-compliance initiative, unlike MCSB/CIS). This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
-      "rolesVaryByMember": true
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance. supportedEffects is the verified union of the initiative's 85 exposed effect parameters' allowedValues (Audit/Deny/Disabled -- no AuditIfNotExists is exposed at the initiative level for this regulatory-compliance initiative, unlike MCSB/CIS). Of the 694 total member policy references, 588 are not parameterized for effect at the initiative level; a sample of those fixed members fetched directly in this session all resolved to Audit/Deny/AuditIfNotExists/Manual-effect policies requiring no remediation identity, consistent with NIST SP 800-53 Rev. 5's role as a compliance-assessment initiative. Per reviewer confirmation, four of the initiative's members are DeployIfNotExists/Modify remediation-capable and require the Contributor role (b24988ac-6180-42a0-ab88-20f7382dd24c); this specific 4-member role mapping reflects reviewer verification rather than an independent re-derivation across all 694 references in this session (the initiative's size makes exhaustive per-member re-fetching impractical here), and the exact policyDefinitionReferenceIds should be reconfirmed against their individual policy JSON -- and a narrower, less-privileged role considered if available -- before granting the remediation identity Contributor access. A separate, newer 'NIST SP 800-53 R5.1.1' initiative also exists (GUID 60205a79-6280-4e20-a147-e2011e09dc78, metadata.version 1.8.0, 221 members) for the updated NIST revision; this record tracks the original 'Rev. 5' initiative named in the customer requirement and R5.1.1 should be independently re-verified before any future switch. This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles for the remaining assessment-only members are not enumerated here for the same reason described in REQ-BASE-01.",
+      "rolesVaryByMember": false
     },
     {
       "id": "REQ-BASE-04",
@@ -1486,9 +1488,7 @@
       "supportedEffects": [
         "DeployIfNotExists"
       ],
-      "requiredParameters": [
-        "individualPlanEnableParameters"
-      ],
+      "requiredParameters": [],
       "roleDefinitionIds": [
         "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
         "fb1c8493-542b-48eb-b624-b4c8fea62acd"
@@ -1496,8 +1496,8 @@
       "remediationIdentityRequired": true,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Compiled ARM template (all member plans parameterized off/disabled by default) + Defender for Cloud plan status.",
-      "notes": "Every paid plan requires an explicit independent parameter and cost warning per issue #20; no plan is enabled in the safe demo profile. This initiative composes 12 member DeployIfNotExists policies (CSPM, Containers, AI, Storage, Servers, SQL-on-VMs, App Services, SQL, Key Vault, ARM, Open Source Databases, CosmosDB). All 12 individual member definitions were fetched directly and their then.details.roleDefinitionIds recorded: CSPM, Storage, Servers, and Containers/AI require Owner (8e3af657-a8ff-443c-a75c-2fe8c4bcb635); SQL-on-VMs, App Services, SQL, Key Vault, ARM, Open Source Databases, and CosmosDB require Security Admin (fb1c8493-542b-48eb-b624-b4c8fea62acd). roleDefinitionIds above is the complete verified union across all 12 members; consult the specific member policy (see REQ-DEF-02..04) to determine which single role applies to the plan being enabled.",
+      "evidenceSource": "Defender for Cloud plan status (subscription pricing tier per plan); this initiative itself exposes no assignment-time parameters (verified: top-level \"parameters\": {} in the raw initiative JSON), so it cannot be safely used to enable plans selectively.",
+      "notes": "VERIFIED CORRECTION: the initiative's raw source JSON has \"parameters\": {} at the top level and each of its 12 member policyDefinitions entries also carries \"parameters\": {} (no override), so there is no \"individualPlanEnableParameters\" or any other assignment-time switch to select which plans are enabled -- that claim in a prior revision of this record was incorrect and has been removed. Each member policy's own default effect (e.g. CSPM's own \"effect\" parameter defaults to DeployIfNotExists) is used unconditionally when this initiative is assigned, so assigning REQ-DEF-01 as a whole immediately enables all 12 paid Defender plans (CSPM, Containers, AI, Storage, Servers, SQL-on-VMs, App Services, SQL, Key Vault, ARM, Open Source Databases, CosmosDB) with no per-plan opt-out at the initiative level -- it is an all-or-nothing initiative and is NOT safe for this repository's audit-first/no-cost demo default profile. This record is documented for completeness only; do not assign it in the safe demo profile. Instead, each plan must be independently enabled via its own verified, individually assignable member policy definition (see REQ-DEF-02..04), which exposes its own \"effect\" parameter (DeployIfNotExists/Disabled) that can be explicitly overridden to Disabled at assignment time and requires an explicit independent parameter and cost warning per issue #20. roleDefinitionIds above remains the complete verified 2-role union (Owner 8e3af657-a8ff-443c-a75c-2fe8c4bcb635; Security Admin fb1c8493-542b-48eb-b624-b4c8fea62acd) across all 12 members, reproduced for reference only -- consult the specific member policy record for which single role applies to the plan being enabled.",
       "rolesVaryByMember": true
     },
     {
