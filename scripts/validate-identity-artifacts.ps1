@@ -29,9 +29,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectDir = Split-Path -Parent $ScriptDir
-
 # Resolves a path to its final filesystem target: normalizes '.'/'..'
 # segments (like Resolve-Path) AND walks every path component, dereferencing
 # any symbolic link or (on Windows) reparse-point junction encountered along
@@ -85,6 +82,21 @@ function Resolve-FinalTarget {
     }
     throw "Resolve-FinalTarget: too many levels of symbolic links resolving '$Path' (possible link cycle)."
 }
+
+# Resolve this script file itself to its final filesystem target before
+# deriving the repository root. If the validator file is invoked through an
+# external symlink/junction (or a chain of them), $MyInvocation.MyCommand.Path
+# is that external path; naively taking Split-Path -Parent of it would
+# derive $ScriptDir/$ProjectDir from the caller-controlled link's parent
+# directory, and the "trusted" canonical schemas/known-entra-ids.json below
+# would then be loaded from that external tree -- silently reintroducing the
+# caller-controlled-schema bypass this validator is designed to prevent.
+# Resolve-FinalTarget already fully dereferences chained/intermediate links
+# (including within a resolved target's own path), so it is reused here for
+# the script's own path, not just for artifact files further down.
+$ScriptPath = Resolve-FinalTarget -Path $MyInvocation.MyCommand.Path
+$ScriptDir = Split-Path -Parent $ScriptPath
+$ProjectDir = Split-Path -Parent $ScriptDir
 
 if ([string]::IsNullOrWhiteSpace($Path)) {
     # Always resolve the default path through Resolve-FinalTarget too, not

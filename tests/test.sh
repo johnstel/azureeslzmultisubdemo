@@ -632,6 +632,53 @@ echo '{"not":"a real schema"}' > "${IDENTITY_SCHEMA_IGNORED_DIR}/schema/known-en
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh" --mode populated --path "${IDENTITY_SCHEMA_IGNORED_DIR}" >/dev/null
 rm -rf "${IDENTITY_SCHEMA_IGNORED_DIR}"
 
+# Case: the tracked identity/schema/ tree used above is always resolved
+# relative to the *validator script file's own location* (never the
+# caller-supplied --path). That location must therefore be derived from the
+# script file's fully resolved final target, not its unresolved invocation
+# path -- otherwise invoking the validator through a symbolic link (e.g. a
+# wrapper/shim placed elsewhere) would silently make an external, permissive
+# identity/schema/ directory placed beside that symlink into the "trusted"
+# schema root, defeating the whole point of always using tracked schemas.
+# Both a direct symlink to the script file and a chained symlink (a symlink
+# to a symlink to the script file) must be fully dereferenced.
+IDENTITY_SCRIPT_SYMLINK_ROOT="${TEMP_DIR}/identity-script-symlink-root"
+rm -rf "${IDENTITY_SCRIPT_SYMLINK_ROOT}"
+mkdir -p "${IDENTITY_SCRIPT_SYMLINK_ROOT}/identity/schema"
+echo '{"not":"a real schema"}' > "${IDENTITY_SCRIPT_SYMLINK_ROOT}/identity/schema/known-entra-ids.json"
+echo '{"not":"a real schema"}' > "${IDENTITY_SCRIPT_SYMLINK_ROOT}/identity/schema/conditional-access-policy.schema.json"
+echo '{"not":"a real schema"}' > "${IDENTITY_SCRIPT_SYMLINK_ROOT}/identity/schema/pim-activation-policy.schema.json"
+ln -s "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh" "${IDENTITY_SCRIPT_SYMLINK_ROOT}/validator-direct.sh"
+ln -s "${IDENTITY_SCRIPT_SYMLINK_ROOT}/validator-direct.sh" "${IDENTITY_SCRIPT_SYMLINK_ROOT}/validator-chained.sh"
+
+# Positive control: a genuinely valid populated artifact tree must still
+# validate successfully when invoked through the symlinked script file(s),
+# proving the canonical (not the permissive external) schema was used.
+"${IDENTITY_SCRIPT_SYMLINK_ROOT}/validator-direct.sh" --mode populated --path "${IDENTITY_POP_DIR}" >/dev/null
+"${IDENTITY_SCRIPT_SYMLINK_ROOT}/validator-chained.sh" --mode populated --path "${IDENTITY_POP_DIR}" >/dev/null
+
+# Negative control: an artifact that is genuinely invalid under the
+# canonical tracked schema must still be rejected -- and for the genuine
+# schema-driven reason -- when invoked through the same script-file
+# symlinks, proving the permissive external schema was not what was loaded.
+IDENTITY_SCRIPT_SYMLINK_NEG_DIR="${TEMP_DIR}/identity-script-symlink-neg"
+rm -rf "${IDENTITY_SCRIPT_SYMLINK_NEG_DIR}" && cp -r "${IDENTITY_POP_DIR}" "${IDENTITY_SCRIPT_SYMLINK_NEG_DIR}"
+jq '.activation.approvers = ["sales-team"]' \
+  "${IDENTITY_SCRIPT_SYMLINK_NEG_DIR}/pim/pim-activation-global-administrator.template.json" > "${TEMP_DIR}/tmp.json" \
+  && mv "${TEMP_DIR}/tmp.json" "${IDENTITY_SCRIPT_SYMLINK_NEG_DIR}/pim/pim-activation-global-administrator.template.json"
+for script_symlink in "${IDENTITY_SCRIPT_SYMLINK_ROOT}/validator-direct.sh" "${IDENTITY_SCRIPT_SYMLINK_ROOT}/validator-chained.sh"; do
+  if output="$("${script_symlink}" --mode populated --path "${IDENTITY_SCRIPT_SYMLINK_NEG_DIR}" 2>&1)"; then
+    printf 'ERROR: validate-identity-artifacts.sh unexpectedly succeeded for case: invalid PIM approver rejected through a script-file symlink (%s)\n' "${script_symlink}" >&2
+    exit 1
+  fi
+  if ! printf '%s' "${output}" | grep -qF "sales-team"; then
+    printf 'ERROR: validate-identity-artifacts.sh failed for case: invalid PIM approver rejected through a script-file symlink (%s), but not for the expected reason.\nActual output: %s\n' \
+      "${script_symlink}" "${output}" >&2
+    exit 1
+  fi
+done
+rm -rf "${IDENTITY_SCRIPT_SYMLINK_ROOT}" "${IDENTITY_SCRIPT_SYMLINK_NEG_DIR}"
+
 # Case: on a genuinely case-insensitive filesystem (default macOS APFS,
 # exFAT/vfat, some NTFS/SMB mounts), a casing variant of the tracked
 # identity/ folder (e.g. IDENTITY) transparently resolves to the exact same

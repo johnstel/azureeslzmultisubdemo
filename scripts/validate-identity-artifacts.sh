@@ -25,58 +25,10 @@
 #     conditional-access/ and pim/ subdirectories to validate.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-command -v jq >/dev/null 2>&1 || {
-  printf 'ERROR: jq is required for identity artifact validation.\n' >&2
-  exit 1
-}
-command -v rg >/dev/null 2>&1 || {
-  printf 'ERROR: ripgrep is required for identity artifact validation.\n' >&2
-  exit 1
-}
-
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
   exit 1
 }
-
-# bash 3.2 (stock macOS) has no `mapfile`/`readarray` builtin, so read
-# newline-delimited command output into an array with a plain while-read
-# loop instead. Usage: read_lines_into array_name < <(command)
-read_lines_into() {
-  local __array_name="$1"
-  eval "${__array_name}=()"
-  local __line
-  while IFS= read -r __line; do
-    eval "${__array_name}+=(\"\${__line}\")"
-  done
-}
-
-mode='template'
-identity_dir="${PROJECT_DIR}/identity"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --mode)
-      mode="${2:-}"
-      shift 2
-      ;;
-    --path)
-      identity_dir="${2:-}"
-      shift 2
-      ;;
-    *)
-      fail "Unknown argument: $1"
-      ;;
-  esac
-done
-
-case "${mode}" in
-  template|populated) ;;
-  *) fail "--mode must be 'template' or 'populated', found '${mode}'." ;;
-esac
 
 # Canonicalize a directory path (resolving '.', '..', and symlinks) using
 # only POSIX `cd`/`pwd -P`, so this works without a GNU-specific `realpath`
@@ -126,6 +78,66 @@ canonicalize_file() {
   done
   printf '%s' "${__resolved}"
 }
+
+# Resolve this script file itself to its final filesystem target before
+# deriving the repository root. If the validator file is invoked through an
+# external symlink (or a chain of them), ${BASH_SOURCE[0]} is that external
+# path; naively taking dirname() of it would derive SCRIPT_DIR/PROJECT_DIR
+# from the caller-controlled symlink's parent directory, and the "trusted"
+# canonical schemas/known-entra-ids.json below would then be loaded from
+# that external tree -- silently reintroducing the caller-controlled-schema
+# bypass this validator is designed to prevent. canonicalize_file() already
+# fully dereferences chained/intermediate symlinks (including within a
+# resolved target's own path), so it is reused here for the script's own
+# path, not just for artifact files further down.
+SCRIPT_PATH="$(canonicalize_file "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "${SCRIPT_PATH}")"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+command -v jq >/dev/null 2>&1 || {
+  printf 'ERROR: jq is required for identity artifact validation.\n' >&2
+  exit 1
+}
+command -v rg >/dev/null 2>&1 || {
+  printf 'ERROR: ripgrep is required for identity artifact validation.\n' >&2
+  exit 1
+}
+
+# bash 3.2 (stock macOS) has no `mapfile`/`readarray` builtin, so read
+# newline-delimited command output into an array with a plain while-read
+# loop instead. Usage: read_lines_into array_name < <(command)
+read_lines_into() {
+  local __array_name="$1"
+  eval "${__array_name}=()"
+  local __line
+  while IFS= read -r __line; do
+    eval "${__array_name}+=(\"\${__line}\")"
+  done
+}
+
+mode='template'
+identity_dir="${PROJECT_DIR}/identity"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      mode="${2:-}"
+      shift 2
+      ;;
+    --path)
+      identity_dir="${2:-}"
+      shift 2
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
+
+case "${mode}" in
+  template|populated) ;;
+  *) fail "--mode must be 'template' or 'populated', found '${mode}'." ;;
+esac
 
 # Detects whether the filesystem location containing ${canonical_path} is
 # case-insensitive, by checking whether a case-swapped variant of its final
