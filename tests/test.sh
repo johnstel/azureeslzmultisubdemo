@@ -19,7 +19,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/9 Validate repository versioning and branch guidance...\n'
+printf '1/12 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -30,10 +30,10 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/9 Build the complete tenant template...\n'
+printf '2/12 Build the complete tenant template...\n'
 az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json"
 
-printf '3/9 Validate the ARM parameter template...\n'
+printf '3/12 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -43,29 +43,29 @@ az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
 
-printf '4/9 Confirm there are exactly two subscription associations...\n'
+printf '4/12 Confirm there are exactly two subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions")] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/9 Confirm no paid always-on resource types are declared...\n'
+printf '5/12 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
 if rg -n \
   "Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)" \
   "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" \
-  -g '*.bicep' | rg -v 'policy-library\.bicep'; then
+  -g '*.bicep' | rg -v 'policy-library\.bicep|central-monitoring(-workspace|-sentinel)?\.bicep'; then
   printf 'ERROR: A prohibited evidence resource type is declared.\n' >&2
   exit 1
 fi
 
-printf '6/9 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/12 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/9 Confirm five distinct Entra group parameters and guarded scripts...\n'
+printf '7/12 Confirm five distinct Entra group parameters and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 5 ]] || {
   printf 'ERROR: Expected five Entra security-group parameters.\n' >&2
@@ -76,12 +76,31 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/9 Confirm region policy safely permits global resources...\n'
+printf '8/12 Confirm region policy safely permits global resources...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
 
-printf '9/9 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '9/12 Confirm central monitoring defaults create no metered resources...\n'
+jq -e '
+  .parameters.deployCentralLogAnalytics.value == false and
+  .parameters.deploySentinel.value == false and
+  .parameters.existingLogAnalyticsWorkspaceResourceId.value == ""
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
+rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
+rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
+rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
+
+printf "10/12 Confirm central monitoring guards against conflicting new/existing workspace inputs...\n"
+rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
+rg -q 'createNewWorkspace = newWorkspaceRequested && !conflictingMonitoringInputs' "${PROJECT_DIR}/modules/central-monitoring.bicep"
+rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !conflictingMonitoringInputs' "${PROJECT_DIR}/modules/central-monitoring.bicep"
+
+printf '11/12 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
+rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
+
+printf '12/12 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done

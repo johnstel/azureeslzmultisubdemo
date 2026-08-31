@@ -100,6 +100,35 @@ no NAT Gateway, VPN Gateway, Firewall, Bastion, public IP, VM, Log Analytics
 workspace, storage account, or other metered service. Azure pricing can change,
 so confirm the current Azure pricing pages before using this beyond a demo.
 
+### Optional central monitoring
+
+By default (`deployCentralLogAnalytics=false`, `deploySentinel=false`,
+`existingLogAnalyticsWorkspaceResourceId=''`), the project creates **no**
+Log Analytics workspace and enables **no** Microsoft Sentinel resources. This
+is the safe default and incurs no monitoring cost.
+
+Two opt-in paths exist for centralized monitoring in the connectivity
+subscription, and only one may be used at a time:
+
+- **Reuse an existing customer-owned workspace** (recommended default
+  integration path): set `existingLogAnalyticsWorkspaceResourceId` to the
+  resource ID of an existing Log Analytics workspace. No workspace is created
+  or modified; the demo only reads the ID to compute the effective workspace
+  ID used by downstream modules.
+- **Create a new central workspace**: set `deployCentralLogAnalytics=true`.
+  This creates a metered Log Analytics workspace (data ingestion and
+  retention charges apply) in a new `rg-<namePrefix>-monitoring` resource
+  group. This must not be combined with `existingLogAnalyticsWorkspaceResourceId`;
+  if both are set, the module treats the configuration as conflicting and
+  creates nothing.
+
+Setting `deploySentinel=true` additionally onboards Microsoft Sentinel onto
+the effective workspace (new or existing), which adds per-GB Sentinel
+analysis charges on top of Log Analytics ingestion cost. This module does not
+configure analytics rules, automation rules, connectors, workbooks,
+incidents, or Defender plans, and it never deletes or replaces a supplied
+existing workspace.
+
 ## Required permissions
 
 The person or service principal running the deployment must have:
@@ -294,6 +323,9 @@ modules/
   evidence-connectivity.bicep
   evidence-network.bicep
   evidence-workload.bicep
+  central-monitoring.bicep
+  central-monitoring-workspace.bicep
+  central-monitoring-sentinel.bicep
 parameters/
 scripts/
   preflight.ps1
