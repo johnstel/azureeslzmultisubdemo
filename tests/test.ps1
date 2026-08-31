@@ -344,10 +344,12 @@ exit 0
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
         New-Item -ItemType File -Path $azCallLog | Out-Null
+        $originalPath = $env:PATH
         $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
         $env:AZ_CALL_LOG = $azCallLog
         $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
         'eslz-demo' | & bash (Join-Path $ProjectDir 'scripts/teardown.sh') $whitespaceParamFile --execute | Out-Null
+        $env:PATH = $originalPath
         Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
         Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
         $azCalls = Get-Content -LiteralPath $azCallLog -Raw
@@ -359,11 +361,13 @@ exit 0
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
         New-Item -ItemType File -Path $azCallLog | Out-Null
+        $originalPath = $env:PATH
         $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
         $env:AZ_CALL_LOG = $azCallLog
         $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
         $ps1Script = Join-Path $ProjectDir 'scripts/teardown.ps1'
         & bash -c "echo 'eslz-demo' | pwsh -NoLogo -NoProfile -File '$ps1Script' '$whitespaceParamFile' -Execute" | Out-Null
+        $env:PATH = $originalPath
         Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
         Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
         $azCalls = Get-Content -LiteralPath $azCallLog -Raw
