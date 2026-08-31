@@ -137,6 +137,23 @@ json_count="$(jq '.controls | length' "${CATALOG}")"
 matrix_count="$(rg -o '\*\*Total control records:\*\* ([0-9]+)' -r '$1' "${MATRIX}")"
 [[ "${json_count}" == "${matrix_count}" ]] || fail "Catalog has ${json_count} control records but the matrix states ${matrix_count}."
 
+# Bidirectional ID-set comparison: parse the actual "| REQ-XXX-NN | ..." table
+# rows present in the matrix (not merely search for expected rows), so that a
+# stale, duplicated, or otherwise-untracked extra row is caught even though it
+# never matches any JSON-derived expected string.
+mapfile -t matrix_ids < <(rg -o '^\| (REQ-[A-Z]+-[0-9]{2}) \|' -r '$1' "${MATRIX}")
+mapfile -t json_ids < <(jq -r '.controls[].id' "${CATALOG}")
+
+sorted_matrix_ids="$(printf '%s\n' "${matrix_ids[@]}" | sort)"
+sorted_unique_matrix_ids="$(printf '%s\n' "${matrix_ids[@]}" | sort -u)"
+[[ "${sorted_matrix_ids}" == "${sorted_unique_matrix_ids}" ]] || fail "The matrix contains one or more duplicate control ID rows: $(comm -13 <(printf '%s\n' "${sorted_unique_matrix_ids}") <(printf '%s\n' "${sorted_matrix_ids}") | sort -u | tr '\n' ' ')"
+
+sorted_json_ids="$(printf '%s\n' "${json_ids[@]}" | sort -u)"
+extra_ids="$(comm -13 <(printf '%s\n' "${sorted_json_ids}") <(printf '%s\n' "${sorted_unique_matrix_ids}"))"
+missing_ids="$(comm -23 <(printf '%s\n' "${sorted_json_ids}") <(printf '%s\n' "${sorted_unique_matrix_ids}"))"
+[[ -z "${extra_ids}" ]] || fail "The matrix contains stale/extra control ID row(s) not present in the JSON catalog: $(printf '%s' "${extra_ids}" | tr '\n' ' ')"
+[[ -z "${missing_ids}" ]] || fail "The matrix is missing control ID row(s) present in the JSON catalog: $(printf '%s' "${missing_ids}" | tr '\n' ' ')"
+
 mismatch=0
 while IFS= read -r expected_row; do
   control_id="$(printf '%s\n' "${expected_row}" | cut -d'|' -f2 | tr -d ' ')"
@@ -153,5 +170,36 @@ done < <(jq -r '
    (.supportedEffects | join(", ")) + " | " + .enforcementPhase + " |")
 ' "${CATALOG}")
 [[ "${mismatch}" -eq 0 ]] || exit 1
+
+# Validate catalog-level metadata (version/generated date/source issue) is
+# represented in the matrix header, not just the per-row content above.
+catalog_version="$(jq -r '.catalogVersion' "${CATALOG}")"
+generated_on="$(jq -r '.generatedOn' "${CATALOG}")"
+source_issue="$(jq -r '.sourceIssue' "${CATALOG}")"
+rg -qF -- "**Catalog version:** \`${catalog_version}\`" "${MATRIX}" || fail "Matrix header does not state the current catalogVersion (${catalog_version})."
+rg -qF -- "**Generated on:** \`${generated_on}\`" "${MATRIX}" || fail "Matrix header does not state the current generatedOn date (${generated_on})."
+rg -qF -- "${source_issue}" "${MATRIX}" || fail "Matrix header does not reference the current sourceIssue (${source_issue})."
+
+# Every declared classification value must be represented in the classification legend.
+while IFS= read -r classification; do
+  rg -qF -- "\`${classification}\`" "${MATRIX}" || fail "Classification legend in the matrix is missing the declared classification value: ${classification}."
+done < <(jq -r '.classificationValues[]' "${CATALOG}")
+
+# Every top-level caution must be represented (as a normalized substring, since
+# the matrix may format the same caution with additional markdown emphasis).
+normalize() { tr -s '[:space:]`' ' ' | sed -e 's/^ *//' -e 's/ *$//'; }
+normalized_matrix="$(normalize < "${MATRIX}")"
+while IFS= read -r caution; do
+  normalized_caution="$(printf '%s' "${caution}" | normalize)"
+  [[ "${normalized_matrix}" == *"${normalized_caution}"* ]] || fail "Matrix does not represent a declared caution: ${caution}"
+done < <(jq -r '.cautions[]' "${CATALOG}")
+
+# Every overlapNotes entry's note text must be represented in the "Overlap
+# notes" section (again normalized, since the matrix bolds the topic and may
+# format inline code differently).
+while IFS= read -r note; do
+  normalized_note="$(printf '%s' "${note}" | normalize)"
+  [[ "${normalized_matrix}" == *"${normalized_note}"* ]] || fail "Matrix Overlap notes section does not represent a declared overlapNotes entry: ${note}"
+done < <(jq -r '.overlapNotes[].note' "${CATALOG}")
 
 printf '\nControl catalog validation passed.\n'

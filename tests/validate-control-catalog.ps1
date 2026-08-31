@@ -167,7 +167,16 @@ jsonschema.validate(catalog, schema)
         param($Object, [string]$Name)
         if ($null -eq $Object) { return $null }
         if (Get-Member -InputObject $Object -Name $Name -MemberType NoteProperty -ErrorAction SilentlyContinue) {
-            return $Object.$Name
+            $value = $Object.$Name
+            # The leading comma prevents PowerShell from unrolling an
+            # array-typed value (including an empty array) back into $null as
+            # it crosses the function's return boundary -- a well-known
+            # PowerShell pipeline gotcha that would otherwise silently defeat
+            # Test-IsArray below. Scalars must NOT be comma-wrapped, or every
+            # caller expecting a plain string/bool/object would instead see a
+            # 1-element array.
+            if ($value -is [array]) { return , $value }
+            return $value
         }
         return $null
     }
@@ -179,6 +188,29 @@ jsonschema.validate(catalog, schema)
         param($Object, [string]$Name)
         return [bool](Get-Member -InputObject $Object -Name $Name -MemberType NoteProperty -ErrorAction SilentlyContinue)
     }
+    # Strict array-type check performed BEFORE any @(...) coercion. PowerShell's
+    # @(...) operator silently wraps a scalar (e.g. a string) into a 1-element
+    # array, which would otherwise let a malformed catalog where an array-typed
+    # field (classificationValues, enforcementPhaseValues, supportedEffects,
+    # requiredParameters, roleDefinitionIds, dependencies) was mistakenly
+    # authored as a bare scalar pass undetected. ConvertFrom-Json preserves
+    # JSON arrays (including single-element and empty arrays) as PowerShell
+    # arrays, so "-is [array]" reliably distinguishes a true JSON array from a
+    # scalar or from a missing/null property.
+    function Test-IsArray {
+        param($Value)
+        return ($null -ne $Value) -and ($Value -is [array])
+    }
+    # Returns the value coerced to an array ONLY for iteration purposes, after
+    # the caller has already separately asserted Test-IsArray for type-strictness.
+    function Get-ArrayItems {
+        param($Value)
+        # The leading comma prevents PowerShell from unrolling an empty (or
+        # single-element) array back into $null/a scalar as it crosses the
+        # function's output/return boundary.
+        if ($null -eq $Value) { return , @() }
+        return , @($Value)
+    }
 
     if (-not (Test-NonEmptyString (Get-Prop $catalog '$schema'))) { $schemaErrors.Add('top-level: missing/invalid $schema') }
     if (-not (Test-NonEmptyString (Get-Prop $catalog 'catalogVersion'))) { $schemaErrors.Add('top-level: missing/invalid catalogVersion') }
@@ -187,18 +219,32 @@ jsonschema.validate(catalog, schema)
     if (-not (Test-NonEmptyString (Get-Prop $catalog 'purpose'))) { $schemaErrors.Add('top-level: missing/invalid purpose') }
     $sourceIssue = Get-Prop $catalog 'sourceIssue'
     if (-not (Test-NonEmptyString $sourceIssue) -or ($sourceIssue -notmatch '^https?://')) { $schemaErrors.Add('top-level: missing/invalid sourceIssue uri') }
-    $classificationValues = @(Get-Prop $catalog 'classificationValues')
-    if ($classificationValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid classificationValues') }
+    $classificationValuesRaw = Get-Prop $catalog 'classificationValues'
+    $classificationValuesIsArray = Test-IsArray $classificationValuesRaw
+    $classificationValues = Get-ArrayItems $classificationValuesRaw
+    if (-not $classificationValuesIsArray -or $classificationValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid classificationValues') }
     if (($classificationValues | Select-Object -Unique).Count -ne $classificationValues.Count) { $schemaErrors.Add('top-level: classificationValues entries are not unique') }
-    $phaseValues = @(Get-Prop $catalog 'enforcementPhaseValues')
-    if ($phaseValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid enforcementPhaseValues') }
+    foreach ($value in $classificationValues) {
+        if (-not (Test-NonEmptyString $value)) { $schemaErrors.Add('top-level: a classificationValues entry is not a non-empty string') }
+    }
+    $phaseValuesRaw = Get-Prop $catalog 'enforcementPhaseValues'
+    $phaseValuesIsArray = Test-IsArray $phaseValuesRaw
+    $phaseValues = Get-ArrayItems $phaseValuesRaw
+    if (-not $phaseValuesIsArray -or $phaseValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid enforcementPhaseValues') }
     if (($phaseValues | Select-Object -Unique).Count -ne $phaseValues.Count) { $schemaErrors.Add('top-level: enforcementPhaseValues entries are not unique') }
+    foreach ($value in $phaseValues) {
+        if (-not (Test-NonEmptyString $value)) { $schemaErrors.Add('top-level: an enforcementPhaseValues entry is not a non-empty string') }
+    }
     if (-not (Test-Prop $catalog 'cautions')) { $schemaErrors.Add('top-level: missing/invalid cautions array') }
-    foreach ($caution in @(Get-Prop $catalog 'cautions')) {
+    $cautionsRaw = Get-Prop $catalog 'cautions'
+    $cautionItems = Get-ArrayItems $cautionsRaw
+    foreach ($caution in $cautionItems) {
         if ($caution -isnot [string]) { $schemaErrors.Add('top-level: a cautions entry is not a string') }
     }
     if (-not (Test-Prop $catalog 'overlapNotes')) { $schemaErrors.Add('top-level: missing/invalid overlapNotes array') }
-    foreach ($overlap in @(Get-Prop $catalog 'overlapNotes')) {
+    $overlapNotesRaw = Get-Prop $catalog 'overlapNotes'
+    $overlapNoteItems = Get-ArrayItems $overlapNotesRaw
+    foreach ($overlap in $overlapNoteItems) {
         if (-not (Test-NonEmptyString (Get-Prop $overlap 'topic')) -or -not (Test-NonEmptyString (Get-Prop $overlap 'note'))) {
             $schemaErrors.Add('overlapNotes: an entry is missing a non-empty topic/note')
         }
@@ -236,13 +282,19 @@ jsonschema.validate(catalog, schema)
         if (($builtIn -eq $true) -and $verifiedDirectly -and (-not $definitionId -or $definitionId -notmatch $guidPattern)) {
             $schemaErrors.Add("${cid}: definitionId is not a well-formed GUID for a directly-verified built-in")
         }
-        $effects = @(Get-Prop $control 'supportedEffects')
-        if ($effects.Count -lt 1) { $schemaErrors.Add("${cid}: supportedEffects missing/empty") }
+        $effectsRaw = Get-Prop $control 'supportedEffects'
+        $effectsIsArray = Test-IsArray $effectsRaw
+        $effects = Get-ArrayItems $effectsRaw
+        if (-not $effectsIsArray -or $effects.Count -lt 1) { $schemaErrors.Add("${cid}: supportedEffects missing/empty") }
         foreach ($effect in $effects) { if (-not (Test-NonEmptyString $effect)) { $schemaErrors.Add("${cid}: a supportedEffects entry is not a non-empty string") } }
-        if (-not (Test-Prop $control 'requiredParameters')) { $schemaErrors.Add("${cid}: requiredParameters must be an array") }
-        $roleDefinitionIds = @(Get-Prop $control 'roleDefinitionIds')
-        if (-not (Test-Prop $control 'roleDefinitionIds')) { $schemaErrors.Add("${cid}: roleDefinitionIds must be an array") }
-        foreach ($roleId in $roleDefinitionIds) { if ($roleId -notmatch $guidPattern) { $schemaErrors.Add("${cid}: a roleDefinitionIds entry is not a well-formed bare GUID") } }
+        $requiredParametersRaw = Get-Prop $control 'requiredParameters'
+        if (-not (Test-Prop $control 'requiredParameters') -or -not (Test-IsArray $requiredParametersRaw)) { $schemaErrors.Add("${cid}: requiredParameters must be an array") }
+        $requiredParameterItems = Get-ArrayItems $requiredParametersRaw
+        foreach ($param in $requiredParameterItems) { if ($param -isnot [string]) { $schemaErrors.Add("${cid}: a requiredParameters entry is not a string") } }
+        $roleDefinitionIdsRaw = Get-Prop $control 'roleDefinitionIds'
+        if (-not (Test-Prop $control 'roleDefinitionIds') -or -not (Test-IsArray $roleDefinitionIdsRaw)) { $schemaErrors.Add("${cid}: roleDefinitionIds must be an array") }
+        $roleDefinitionIds = Get-ArrayItems $roleDefinitionIdsRaw
+        foreach ($roleId in $roleDefinitionIds) { if ($roleId -isnot [string] -or $roleId -notmatch $guidPattern) { $schemaErrors.Add("${cid}: a roleDefinitionIds entry is not a well-formed bare GUID") } }
         $remediationIdentityRequired = Get-Prop $control 'remediationIdentityRequired'
         if ($remediationIdentityRequired -isnot [bool]) { $schemaErrors.Add("${cid}: remediationIdentityRequired missing/invalid") }
         $hasRolesVary = Test-Prop $control 'rolesVaryByMember'
@@ -252,8 +304,10 @@ jsonschema.validate(catalog, schema)
         if (($remediationIdentityRequired -eq $true) -and ($roleDefinitionIds.Count -eq 0) -and (-not $rolesVaryTrue)) {
             $schemaErrors.Add("${cid}: remediationIdentityRequired=true without a populated roleDefinitionIds array or rolesVaryByMember=true")
         }
-        if (-not (Test-Prop $control 'dependencies')) { $schemaErrors.Add("${cid}: dependencies must be an array") }
-        foreach ($dependency in @(Get-Prop $control 'dependencies')) { if ($dependency -notmatch $idPattern) { $schemaErrors.Add("${cid}: a dependencies entry is not a well-formed control id") } }
+        $dependenciesRaw = Get-Prop $control 'dependencies'
+        if (-not (Test-Prop $control 'dependencies') -or -not (Test-IsArray $dependenciesRaw)) { $schemaErrors.Add("${cid}: dependencies must be an array") }
+        $dependencyItems = Get-ArrayItems $dependenciesRaw
+        foreach ($dependency in $dependencyItems) { if ($dependency -isnot [string] -or $dependency -notmatch $idPattern) { $schemaErrors.Add("${cid}: a dependencies entry is not a well-formed control id") } }
         $enforcementPhase = Get-Prop $control 'enforcementPhase'
         if ($phaseValues -notcontains $enforcementPhase) { $schemaErrors.Add("${cid}: undeclared enforcementPhase '$enforcementPhase'") }
         if (-not (Test-NonEmptyString (Get-Prop $control 'evidenceSource'))) { $schemaErrors.Add("${cid}: missing/invalid evidenceSource") }
@@ -284,6 +338,60 @@ foreach ($control in $controls) {
     $expectedRow = "| $($control.id) | $($control.customerRequirement) | $($control.scope) | $($control.classification) | $($control.mechanism.displayName) (built-in: $builtInText) | $definitionIdText | $versionText | $effectsText | $($control.enforcementPhase) |"
     if (-not $matrixText.Contains($expectedRow)) {
         Stop-Test "Control $($control.id) row in $MatrixPath does not match the JSON catalog (scope, classification, mechanism, built-in ID, version, effects, or enforcement phase differs, or the row is missing)."
+    }
+}
+
+# Bidirectional ID-set comparison: parse the actual "| REQ-XXX-NN | ..." table
+# rows present in the matrix (not merely search for expected rows), so that a
+# stale, duplicated, or otherwise-untracked extra row is caught even though it
+# never matches any JSON-derived expected string.
+$matrixIdMatches = [regex]::Matches($matrixText, '(?m)^\| (REQ-[A-Z]+-[0-9]{2}) \|')
+$matrixIds = @($matrixIdMatches | ForEach-Object { $_.Groups[1].Value })
+$uniqueMatrixIds = @($matrixIds | Select-Object -Unique)
+if ($uniqueMatrixIds.Count -ne $matrixIds.Count) {
+    $duplicates = @($matrixIds | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+    Stop-Test "The matrix contains one or more duplicate control ID rows: $($duplicates -join ' ')"
+}
+$jsonIds = @($controls | ForEach-Object { $_.id })
+$extraIds = @($uniqueMatrixIds | Where-Object { $jsonIds -notcontains $_ })
+$missingIds = @($jsonIds | Where-Object { $uniqueMatrixIds -notcontains $_ })
+if ($extraIds.Count -gt 0) { Stop-Test "The matrix contains stale/extra control ID row(s) not present in the JSON catalog: $($extraIds -join ' ')" }
+if ($missingIds.Count -gt 0) { Stop-Test "The matrix is missing control ID row(s) present in the JSON catalog: $($missingIds -join ' ')" }
+
+# Validate catalog-level metadata (version/generated date/source issue) is
+# represented in the matrix header, not just the per-row content above.
+$catalogVersion = $catalog.catalogVersion
+$generatedOnValue = $catalog.generatedOn
+$sourceIssueValue = $catalog.sourceIssue
+if (-not $matrixText.Contains("**Catalog version:** ``$catalogVersion``")) { Stop-Test "Matrix header does not state the current catalogVersion ($catalogVersion)." }
+if (-not $matrixText.Contains("**Generated on:** ``$generatedOnValue``")) { Stop-Test "Matrix header does not state the current generatedOn date ($generatedOnValue)." }
+if (-not $matrixText.Contains($sourceIssueValue)) { Stop-Test "Matrix header does not reference the current sourceIssue ($sourceIssueValue)." }
+
+# Every declared classification value must be represented in the classification legend.
+foreach ($classificationValue in $classifications) {
+    if (-not $matrixText.Contains("``$classificationValue``")) {
+        Stop-Test "Classification legend in the matrix is missing the declared classification value: $classificationValue."
+    }
+}
+
+# Every top-level caution / overlapNotes note must be represented (as a
+# normalized substring, since the matrix may format the same text with
+# additional markdown emphasis or inline code spans).
+function Get-NormalizedText {
+    param([string]$Text)
+    return ([regex]::Replace($Text, '[\s`]+', ' ')).Trim()
+}
+$normalizedMatrix = Get-NormalizedText $matrixText
+foreach ($caution in @($catalog.cautions)) {
+    $normalizedCaution = Get-NormalizedText $caution
+    if (-not $normalizedMatrix.Contains($normalizedCaution)) {
+        Stop-Test "Matrix does not represent a declared caution: $caution"
+    }
+}
+foreach ($overlapNote in @($catalog.overlapNotes)) {
+    $normalizedNote = Get-NormalizedText $overlapNote.note
+    if (-not $normalizedMatrix.Contains($normalizedNote)) {
+        Stop-Test "Matrix Overlap notes section does not represent a declared overlapNotes entry: $($overlapNote.note)"
     }
 }
 
