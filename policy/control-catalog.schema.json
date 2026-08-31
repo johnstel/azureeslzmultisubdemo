@@ -74,8 +74,8 @@
         "definitionId": {
           "type": ["string", "null"]
         },
-        "majorVersion": { "type": "string", "minLength": 1, "not": { "const": "unknown" } },
-        "verifiedVersion": { "type": "string", "minLength": 1, "not": { "const": "unknown" } },
+        "majorVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
+        "verifiedVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
         "sourceUrl": { "type": ["string", "null"] },
         "verifiedOn": { "type": "string", "format": "date" },
         "verificationMethod": {

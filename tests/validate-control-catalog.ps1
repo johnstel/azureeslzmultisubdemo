@@ -22,11 +22,11 @@ function Stop-Test {
 $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 $idPattern = '^REQ-[A-Z]+-[0-9]{2}$'
 
-Write-Host '1/9 Validate catalog JSON syntax...'
+Write-Host '1/10 Validate catalog JSON syntax...'
 $catalogText = Get-Content -LiteralPath $CatalogPath -Raw
 $catalog = $catalogText | ConvertFrom-Json
 
-Write-Host '2/9 Validate required top-level fields...'
+Write-Host '2/10 Validate required top-level fields...'
 foreach ($field in @('catalogVersion', 'generatedOn', 'classificationValues', 'enforcementPhaseValues', 'controls', 'overlapNotes')) {
     if (-not (Get-Member -InputObject $catalog -Name $field -MemberType NoteProperty)) {
         Stop-Test "Catalog is missing required top-level field: $field"
@@ -40,7 +40,8 @@ $classifications = @($catalog.classificationValues)
 $phases = @($catalog.enforcementPhaseValues)
 $controls = @($catalog.controls)
 
-Write-Host '3/9 Validate required per-control fields and enums...'
+Write-Host '3/10 Validate required per-control fields and enums...'
+$verificationMethods = @('raw-json', 'initiative-json-member', 'ms-learn-page', 'documentation-pattern', 'internal-design', 'in-repository-custom-definition', 'not-yet-selected', 'not-yet-created')
 foreach ($control in $controls) {
     foreach ($field in @('id', 'domain', 'customerRequirement', 'scope', 'classification', 'mechanism',
             'supportedEffects', 'requiredParameters', 'roleDefinitionIds', 'remediationIdentityRequired',
@@ -58,19 +59,22 @@ foreach ($control in $controls) {
     if (@($control.supportedEffects).Count -eq 0) {
         Stop-Test "Control $($control.id) has an empty supportedEffects array."
     }
-    foreach ($field in @('displayName', 'builtIn', 'verifiedOn', 'verificationMethod')) {
+    foreach ($field in @('kind', 'displayName', 'builtIn', 'verifiedOn', 'verificationMethod')) {
         if (-not (Get-Member -InputObject $control.mechanism -Name $field -MemberType NoteProperty)) {
             Stop-Test "Control $($control.id) mechanism is missing required field: $field"
         }
     }
+    if ($verificationMethods -notcontains $control.mechanism.verificationMethod) {
+        Stop-Test "Control $($control.id) mechanism uses undeclared verificationMethod: $($control.mechanism.verificationMethod)"
+    }
 }
 
-Write-Host '4/9 Validate no "unknown" version/GUID placeholders remain...'
+Write-Host '4/10 Validate no "unknown"/"n/a" version/GUID placeholders remain...'
 foreach ($control in $controls) {
     $majorVersion = if (Get-Member -InputObject $control.mechanism -Name 'majorVersion' -MemberType NoteProperty) { $control.mechanism.majorVersion } else { $null }
     $verifiedVersion = if (Get-Member -InputObject $control.mechanism -Name 'verifiedVersion' -MemberType NoteProperty) { $control.mechanism.verifiedVersion } else { $null }
-    if ($majorVersion -eq 'unknown' -or $verifiedVersion -eq 'unknown') {
-        Stop-Test "Control $($control.id) still uses the literal placeholder 'unknown' for majorVersion/verifiedVersion."
+    if ($majorVersion -in @('unknown', 'n/a') -or $verifiedVersion -in @('unknown', 'n/a')) {
+        Stop-Test "Control $($control.id) still uses the literal placeholder 'unknown' or 'n/a' for majorVersion/verifiedVersion; either verify a real version or omit the field entirely when it does not apply."
     }
     $sourceUrl = if (Get-Member -InputObject $control.mechanism -Name 'sourceUrl' -MemberType NoteProperty) { $control.mechanism.sourceUrl } else { $null }
     if ($sourceUrl -and
@@ -80,7 +84,7 @@ foreach ($control in $controls) {
     }
 }
 
-Write-Host '5/9 Validate control IDs are unique and correctly formatted...'
+Write-Host '5/10 Validate control IDs are unique and correctly formatted...'
 $ids = @($controls | ForEach-Object { $_.id })
 $uniqueIds = $ids | Select-Object -Unique
 if ($uniqueIds.Count -ne $ids.Count) { Stop-Test 'Control IDs are not unique.' }
@@ -88,7 +92,7 @@ foreach ($id in $ids) {
     if ($id -notmatch $idPattern) { Stop-Test "Control ID '$id' does not match the REQ-<DOMAIN>-<NN> pattern." }
 }
 
-Write-Host '6/9 Validate dependency references resolve to existing IDs...'
+Write-Host '6/10 Validate dependency references resolve to existing IDs...'
 $idSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$ids)
 foreach ($control in $controls) {
     foreach ($dependency in @($control.dependencies)) {
@@ -98,7 +102,7 @@ foreach ($control in $controls) {
     }
 }
 
-Write-Host '7/9 Validate GUID formats for definitionId and roleDefinitionIds...'
+Write-Host '7/10 Validate GUID formats for definitionId and roleDefinitionIds...'
 foreach ($control in $controls) {
     $verifiedDirectly = @('raw-json', 'initiative-json-member') -contains $control.mechanism.verificationMethod
     if ($control.mechanism.builtIn -eq $true -and $verifiedDirectly) {
@@ -113,7 +117,7 @@ foreach ($control in $controls) {
     }
 }
 
-Write-Host '8/9 Validate remediation-identity requirements are backed by roles...'
+Write-Host '8/10 Validate remediation-identity requirements are backed by roles...'
 foreach ($control in $controls) {
     if ($control.remediationIdentityRequired -eq $true) {
         $rolesVaryByMember = (Get-Member -InputObject $control -Name 'rolesVaryByMember' -MemberType NoteProperty) -and ($control.rolesVaryByMember -eq $true)
@@ -123,7 +127,39 @@ foreach ($control in $controls) {
     }
 }
 
-Write-Host '9/9 Validate consistency between the JSON catalog and the human-readable matrix...'
+Write-Host '9/10 Validate the catalog against policy/control-catalog.schema.json...'
+$SchemaPath = Join-Path $ProjectDir 'policy/control-catalog.schema.json'
+$pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
+$jsonschemaAvailable = $false
+if ($pythonCmd) {
+    & python3 -c 'import jsonschema' 2>$null
+    $jsonschemaAvailable = ($LASTEXITCODE -eq 0)
+}
+if ($jsonschemaAvailable) {
+    $pyScript = @'
+import json
+import sys
+
+import jsonschema
+
+catalog_path, schema_path = sys.argv[1:3]
+with open(catalog_path, encoding="utf-8") as f:
+    catalog = json.load(f)
+with open(schema_path, encoding="utf-8") as f:
+    schema = json.load(f)
+jsonschema.validate(catalog, schema)
+'@
+    $tmpPy = New-TemporaryFile
+    Set-Content -LiteralPath $tmpPy -Value $pyScript
+    & python3 $tmpPy $CatalogPath $SchemaPath
+    $schemaExit = $LASTEXITCODE
+    Remove-Item -LiteralPath $tmpPy -ErrorAction SilentlyContinue
+    if ($schemaExit -ne 0) { Stop-Test 'Catalog failed JSON Schema validation.' }
+} else {
+    Write-Host '  (python3 + jsonschema not available; relying on the hand-rolled field/enum checks in steps 3-8, which mirror the schema.)'
+}
+
+Write-Host '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...'
 $matrixText = Get-Content -LiteralPath $MatrixPath -Raw
 $jsonCount = $controls.Count
 $countMatch = [regex]::Match($matrixText, '\*\*Total control records:\*\* (\d+)')
@@ -132,9 +168,16 @@ $matrixCount = [int]$countMatch.Groups[1].Value
 if ($jsonCount -ne $matrixCount) {
     Stop-Test "Catalog has $jsonCount control records but the matrix states $matrixCount."
 }
-foreach ($id in $ids) {
-    if ($matrixText -notmatch [regex]::Escape("| $id |")) {
-        Stop-Test "Control $id is present in the JSON catalog but not found as a table row in $MatrixPath."
+foreach ($control in $controls) {
+    $builtInText = if ($control.mechanism.builtIn) { 'Yes' } else { 'No' }
+    $hasDefinitionId = (Get-Member -InputObject $control.mechanism -Name 'definitionId' -MemberType NoteProperty -ErrorAction SilentlyContinue) -and $control.mechanism.definitionId
+    $definitionIdText = if ($hasDefinitionId) { "``$($control.mechanism.definitionId)``" } else { "``$([char]0x2014)``" }
+    $hasVerifiedVersion = (Get-Member -InputObject $control.mechanism -Name 'verifiedVersion' -MemberType NoteProperty -ErrorAction SilentlyContinue) -and $control.mechanism.verifiedVersion
+    $versionText = if ($hasVerifiedVersion) { $control.mechanism.verifiedVersion } else { [char]0x2014 }
+    $effectsText = ($control.supportedEffects -join ', ')
+    $expectedRow = "| $($control.id) | $($control.customerRequirement) | $($control.scope) | $($control.classification) | $($control.mechanism.displayName) (built-in: $builtInText) | $definitionIdText | $versionText | $effectsText | $($control.enforcementPhase) |"
+    if (-not $matrixText.Contains($expectedRow)) {
+        Stop-Test "Control $($control.id) row in $MatrixPath does not match the JSON catalog (scope, classification, mechanism, built-in ID, version, effects, or enforcement phase differs, or the row is missing)."
     }
 }
 

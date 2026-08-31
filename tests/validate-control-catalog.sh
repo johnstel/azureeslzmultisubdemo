@@ -23,10 +23,10 @@ fail() {
   exit 1
 }
 
-printf '1/9 Validate catalog JSON syntax...\n'
+printf '1/10 Validate catalog JSON syntax...\n'
 jq empty "${CATALOG}"
 
-printf '2/9 Validate required top-level fields...\n'
+printf '2/10 Validate required top-level fields...\n'
 jq -e '
   (.["$schema"] | type == "string") and
   (.catalogVersion | type == "string") and
@@ -37,8 +37,9 @@ jq -e '
   (.overlapNotes | type == "array")
 ' "${CATALOG}" >/dev/null || fail "Catalog is missing a required top-level field."
 
-printf '3/9 Validate required per-control fields and enums...\n'
-jq -e '
+printf '3/10 Validate required per-control fields and enums...\n'
+verification_methods='["raw-json","initiative-json-member","ms-learn-page","documentation-pattern","internal-design","in-repository-custom-definition","not-yet-selected","not-yet-created"]'
+jq -e --argjson methods "${verification_methods}" '
   (.classificationValues) as $classifications |
   (.enforcementPhaseValues) as $phases |
   [.controls[] |
@@ -49,10 +50,11 @@ jq -e '
       (.scope | type != "string") or
       (.classification as $c | $classifications | index($c) | not) or
       (.mechanism | type != "object") or
+      (.mechanism.kind | type != "string") or
       (.mechanism.displayName | type != "string") or
       (.mechanism.builtIn | type != "boolean") or
       (.mechanism.verifiedOn | type != "string") or
-      (.mechanism.verificationMethod | type != "string") or
+      (.mechanism.verificationMethod as $vm | $methods | index($vm) | not) or
       (.supportedEffects | type != "array" or length == 0) or
       (.requiredParameters | type != "array") or
       (.roleDefinitionIds | type != "array") or
@@ -62,30 +64,30 @@ jq -e '
       (.evidenceSource | type != "string")
     )
   ] | length == 0
-' "${CATALOG}" >/dev/null || fail "One or more control records are missing a required field or use an undeclared classification/enforcementPhase value."
+' "${CATALOG}" >/dev/null || fail "One or more control records are missing a required field or use an undeclared classification/enforcementPhase/verificationMethod value."
 
-printf '4/9 Validate no "unknown" version/GUID placeholders remain...\n'
+printf '4/10 Validate no "unknown"/"n/a" version/GUID placeholders remain...\n'
 jq -e '
-  [.controls[] | select(.mechanism.majorVersion == "unknown" or .mechanism.verifiedVersion == "unknown")] | length == 0
-' "${CATALOG}" >/dev/null || fail "A control record still uses the literal placeholder \"unknown\" for majorVersion/verifiedVersion."
+  [.controls[] | select(.mechanism.majorVersion == "unknown" or .mechanism.majorVersion == "n/a" or .mechanism.verifiedVersion == "unknown" or .mechanism.verifiedVersion == "n/a")] | length == 0
+' "${CATALOG}" >/dev/null || fail "A control record still uses the literal placeholder \"unknown\" or \"n/a\" for majorVersion/verifiedVersion; either verify a real version or omit the field entirely when it does not apply."
 jq -e '
   [.controls[] | select(.mechanism.sourceUrl != null and (.mechanism.sourceUrl | test("raw\\.githubusercontent\\.com")) and (.mechanism.sourceUrl | endswith("/")))] | length == 0
 ' "${CATALOG}" >/dev/null || fail "A control record points sourceUrl at a directory listing instead of a file."
 
-printf '5/9 Validate control IDs are unique and correctly formatted...\n'
+printf '5/10 Validate control IDs are unique and correctly formatted...\n'
 jq -e '
   [.controls[].id] as $ids |
   ($ids | length) == ($ids | unique | length) and
   ([$ids[] | select(test("^REQ-[A-Z]+-[0-9]{2}$") | not)] | length == 0)
 ' "${CATALOG}" >/dev/null || fail "Control IDs are not unique or do not match the REQ-<DOMAIN>-<NN> pattern."
 
-printf '6/9 Validate dependency references resolve to existing IDs...\n'
+printf '6/10 Validate dependency references resolve to existing IDs...\n'
 jq -e '
   [.controls[].id] as $ids |
   [.controls[].dependencies[]? | select(. as $d | $ids | index($d) | not)] | length == 0
 ' "${CATALOG}" >/dev/null || fail "A control record depends on an ID that does not exist in the catalog."
 
-printf '7/9 Validate GUID formats for definitionId and roleDefinitionIds...\n'
+printf '7/10 Validate GUID formats for definitionId and roleDefinitionIds...\n'
 guid_pattern='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 jq -e --arg re "${guid_pattern}" '
   [.controls[] |
@@ -97,7 +99,7 @@ jq -e --arg re "${guid_pattern}" '
   [.controls[].roleDefinitionIds[]? | select(test($re) | not)] | length == 0
 ' "${CATALOG}" >/dev/null || fail "A roleDefinitionIds entry is not a well-formed bare GUID."
 
-printf '8/9 Validate remediation-identity requirements are backed by roles...\n'
+printf '8/10 Validate remediation-identity requirements are backed by roles...\n'
 jq -e '
   [.controls[] |
     select(.remediationIdentityRequired == true) |
@@ -105,17 +107,45 @@ jq -e '
   ] | length == 0
 ' "${CATALOG}" >/dev/null || fail "A control record sets remediationIdentityRequired=true but has neither a populated roleDefinitionIds array nor rolesVaryByMember=true."
 
-printf '9/9 Validate consistency between the JSON catalog and the human-readable matrix...\n'
+printf '9/10 Validate the catalog against policy/control-catalog.schema.json...\n'
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import jsonschema' >/dev/null 2>&1; then
+  python3 - "${CATALOG}" "${SCHEMA:-${PROJECT_DIR}/policy/control-catalog.schema.json}" <<'PYEOF' || fail "Catalog failed JSON Schema validation."
+import json
+import sys
+
+import jsonschema
+
+catalog_path, schema_path = sys.argv[1:3]
+with open(catalog_path, encoding="utf-8") as f:
+    catalog = json.load(f)
+with open(schema_path, encoding="utf-8") as f:
+    schema = json.load(f)
+jsonschema.validate(catalog, schema)
+PYEOF
+else
+  printf '  (python3 + jsonschema not available; relying on the hand-rolled field/enum checks in steps 3-8, which mirror the schema.)\n'
+fi
+
+printf '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...\n'
 json_count="$(jq '.controls | length' "${CATALOG}")"
 matrix_count="$(rg -o '\*\*Total control records:\*\* ([0-9]+)' -r '$1' "${MATRIX}")"
 [[ "${json_count}" == "${matrix_count}" ]] || fail "Catalog has ${json_count} control records but the matrix states ${matrix_count}."
-missing_from_matrix=0
-while IFS= read -r control_id; do
-  rg -q -- "^\| ${control_id} \|" "${MATRIX}" || {
-    printf 'ERROR: Control %s is present in the JSON catalog but not found as a table row in %s.\n' "${control_id}" "${MATRIX}" >&2
-    missing_from_matrix=1
-  }
-done < <(jq -r '.controls[].id' "${CATALOG}")
-[[ "${missing_from_matrix}" -eq 0 ]] || exit 1
+
+mismatch=0
+while IFS= read -r expected_row; do
+  control_id="$(printf '%s\n' "${expected_row}" | cut -d'|' -f2 | tr -d ' ')"
+  if ! rg -qF -- "${expected_row}" "${MATRIX}"; then
+    printf 'ERROR: Control %s row in %s does not match the JSON catalog (scope, classification, mechanism, built-in ID, version, effects, or enforcement phase differs, or the row is missing).\n' "${control_id}" "${MATRIX}" >&2
+    mismatch=1
+  fi
+done < <(jq -r '
+  .controls[] |
+  ("| " + .id + " | " + .customerRequirement + " | " + .scope + " | " + .classification + " | " +
+   .mechanism.displayName + " (built-in: " + (if .mechanism.builtIn then "Yes" else "No" end) + ") | " +
+   (if .mechanism.definitionId then ("`" + .mechanism.definitionId + "`") else "`\u2014`" end) + " | " +
+   (.mechanism.verifiedVersion // "\u2014") + " | " +
+   (.supportedEffects | join(", ")) + " | " + .enforcementPhase + " |")
+' "${CATALOG}")
+[[ "${mismatch}" -eq 0 ]] || exit 1
 
 printf '\nControl catalog validation passed.\n'

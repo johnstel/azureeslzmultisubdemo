@@ -5,7 +5,7 @@ This document is the human-readable companion to the machine-readable [`policy/c
 - **Catalog version:** `1.0.0`
 - **Generated on:** `2026-08-31`
 - **Source issue:** https://github.com/johnstel/azureeslzmultisubdemo/issues/3
-- **Total control records:** 53
+- **Total control records:** 54
 
 ## Scope and safety
 
@@ -16,7 +16,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 - Azure service security baselines (for example, the Storage, Key Vault, or Compute security baselines) are Microsoft Learn guidance mapped into individual service controls; they are not one universal assignable Azure Policy initiative. See REQ-BASE-04.
 - NERC CIP has no single turnkey built-in Azure Policy initiative. Compliance requires customer-owned evidence, a registered-entity applicability decision, and procedural controls outside Azure Policy. See REQ-CIP-01 and REQ-CIP-02. This catalog and repository do not claim NERC CIP certification or compliance.
 - The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here.
-- Large regulatory-compliance and multi-plan initiatives (`rolesVaryByMember: true` in the JSON — REQ-BASE-01, REQ-BASE-02, REQ-BASE-03, REQ-DEF-01, REQ-LOG-02) compose dozens to hundreds of member policies, each with its own `roleDefinitionIds`; consult the individual member policy relevant to the control in scope rather than a single role list.
+- Large regulatory-compliance and multi-plan initiatives (`rolesVaryByMember: true` in the JSON — REQ-BASE-01, REQ-BASE-02, REQ-BASE-03, REQ-DEF-01) compose dozens to hundreds of member policies, each with its own `roleDefinitionIds`; consult the individual member policy relevant to the control in scope rather than a single role list. REQ-DEF-01's `roleDefinitionIds` is nonetheless a complete verified union (Owner + Security Admin) across all 12 members, and REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).
 
 ## Classification legend
 
@@ -37,7 +37,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | REQ-ID-03 | Block legacy (basic) authentication protocols. | tenant (Entra ID) | entra-pim | Conditional Access: block legacy authentication (report-only template) (built-in: No) | `—` | — | reportOnly, enabledEnforced | manual-evidence |
 | REQ-ID-04 | Replace permanent subscription Owner with eligible, time-bound, PIM-compatible privileged access. | subscription | entra-pim | PIM-ready eligible role assignment inputs (Microsoft.Authorization roleEligibilityScheduleRequests) (built-in: No) | `—` | — | eligible, activeTimeBound | manual-evidence |
 | REQ-ID-05 | Detect and periodically review excessive service-principal and managed-identity role assignments, and review subscription Owner counts. | subscription | manual-evidence | Read-only Azure role-assignment inventory report (Bash/PowerShell) (built-in: No) | `—` | — | report | manual-evidence |
-| REQ-ID-06 | Use Defender for Cloud CIEM (Cloud Infrastructure Entitlement Management) findings to complement manual identity review. | subscription | defender-cspm-ciem | Microsoft Defender CSPM (Permissions Management / CIEM entitlement insights) (built-in: Yes) | `72f8cee7-2937-403d-84a1-a4e3e57f3c21` | n/a | DeployIfNotExists, Disabled | manual-evidence |
+| REQ-ID-06 | Use Defender for Cloud CIEM (Cloud Infrastructure Entitlement Management) findings to complement manual identity review. | subscription | defender-cspm-ciem | Configure Microsoft Defender CSPM plan (built-in: Yes) | `72f8cee7-2937-403d-84a1-a4e3e57f3c21` | 1.0.0 | DeployIfNotExists, Disabled | manual-evidence |
 
 ## Deployment restrictions
 
@@ -83,7 +83,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
 | REQ-LOG-01 | Export subscription Activity Logs to the effective central Log Analytics workspace. | demo-root | azure-policy | Configure Azure Activity logs to stream to specified Log Analytics workspace (built-in: Yes) | `2465583e-4e78-4c15-b6be-a36cbc7c8b0f` | 1.0.0 | DeployIfNotExists, Disabled | deployifnotexists-opt-in |
-| REQ-LOG-02 | Export supported resource-level diagnostic logs to the effective central Log Analytics workspace. | demo-root | azure-policy | Enable allLogs category group resource logging for supported resources to Log Analytics (built-in: Yes) | `0884adba-2312-4468-abeb-5422caed1038` | 1.0.0 | DeployIfNotExists, Disabled | deployifnotexists-opt-in |
+| REQ-LOG-02 | Export supported resource-level diagnostic logs to the effective central Log Analytics workspace. | demo-root | azure-policy | Enable allLogs category group resource logging for supported resources to Log Analytics (built-in: Yes) | `0884adba-2312-4468-abeb-5422caed1038` | 1.0.0 | AuditIfNotExists, DeployIfNotExists, Disabled | deployifnotexists-opt-in |
 
 ## Data protection
 
@@ -96,15 +96,16 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | REQ-DATA-05 | Require Key Vault soft delete. | landingzones | azure-policy | Key vaults should have soft delete enabled (built-in: Yes) | `1e66c121-a66a-4b1f-9b83-0fd99bf0fc2d` | 3.1.0 | Audit, Deny, Disabled | audit-only |
 | REQ-DATA-06 | Require Key Vault purge protection in addition to soft delete (never disabled). | landingzones | azure-policy | Key vaults should have deletion protection enabled (built-in: Yes) | `0b60c0b2-2dc2-4e1c-b5c9-abbed971de53` | 2.1.0 | Audit, Deny, Disabled | audit-only |
 | REQ-DATA-07 | Require Key Vault to use Azure RBAC for data-plane authorization instead of access policies. | landingzones | azure-policy | Azure Key Vault should use RBAC permission model (built-in: Yes) | `12d4fa5e-1f9f-4c21-97a9-b99b3c6611b5` | 1.0.1 | Audit, Deny, Disabled | audit-only |
-| REQ-DATA-08 | Use customer-managed keys (CMK) for encryption at rest on eligible services, where the customer supplies a Key Vault and key. | landingzones | shared-service-architecture | Service-specific CMK audit built-ins (for example, storage/SQL/Cosmos DB 'should use customer-managed key' policies) (built-in: Yes) | `—` | n/a | Audit, Disabled | manual-evidence |
+| REQ-DATA-08 | Use customer-managed keys (CMK) for encryption at rest on Storage accounts, where the customer supplies a Key Vault and key. | landingzones | azure-policy | Storage accounts should use customer-managed key for encryption (built-in: Yes) | `6fac406b-40ca-413b-bf8e-0bf964659c25` | 1.0.3 | Audit, Disabled | audit-only |
+| REQ-DATA-09 | Use customer-managed keys (CMK) for encryption at rest on other eligible services beyond Storage (for example SQL, Cosmos DB), where the customer supplies a Key Vault and key. | landingzones | manual-evidence | Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) — not yet selected (built-in: No) | `—` | — | Audit, Disabled | manual-evidence |
 
 ## MCSB / CIS / NIST / service baselines
 
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
-| REQ-BASE-01 | Assign the current stable Microsoft Cloud Security Benchmark (MCSB) as the default security baseline. | demo-root | azure-policy | Microsoft cloud security benchmark (built-in: Yes) | `1f3afdf9-d0c9-4c3d-847f-89da613e70a8` | 57.58.0 | Audit, AuditIfNotExists, DeployIfNotExists, Disabled | audit-only |
-| REQ-BASE-02 | Optionally assign the CIS Microsoft Azure Foundations Benchmark as an overlay. | demo-root | azure-policy | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in: Yes) | `06f19060-9e68-4070-92ca-f15cc126059e` | 1.10.0 | Audit, AuditIfNotExists, DeployIfNotExists, Disabled | audit-only |
-| REQ-BASE-03 | Optionally assign the NIST SP 800-53 Rev. 5 initiative as an overlay. | demo-root | azure-policy | NIST SP 800-53 Rev. 5 (built-in: Yes) | `179d1daa-458f-4e47-8086-2a68d0d6c38f` | 14.20.0 | Audit, AuditIfNotExists, DeployIfNotExists, Disabled | audit-only |
+| REQ-BASE-01 | Assign the current stable Microsoft Cloud Security Benchmark (MCSB) as the default security baseline. | demo-root | azure-policy | Microsoft cloud security benchmark (built-in: Yes) | `1f3afdf9-d0c9-4c3d-847f-89da613e70a8` | 57.58.0 | Audit, AuditIfNotExists, Deny, Disabled | audit-only |
+| REQ-BASE-02 | Optionally assign the CIS Microsoft Azure Foundations Benchmark as an overlay. | demo-root | azure-policy | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in: Yes) | `06f19060-9e68-4070-92ca-f15cc126059e` | 1.10.0 | Audit, AuditIfNotExists, Deny, Disabled | audit-only |
+| REQ-BASE-03 | Optionally assign the NIST SP 800-53 Rev. 5 initiative as an overlay. | demo-root | azure-policy | NIST SP 800-53 Rev. 5 (built-in: Yes) | `179d1daa-458f-4e47-8086-2a68d0d6c38f` | 14.20.0 | Audit, Deny, Disabled | audit-only |
 | REQ-BASE-04 | Apply Azure per-service security baseline guidance (for example, the Storage, Key Vault, and Compute security baselines) where relevant. | landingzones | manual-evidence | Azure security baselines (per-service Microsoft Learn guidance, not a single assignable initiative) (built-in: No) | `—` | — | n/a | manual-evidence |
 
 ## Defender for Cloud
@@ -112,9 +113,9 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
 | REQ-DEF-01 | Provide a single explicit assignment point for configuring Microsoft Defender for Cloud plans. | demo-root | azure-policy | Configure Microsoft Defender for Cloud plans (built-in: Yes) | `f08c57cd-dbd6-49a4-a85e-9ae77ac959b0` | 1.1.0 | DeployIfNotExists | manual-evidence |
-| REQ-DEF-02 | Optionally enable Microsoft Defender CSPM (Cloud Security Posture Management). | demo-root | defender-cspm-ciem | Configure Microsoft Defender CSPM plan (built-in: Yes) | `72f8cee7-2937-403d-84a1-a4e3e57f3c21` | n/a | DeployIfNotExists, Disabled | manual-evidence |
-| REQ-DEF-03 | Optionally enable Microsoft Defender for Servers. | landingzones | defender-cspm-ciem | Configure Microsoft Defender for Servers plan (built-in: Yes) | `5eb6d64a-4086-4d7a-92da-ec51aed0332d` | n/a | DeployIfNotExists, Disabled | manual-evidence |
-| REQ-DEF-04 | Optionally enable Microsoft Defender for Storage. | landingzones | defender-cspm-ciem | Configure Microsoft Defender for Storage plan (built-in: Yes) | `cfdc5972-75b3-4418-8ae1-7f5c36839390` | n/a | DeployIfNotExists, Disabled | manual-evidence |
+| REQ-DEF-02 | Optionally enable Microsoft Defender CSPM (Cloud Security Posture Management). | demo-root | defender-cspm-ciem | Configure Microsoft Defender CSPM plan (built-in: Yes) | `72f8cee7-2937-403d-84a1-a4e3e57f3c21` | 1.0.0 | DeployIfNotExists, Disabled | manual-evidence |
+| REQ-DEF-03 | Optionally enable Microsoft Defender for Servers. | landingzones | defender-cspm-ciem | Configure Microsoft Defender for Servers plan (built-in: Yes) | `5eb6d64a-4086-4d7a-92da-ec51aed0332d` | 1.0.0 | DeployIfNotExists, Disabled | manual-evidence |
+| REQ-DEF-04 | Optionally enable Microsoft Defender for Storage. | landingzones | defender-cspm-ciem | Configure Microsoft Defender for Storage to be enabled (built-in: Yes) | `cfdc5972-75b3-4418-8ae1-7f5c36839390` | 1.5.0 | DeployIfNotExists, Disabled | manual-evidence |
 | REQ-DEF-05 | Do not depend on the deprecated Log Analytics (MMA) monitoring agent for auto-provisioning. | demo-root | azure-policy | [Deprecated]: Auto provisioning of the Log Analytics agent should be enabled on your subscription (built-in: Yes) | `475aae12-b88a-4572-8b36-9b712b2b3a17` | 1.1.0-deprecated | AuditIfNotExists, Disabled | manual-evidence |
 
 ## Backup
@@ -128,7 +129,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
-| REQ-CIP-01 | Compose an opt-in, stricter technical control overlay for subscriptions under the Critical Infrastructure management-group branch. | critical-infrastructure | shared-service-architecture | Demo - NERC CIP technical overlay (to be composed from existing verified controls) (built-in: No) | `—` | n/a | Audit, Deny, DeployIfNotExists, Disabled | manual-evidence |
+| REQ-CIP-01 | Compose an opt-in, stricter technical control overlay for subscriptions under the Critical Infrastructure management-group branch. | critical-infrastructure | shared-service-architecture | Demo - NERC CIP technical overlay (to be composed from existing verified controls) (built-in: No) | `—` | — | Audit, Deny, DeployIfNotExists, Disabled | manual-evidence |
 | REQ-CIP-02 | Document the responsibility and evidence matrix for NERC CIP technical requirements not fully covered by Azure Policy. | critical-infrastructure | manual-evidence | NERC CIP responsibility and evidence matrix (docs/NERC-CIP-MATRIX.md, to be authored) (built-in: No) | `—` | — | n/a | manual-evidence |
 
 ## Overlap notes (avoid duplicate enforcement)

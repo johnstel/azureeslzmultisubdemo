@@ -177,13 +177,13 @@
       "mechanism": {
         "kind": "defender-plan-feature",
         "builtIn": true,
-        "displayName": "Microsoft Defender CSPM (Permissions Management / CIEM entitlement insights)",
+        "displayName": "Configure Microsoft Defender CSPM plan",
         "definitionId": "72f8cee7-2937-403d-84a1-a4e3e57f3c21",
-        "majorVersion": "n/a",
-        "verifiedVersion": "n/a",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_Azure_Defender_CSPM_Full_Features_DINE.json",
         "verifiedOn": "2026-08-31",
-        "verificationMethod": "initiative-json-member"
+        "verificationMethod": "raw-json"
       },
       "supportedEffects": [
         "DeployIfNotExists",
@@ -1027,21 +1027,24 @@
         "notes": "Initiative composes ~140 member DeployIfNotExists policies, one per supported resource type; this is a policySetDefinition, not a single policy."
       },
       "supportedEffects": [
+        "AuditIfNotExists",
         "DeployIfNotExists",
         "Disabled"
       ],
       "requiredParameters": [
-        "logAnalyticsWorkspaceId"
+        "logAnalytics"
       ],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-LOG-01"
       ],
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
-      "notes": "Not every Azure resource type is covered by this initiative; unsupported types must be documented rather than claimed as covered (issue #18). This initiative has ~140 member DeployIfNotExists policies, one per resource type, each with its own then.details.roleDefinitionIds; two sampled members (aad-domainservices, agfoodplatform-farmbeats) both required only Log Analytics Contributor (92aaf0da-9dab-42b6-94a3-d43ce8d16293), but this was not verified for every member policy, so no single roleDefinitionIds list is asserted here. Consult the member policy relevant to the resource type in scope before assignment.",
-      "rolesVaryByMember": true
+      "notes": "Not every Azure resource type is covered by this initiative; unsupported types must be documented rather than claimed as covered (issue #18). All 140 member DeployIfNotExists policies were fetched directly and their then.details.roleDefinitionIds inspected: every member requires only Log Analytics Contributor (92aaf0da-9dab-42b6-94a3-d43ce8d16293) with no exceptions found, so the roleDefinitionIds above is a complete, exhaustively verified union, not a sample. The top-level required parameter is named `logAnalytics` (workspace resource ID), matching the initiative's `parameters.logAnalytics` definition.",
+      "rolesVaryByMember": false
     },
     {
       "id": "REQ-DATA-01",
@@ -1263,16 +1266,48 @@
     {
       "id": "REQ-DATA-08",
       "domain": "data-protection",
-      "customerRequirement": "Use customer-managed keys (CMK) for encryption at rest on eligible services, where the customer supplies a Key Vault and key.",
+      "customerRequirement": "Use customer-managed keys (CMK) for encryption at rest on Storage accounts, where the customer supplies a Key Vault and key.",
       "scope": "landingzones",
-      "classification": "shared-service-architecture",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Storage accounts should use customer-managed key for encryption",
+        "definitionId": "6fac406b-40ca-413b-bf8e-0bf964659c25",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.3",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/StorageAccountCustomerManagedKeyEnabled_Audit.json",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "raw-json",
+        "category": "Storage",
+        "notes": "Audit-only built-in (no DeployIfNotExists/remediation branch); it flags storage accounts whose encryption.keySource is not Microsoft.Keyvault. It does not validate which specific Key Vault/key was used, so the customer-supplied key/vault requirement itself remains a manual-evidence dependency (see REQ-DATA-05/06)."
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-DATA-05",
+        "REQ-DATA-06"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state for the Storage CMK audit built-in.",
+      "notes": "Decomposed from a prior single 'service-specific CMK' placeholder record: Storage now has a directly verified built-in (this record). Other eligible services (SQL, Cosmos DB, and similar) do not share this GUID and are tracked separately in REQ-DATA-09 because no single built-in covers every service."
+    },
+    {
+      "id": "REQ-DATA-09",
+      "domain": "data-protection",
+      "customerRequirement": "Use customer-managed keys (CMK) for encryption at rest on other eligible services beyond Storage (for example SQL, Cosmos DB), where the customer supplies a Key Vault and key.",
+      "scope": "landingzones",
+      "classification": "manual-evidence",
       "mechanism": {
         "kind": "service-specific-audit-policy",
-        "builtIn": true,
-        "displayName": "Service-specific CMK audit built-ins (for example, storage/SQL/Cosmos DB 'should use customer-managed key' policies)",
+        "builtIn": false,
+        "displayName": "Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) \u2014 not yet selected",
         "definitionId": null,
-        "majorVersion": "n/a",
-        "verifiedVersion": "n/a",
         "sourceUrl": null,
         "verifiedOn": "2026-08-31",
         "verificationMethod": "not-yet-selected"
@@ -1281,19 +1316,17 @@
         "Audit",
         "Disabled"
       ],
-      "requiredParameters": [
-        "approvedKeyVaultResourceId",
-        "approvedKeyName"
-      ],
+      "requiredParameters": [],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [
         "REQ-DATA-05",
-        "REQ-DATA-06"
+        "REQ-DATA-06",
+        "REQ-DATA-08"
       ],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Per-service CMK configuration status; key rotation, availability, and recovery are customer-owned dependencies documented alongside the specific built-in chosen in issue #14.",
-      "notes": "CMK is intentionally service-specific and audit-first, not a single universal built-in that covers every Azure service; the exact GUID(s) will be selected and verified per service in issue #14, not fabricated here."
+      "evidenceSource": "Per-service CMK configuration status; key rotation, availability, and recovery are customer-owned dependencies documented alongside the specific built-in chosen per service in issue #14.",
+      "notes": "No single built-in initiative covers CMK across every Azure service (confirmed: no policySetDefinition matching 'customer-managed key' exists in the public Azure/azure-policy repository), so this record is intentionally honest that builtIn is false and no GUID is claimed until each service's built-in is individually verified in issue #14. Do not treat this record as azure-policy-backed until it is next decomposed per service."
     },
     {
       "id": "REQ-BASE-01",
@@ -1317,7 +1350,7 @@
       "supportedEffects": [
         "Audit",
         "AuditIfNotExists",
-        "DeployIfNotExists",
+        "Deny",
         "Disabled"
       ],
       "requiredParameters": [],
@@ -1326,7 +1359,7 @@
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself. This initiative composes ~230 member policy/initiative references, each of which embeds its own then.details.roleDefinitionIds where a remediation identity is required; enumerating every member's role list here is out of scope for a single-record field. Consult the individual member policy in the source URL for the exact roles required by a given member before assignment.",
+      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself. supportedEffects is the verified union of the initiative's own top-level effect-parameter allowedValues (163 of 226 members expose an assignable effect parameter with allowedValues Audit/AuditIfNotExists/Deny/Disabled); the remaining members (mostly Defender-plan DeployIfNotExists sub-policies with no exposed override) run at their own fixed default and are not independently selectable through this initiative's parameters. This initiative composes ~230 member policy/initiative references, each of which embeds its own then.details.roleDefinitionIds where a remediation identity is required; enumerating every member's role list here is out of scope for a single-record field. Consult the individual member policy in the source URL for the exact roles required by a given member before assignment.",
       "rolesVaryByMember": true
     },
     {
@@ -1351,7 +1384,7 @@
       "supportedEffects": [
         "Audit",
         "AuditIfNotExists",
-        "DeployIfNotExists",
+        "Deny",
         "Disabled"
       ],
       "requiredParameters": [],
@@ -1362,7 +1395,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of the initiative's 103 exposed effect parameters' allowedValues (Audit/AuditIfNotExists/Deny/Disabled). This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
       "rolesVaryByMember": true
     },
     {
@@ -1385,8 +1418,7 @@
       },
       "supportedEffects": [
         "Audit",
-        "AuditIfNotExists",
-        "DeployIfNotExists",
+        "Deny",
         "Disabled"
       ],
       "requiredParameters": [],
@@ -1397,7 +1429,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance. This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance. supportedEffects is the verified union of the initiative's 77 exposed effect parameters' allowedValues (Audit/Deny/Disabled \u2014 no AuditIfNotExists is exposed at the initiative level for this regulatory-compliance initiative, unlike MCSB/CIS). This initiative composes many member policy references, each with its own then.details.roleDefinitionIds; roles are not enumerated here for the same reason described in REQ-BASE-01.",
       "rolesVaryByMember": true
     },
     {
@@ -1457,12 +1489,15 @@
       "requiredParameters": [
         "individualPlanEnableParameters"
       ],
-      "roleDefinitionIds": [],
+      "roleDefinitionIds": [
+        "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+        "fb1c8493-542b-48eb-b624-b4c8fea62acd"
+      ],
       "remediationIdentityRequired": true,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Compiled ARM template (all member plans parameterized off/disabled by default) + Defender for Cloud plan status.",
-      "notes": "Every paid plan requires an explicit independent parameter and cost warning per issue #20; no plan is enabled in the safe demo profile. This initiative composes 12 member DeployIfNotExists policies (CSPM, Containers, AI, Storage, Servers, SQL-on-VMs, App Services, SQL, Key Vault, ARM, Open Source Databases, CosmosDB), each with its own then.details.roleDefinitionIds. Sampling confirmed the CSPM, Storage, and Servers members require Owner (8e3af657-a8ff-443c-a75c-2fe8c4bcb635) while the Key Vault member requires Security Admin (fb1c8493-542b-48eb-b624-b4c8fea62acd) instead; the remaining members were not individually re-verified. Consult the member policy relevant to the plan being enabled (see REQ-DEF-02..04 for individually verified members) rather than relying on a single role list here.",
+      "notes": "Every paid plan requires an explicit independent parameter and cost warning per issue #20; no plan is enabled in the safe demo profile. This initiative composes 12 member DeployIfNotExists policies (CSPM, Containers, AI, Storage, Servers, SQL-on-VMs, App Services, SQL, Key Vault, ARM, Open Source Databases, CosmosDB). All 12 individual member definitions were fetched directly and their then.details.roleDefinitionIds recorded: CSPM, Storage, Servers, and Containers/AI require Owner (8e3af657-a8ff-443c-a75c-2fe8c4bcb635); SQL-on-VMs, App Services, SQL, Key Vault, ARM, Open Source Databases, and CosmosDB require Security Admin (fb1c8493-542b-48eb-b624-b4c8fea62acd). roleDefinitionIds above is the complete verified union across all 12 members; consult the specific member policy (see REQ-DEF-02..04) to determine which single role applies to the plan being enabled.",
       "rolesVaryByMember": true
     },
     {
@@ -1476,13 +1511,13 @@
         "builtIn": true,
         "displayName": "Configure Microsoft Defender CSPM plan",
         "definitionId": "72f8cee7-2937-403d-84a1-a4e3e57f3c21",
-        "majorVersion": "n/a",
-        "verifiedVersion": "n/a",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
         "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
-        "verificationMethod": "initiative-json-member",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_Azure_Defender_CSPM_Full_Features_DINE.json",
+        "verificationMethod": "raw-json",
         "category": "Security Center",
-        "notes": "Confirmed as a member of REQ-DEF-01's initiative JSON; the individual policy file (ASC_Azure_Defender_CSPM_Full_Features_DINE.json) was fetched directly and its then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
+        "notes": "Individual policy file (ASC_Azure_Defender_CSPM_Full_Features_DINE.json) fetched directly; version 1.0.0 confirmed. It is also a member of REQ-DEF-01's initiative JSON. Its then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
       },
       "supportedEffects": [
         "DeployIfNotExists",
@@ -1510,11 +1545,11 @@
         "builtIn": true,
         "displayName": "Configure Microsoft Defender for Servers plan",
         "definitionId": "5eb6d64a-4086-4d7a-92da-ec51aed0332d",
-        "majorVersion": "n/a",
-        "verifiedVersion": "n/a",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
         "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
-        "verificationMethod": "initiative-json-member",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_Azure_Defender_Servers_Full_Features_DINE.json",
+        "verificationMethod": "raw-json",
         "category": "Security Center"
       },
       "supportedEffects": [
@@ -1542,13 +1577,13 @@
       "mechanism": {
         "kind": "policyDefinition",
         "builtIn": true,
-        "displayName": "Configure Microsoft Defender for Storage plan",
+        "displayName": "Configure Microsoft Defender for Storage to be enabled",
         "definitionId": "cfdc5972-75b3-4418-8ae1-7f5c36839390",
-        "majorVersion": "n/a",
-        "verifiedVersion": "n/a",
+        "majorVersion": "1",
+        "verifiedVersion": "1.5.0",
         "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
-        "verificationMethod": "initiative-json-member",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/MDC_Microsoft_Defender_For_Storage_Full_DINE.json",
+        "verificationMethod": "raw-json",
         "category": "Security Center"
       },
       "supportedEffects": [
@@ -1679,8 +1714,6 @@
         "builtIn": false,
         "displayName": "Demo - NERC CIP technical overlay (to be composed from existing verified controls)",
         "definitionId": null,
-        "majorVersion": "n/a",
-        "verifiedVersion": "n/a",
         "sourceUrl": null,
         "verifiedOn": "2026-08-31",
         "verificationMethod": "not-yet-created"
