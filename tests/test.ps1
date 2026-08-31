@@ -734,6 +734,32 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     Expect-IdentityValidationFailure -Description "populated mode bypass via unnormalized relative './identity' path" -Arguments @('-Mode', 'populated', '-Path', (Join-Path $ProjectDir './identity'))
     Expect-IdentityValidationFailure -Description "populated mode bypass via unnormalized absolute path with a nested '..' segment" -Arguments @('-Mode', 'populated', '-Path', (Join-Path $ProjectDir 'identity/conditional-access/../../identity'))
 
+    # Case: a symbolic link that targets the tracked identity/ folder must
+    # also be rejected by the populated-mode guard. Resolve-Path alone only
+    # normalizes '.'/'..' segments; it does not dereference a symlink (or,
+    # on Windows, a reparse-point junction) to its final filesystem target,
+    # so the guard must explicitly walk and resolve every path component.
+    # New-Item -ItemType SymbolicLink works without elevation on Linux/macOS;
+    # on Windows it requires Administrator privilege or Developer Mode, so
+    # this case is skipped there in favor of the junction case below (which
+    # requires no elevation on Windows and has no Linux/macOS equivalent).
+    if (-not $IsWindows) {
+        $identitySymlinkDir = Join-Path $TempDir 'identity-symlink-alias'
+        if (Test-Path -LiteralPath $identitySymlinkDir) { Remove-Item -LiteralPath $identitySymlinkDir -Force }
+        New-Item -ItemType SymbolicLink -Path $identitySymlinkDir -Target $identitySrcDir | Out-Null
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked identity/ folder' -Arguments @('-Mode', 'populated', '-Path', $identitySymlinkDir)
+        Remove-Item -LiteralPath $identitySymlinkDir -Force
+    } else {
+        # Case: a Windows reparse-point junction that targets the tracked
+        # identity/ folder must also be rejected. Junctions do not require
+        # elevation on Windows, unlike symbolic links.
+        $identityJunctionDir = Join-Path $TempDir 'identity-junction-alias'
+        if (Test-Path -LiteralPath $identityJunctionDir) { Remove-Item -LiteralPath $identityJunctionDir -Force }
+        New-Item -ItemType Junction -Path $identityJunctionDir -Target $identitySrcDir | Out-Null
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked identity/ folder' -Arguments @('-Mode', 'populated', '-Path', $identityJunctionDir)
+        Remove-Item -LiteralPath $identityJunctionDir -Force
+    }
+
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 

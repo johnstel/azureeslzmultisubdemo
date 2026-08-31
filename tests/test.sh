@@ -527,6 +527,15 @@ expect_identity_validation_failure "populated mode bypass via unnormalized absol
   cd "${PROJECT_DIR}" && expect_identity_validation_failure "populated mode bypass via unnormalized relative './identity' path from repo root" --mode populated --path "./identity"
 )
 
+# Case: a symbolic link that targets the tracked identity/ folder must also
+# be rejected by the populated-mode guard. Canonicalizing '.'/'..' segments
+# alone is not sufficient here; the alias itself must be dereferenced to its
+# final filesystem target (via `cd`+`pwd -P`) before the containment check.
+IDENTITY_SYMLINK_DIR="${TEMP_DIR}/identity-symlink-alias"
+rm -rf "${IDENTITY_SYMLINK_DIR}" && ln -s "${PROJECT_DIR}/identity" "${IDENTITY_SYMLINK_DIR}"
+expect_identity_validation_failure "populated mode bypass via a symbolic link aliasing the tracked identity/ folder" --mode populated --path "${IDENTITY_SYMLINK_DIR}"
+rm -f "${IDENTITY_SYMLINK_DIR}"
+
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
 printf '\nAll local validation and safety tests passed.\n'

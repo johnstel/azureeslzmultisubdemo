@@ -31,10 +31,39 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir = Split-Path -Parent $ScriptDir
+
+# Resolves a path to its final filesystem target: normalizes '.'/'..'
+# segments (like Resolve-Path) AND walks every path component, dereferencing
+# any symbolic link or (on Windows) reparse-point junction encountered along
+# the way to its ultimate target. This is the PowerShell equivalent of
+# Bash's `cd "$dir" && pwd -P`, which the containment check below depends on
+# to prevent an alias (lexical or filesystem-level) from bypassing the
+# tracked identity/ folder guard in -Mode populated.
+function Resolve-FinalTarget {
+    param([string]$Path)
+    $resolved = (Resolve-Path -LiteralPath $Path).ProviderPath
+    $root = [System.IO.Path]::GetPathRoot($resolved)
+    $parts = $resolved.Substring($root.Length).Split(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.StringSplitOptions]::RemoveEmptyEntries)
+    $current = $root.TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    if ([string]::IsNullOrEmpty($current)) { $current = [string][System.IO.Path]::DirectorySeparatorChar }
+    foreach ($part in $parts) {
+        $current = Join-Path $current $part
+        $item = Get-Item -LiteralPath $current -Force
+        if ($item.LinkType) {
+            # ResolveLinkTarget($true) follows the entire link chain
+            # (symlink-to-symlink, or a junction) to its final target.
+            $current = $item.ResolveLinkTarget($true).FullName
+        }
+    }
+    return $current
+}
+
 if ([string]::IsNullOrWhiteSpace($Path)) {
     $IdentityDir = Join-Path $ProjectDir 'identity'
 } else {
-    $IdentityDir = (Resolve-Path -LiteralPath $Path).ProviderPath
+    $IdentityDir = Resolve-FinalTarget -Path $Path
 }
 
 function Stop-Validation {
@@ -43,7 +72,7 @@ function Stop-Validation {
 }
 
 if ($Mode -eq 'populated') {
-    $trackedIdentityDir = (Resolve-Path -LiteralPath (Join-Path $ProjectDir 'identity')).ProviderPath
+    $trackedIdentityDir = Resolve-FinalTarget -Path (Join-Path $ProjectDir 'identity')
     if ($IdentityDir -eq $trackedIdentityDir -or $IdentityDir.StartsWith($trackedIdentityDir + [System.IO.Path]::DirectorySeparatorChar)) {
         Stop-Validation '-Mode populated must validate a path outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first.'
     }
