@@ -27,6 +27,26 @@ def methods: ["raw-json","initiative-json-member","ms-learn-page","documentation
 def is_nonempty_string: type == "string" and length >= 1;
 def matches_safely(re): type == "string" and test(re);
 
+# Real `format: date` semantics (JSON Schema's `format: date` requires a
+# genuine calendar date, not merely digits matching YYYY-MM-DD): a value that
+# matches date_re syntactically but round-trips to a different calendar date
+# through mktime/gmtime (e.g. "2026-02-30" normalizes to "2026-03-02") is
+# rejected, catching cases like month 13 or a day that overflows its month
+# that `date_re` alone -- or a naive strptime call -- would not.
+def is_valid_calendar_date:
+  if (type != "string") or (test(date_re) | not) then false
+  else
+    (try (strptime("%Y-%m-%d") | mktime | gmtime | strftime("%Y-%m-%d")) catch null) as $normalized
+    | $normalized == .
+  end;
+
+# Real `format: uri` semantics for the absolute http(s) URIs used throughout
+# this catalog: requires a scheme plus a non-empty host, so a scheme-only
+# value like "http://" (no host) is rejected even though it matches a naive
+# "^https?://" prefix check.
+def is_valid_http_uri:
+  type == "string" and test("^https?://[^/:?#]+");
+
 # Emits `label` for every element of `arr` that is not a non-empty string.
 # No-op (and does not itself flag anything) if `arr` is not an array; the
 # caller is expected to separately flag a non-array container.
@@ -40,9 +60,9 @@ def bad_pattern_items(arr; re; msg):
 [
   (if (.["$schema"]? // null | type) != "string" then "top-level: missing/invalid $schema" else empty end),
   (if (.catalogVersion? // null | type) != "string" then "top-level: missing/invalid catalogVersion" else empty end),
-  (if (.generatedOn? // null | matches_safely(date_re) | not) then "top-level: missing/invalid generatedOn date" else empty end),
+  (if (.generatedOn? // null | is_valid_calendar_date | not) then "top-level: missing/invalid generatedOn date" else empty end),
   (if (.purpose? // null | is_nonempty_string | not) then "top-level: missing/invalid purpose" else empty end),
-  (if (.sourceIssue? // null | matches_safely("^https?://") | not) then "top-level: missing/invalid sourceIssue uri" else empty end),
+  (if (.sourceIssue? // null | is_valid_http_uri | not) then "top-level: missing/invalid sourceIssue uri" else empty end),
   (if (.classificationValues? // null | type) != "array" or ((.classificationValues // []) | length) < 1 then "top-level: missing/invalid classificationValues" else empty end),
   (if (.classificationValues? // null | type) == "array" and ((.classificationValues | unique | length) != (.classificationValues | length)) then "top-level: classificationValues entries are not unique" else empty end),
   bad_string_items(.classificationValues?; "top-level: a classificationValues entry is not a non-empty string"),
@@ -69,10 +89,13 @@ def bad_pattern_items(arr; re; msg):
     (if ($c.mechanism.kind? // null | is_nonempty_string | not) then "\($id): mechanism.kind missing/invalid" else empty end),
     (if ($c.mechanism.builtIn | type) != "boolean" then "\($id): mechanism.builtIn missing/invalid" else empty end),
     (if ($c.mechanism.displayName? // null | is_nonempty_string | not) then "\($id): mechanism.displayName missing/invalid" else empty end),
-    (if ($c.mechanism.verifiedOn? // null | matches_safely(date_re) | not) then "\($id): mechanism.verifiedOn missing/invalid date" else empty end),
+    (if ($c.mechanism.verifiedOn? // null | is_valid_calendar_date | not) then "\($id): mechanism.verifiedOn missing/invalid date" else empty end),
     (if (methods | index($c.mechanism.verificationMethod)) == null then "\($id): undeclared mechanism.verificationMethod '\($c.mechanism.verificationMethod // "null")'" else empty end),
     (if ($c.mechanism | has("majorVersion")) and (($c.mechanism.majorVersion | is_nonempty_string | not) or ($c.mechanism.majorVersion == "unknown") or ($c.mechanism.majorVersion == "n/a")) then "\($id): mechanism.majorVersion invalid or placeholder" else empty end),
     (if ($c.mechanism | has("verifiedVersion")) and (($c.mechanism.verifiedVersion | is_nonempty_string | not) or ($c.mechanism.verifiedVersion == "unknown") or ($c.mechanism.verifiedVersion == "n/a")) then "\($id): mechanism.verifiedVersion invalid or placeholder" else empty end),
+    (if ($c.mechanism | has("definitionId")) and ($c.mechanism.definitionId != null) and (($c.mechanism.definitionId | type) != "string") then "\($id): mechanism.definitionId must be string or null" else empty end),
+    (if ($c.mechanism | has("category")) and (($c.mechanism.category | type) != "string") then "\($id): mechanism.category must be a string" else empty end),
+    (if ($c.mechanism | has("notes")) and (($c.mechanism.notes | type) != "string") then "\($id): mechanism.notes must be a string" else empty end),
     (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and (($c.mechanism.sourceUrl | type) != "string") then "\($id): mechanism.sourceUrl must be string or null" else empty end),
     (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and ($c.mechanism.sourceUrl | matches_safely("raw\\.githubusercontent\\.com")) and ($c.mechanism.sourceUrl | type == "string" and endswith("/")) then "\($id): mechanism.sourceUrl points at a directory listing" else empty end),
     (if ($c.mechanism.builtIn == true and (($c.mechanism.verificationMethod == "raw-json") or ($c.mechanism.verificationMethod == "initiative-json-member"))) and (($c.mechanism.definitionId? // "") | matches_safely(guid_re) | not) then "\($id): definitionId is not a well-formed GUID for a directly-verified built-in" else empty end),
@@ -88,6 +111,7 @@ def bad_pattern_items(arr; re; msg):
     (if ($c.dependencies? // null | type) != "array" then "\($id): dependencies must be an array" else empty end),
     bad_pattern_items($c.dependencies?; id_re; "\($id): a dependencies entry is not a well-formed control id"),
     (if (phases | index($c.enforcementPhase)) == null then "\($id): undeclared enforcementPhase '\($c.enforcementPhase // "null")'" else empty end),
-    (if ($c.evidenceSource? // null | is_nonempty_string | not) then "\($id): missing/invalid evidenceSource" else empty end)
+    (if ($c.evidenceSource? // null | is_nonempty_string | not) then "\($id): missing/invalid evidenceSource" else empty end),
+    (if ($c | has("notes")) and (($c.notes | type) != "string") then "\($id): notes must be a string" else empty end)
   )
 ] | map(select(. != null and . != ""))

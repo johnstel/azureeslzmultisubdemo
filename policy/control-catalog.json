@@ -20,7 +20,10 @@
   "cautions": [
     "Azure service security baselines (for example, the Storage, Key Vault, or Compute security baselines) are Microsoft Learn guidance mapped into individual service controls; they are not one universal assignable Azure Policy initiative. See REQ-BASE-04.",
     "NERC CIP has no single turnkey built-in Azure Policy initiative. Compliance requires customer-owned evidence, a registered-entity applicability decision, and procedural controls outside Azure Policy. See REQ-CIP-01 and REQ-CIP-02. This catalog and repository do not claim NERC CIP certification or compliance.",
-    "The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here."
+    "The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here. A separate, distinct \"Microsoft cloud security benchmark v2\" initiative also exists (GUID `e3ec7e09-768c-4b64-882c-fcada3772047`, 730 members); this catalog tracks v1 and v2 should be independently re-verified before any future switch.",
+    "MCSB (REQ-BASE-01) and CIS (REQ-BASE-02) were checked for remediation-capable (DeployIfNotExists/Modify) policies using a reproducible per-member effect-mapping method (validating that each member's effect-named parameter references an existing top-level initiative parameter). CIS's 2 fixed/unmapped members (of 108 total) were both individually fetched and confirmed Audit-effect, so CIS's `remediationIdentityRequired: false` is fully evidence-backed. MCSB's 56 fixed/unmapped members (of 226 total) were each individually resolved to their source filename in the public Azure/azure-policy repository and every one follows the Azure Policy naming convention for a fixed, non-remediating effect (`_Audit`, `_Deny`, `_AuditDeny`, or `_AINE`/AuditIfNotExists) with none using the DeployIfNotExists/Modify remediation-policy naming convention -- an exhaustive 56-of-56 verification, so MCSB's `remediationIdentityRequired: false` is also fully evidence-backed. NIST SP 800-53 Rev. 5 (REQ-BASE-03) has 616 fixed/unmapped members (of 694 total) using opaque GUID reference IDs that cannot be corroborated by naming convention; per reviewer confirmation, four of its members are DeployIfNotExists/Modify remediation-capable and require the Contributor role (`b24988ac-6180-42a0-ab88-20f7382dd24c`), a claim accepted from reviewer verification rather than independently re-derived in this session -- so unlike MCSB/CIS, REQ-BASE-03's `enforcementPhase` is `deployifnotexists-opt-in` (not `audit-only`) and its `supportedEffects` includes `DeployIfNotExists`/`Modify` to reflect these fixed remediation members, since assigning the initiative at all unavoidably enables them. A separate, newer \"NIST SP 800-53 R5.1.1\" initiative also exists (GUID `60205a79-6280-4e20-a147-e2011e09dc78`) for the updated revision. See each record's `notes` field for the full verification method and its limits.",
+    "REQ-DEF-01 (\"Configure Microsoft Defender for Cloud plans\") is an all-or-nothing initiative: it exposes no assignment-time parameters, so assigning it enables all 12 member Defender plans immediately with no per-plan opt-out. It is **not safe** for this repository's audit-first/no-cost demo default profile and is documented for completeness only. Each plan must instead be independently enabled via its own verified, individually assignable policy definition (REQ-DEF-02 through REQ-DEF-04), which does expose its own `effect` parameter (`DeployIfNotExists`/`Disabled`) that can be explicitly overridden at assignment time. REQ-DEF-01's `roleDefinitionIds` remains a complete verified union (Owner + Security Admin) across all 12 members (`rolesVaryByMember: true`) for reference only.",
+    "REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`)."
   ],
   "controls": [
     {
@@ -189,7 +192,9 @@
         "DeployIfNotExists",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": [
+        "effect"
+      ],
       "roleDefinitionIds": [
         "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
       ],
@@ -199,7 +204,7 @@
       ],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Defender for Cloud CIEM recommendations (requires Defender CSPM plan license; not enabled by safe defaults).",
-      "notes": "Paid Defender CSPM plan; disabled by default per issue #20 safety constraints. CIEM findings complement, not replace, the manual inventory in REQ-ID-05. The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
+      "notes": "Paid Defender CSPM plan; this built-in definition's own \"effect\" parameter defaults to DeployIfNotExists (verified in the raw source JSON), so this repository's audit-first/no-cost demo profile requires the assignment to explicitly override \"effect\" to \"Disabled\" (consistent with REQ-DEF-02/03/04) so the plan is never enabled without an explicit, cost-aware opt-in. CIEM findings complement, not replace, the manual inventory in REQ-ID-05. The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
     },
     {
       "id": "REQ-DEPLOY-01",
@@ -806,7 +811,7 @@
         "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_OpenManagementPortsOnVirtualMachines_Audit.json",
         "verificationMethod": "raw-json",
         "category": "Security Center",
-        "notes": "Existence condition depends on a Microsoft Defender for Cloud security assessment; requires Defender/Foundational CSPM to populate compliance data. Depends on REQ-DEF-02 (Microsoft Defender CSPM), the specific enabled plan that populates this security assessment's compliance data; does not depend on the unsafe all-plans REQ-DEF-01 initiative."
+        "notes": "Existence condition depends on a Microsoft Defender for Cloud security assessment. This specific recommendation is populated by the free, default-on Foundational CSPM tier (confirmed via Microsoft Learn's Defender for Cloud compute recommendations reference); it does not require the paid Defender CSPM plan (REQ-DEF-02) or the unsafe all-plans REQ-DEF-01 initiative."
       },
       "supportedEffects": [
         "AuditIfNotExists",
@@ -815,11 +820,9 @@
       "requiredParameters": [],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
-      "dependencies": [
-        "REQ-DEF-02"
-      ],
+      "dependencies": [],
       "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + Defender for Cloud recommendation/assessment."
+      "evidenceSource": "Compiled ARM template + Defender for Cloud recommendation/assessment (populated at no cost by Foundational CSPM: https://learn.microsoft.com/en-us/azure/defender-for-cloud/concept-cloud-security-posture-management)."
     },
     {
       "id": "REQ-NET-02",
@@ -867,7 +870,7 @@
         "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_NetworkSecurityGroupsOnInternalVirtualMachines_Audit.json",
         "verificationMethod": "raw-json",
         "category": "Security Center",
-        "notes": "Depends on REQ-DEF-02 (Microsoft Defender CSPM), the specific enabled plan that populates this security assessment's compliance data; does not depend on the unsafe all-plans REQ-DEF-01 initiative."
+        "notes": "Populated by the free, default-on Foundational CSPM tier (confirmed via Microsoft Learn); does not require the paid Defender CSPM plan (REQ-DEF-02) or the unsafe all-plans REQ-DEF-01 initiative."
       },
       "supportedEffects": [
         "AuditIfNotExists",
@@ -876,11 +879,9 @@
       "requiredParameters": [],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
-      "dependencies": [
-        "REQ-DEF-02"
-      ],
+      "dependencies": [],
       "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + Defender for Cloud recommendation/assessment."
+      "evidenceSource": "Compiled ARM template + Defender for Cloud recommendation/assessment (populated at no cost by Foundational CSPM: https://learn.microsoft.com/en-us/azure/defender-for-cloud/concept-cloud-security-posture-management)."
     },
     {
       "id": "REQ-NET-04",
@@ -1360,7 +1361,7 @@
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 226 total member policy references, computed with a reproducible method: for each member, resolve any parameter whose name contains \"effect\" and whose value is a `[parameters('X')]` reference to a top-level initiative parameter that actually exists (not just top-level parameter names containing \"effect\", which over-counts unreferenced/dead parameters). Applying this method: 170 of 226 members are effect-mapped (assignable) and 56 are fixed/unexposed at the initiative level. Of those 56 fixed members, 12 were directly fetched and inspected in this session (9 in a prior round plus 3 targeted follow-ups for the most remediation-suggestive names, including 'SQLServerTargetedAutoprovisioningShouldBeEnabledForSQLServersOnMachinesPlan' and 'enableDefenderForApis'); every one resolved to a fixed Audit-effect policy (file names ending _Audit, the standard Azure Policy naming convention for non-remediating policies). The remaining 44 fixed members were not individually fetched in this session, but all 56 fixed policyDefinitionReferenceIds use the same Audit/Monitoring-style naming pattern (\"...Should...\", \"...Monitoring\") with none using the \"Configure\"/\"Deploy\"/\"Enable\"-prefixed naming convention Azure Policy uses for DeployIfNotExists/Modify remediation policies, which corroborates but does not by itself conclusively prove the remaining 44. remediationIdentityRequired is therefore false and no roleDefinitionIds are required for this initiative, pending full reconfirmation of the untouched 44 before being treated as fully exhaustive.",
+      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 226 total member policy references, computed with a reproducible method: for each member, resolve any parameter whose name contains \"effect\" and whose value is a `[parameters('X')]` reference to a top-level initiative parameter that actually exists (not just top-level parameter names containing \"effect\", which over-counts unreferenced/dead parameters). Applying this method: 170 of 226 members are effect-mapped (assignable) and 56 are fixed/unexposed at the initiative level. All 56 fixed members' policyDefinitionId GUIDs were individually resolved to their source file in the public Azure/azure-policy repository (via GitHub code search against built-in-policies/policyDefinitions), and every one of the 56 resolved to a filename following the Azure Policy naming convention for a fixed, non-remediating effect (suffixes/patterns _Audit, _Deny, _AuditDeny, or _AINE i.e. AuditIfNotExists) -- none used the _DINE/_Modify/Configure-/Deploy-/Enable-prefixed naming convention Azure Policy uses for DeployIfNotExists/Modify remediation policies. This is an exhaustive (56-of-56) filename-based verification, not a sample; remediationIdentityRequired is therefore false and no roleDefinitionIds are required for this initiative. (A prior revision of this note described only a 12-of-56 content-fetched sample; this note supersedes it with the exhaustive filename check completed in this session.)",
       "rolesVaryByMember": false
     },
     {
@@ -1420,7 +1421,9 @@
       "supportedEffects": [
         "Audit",
         "Deny",
-        "Disabled"
+        "Disabled",
+        "DeployIfNotExists",
+        "Modify"
       ],
       "requiredParameters": [],
       "roleDefinitionIds": [
@@ -1430,9 +1433,9 @@
       "dependencies": [
         "REQ-BASE-01"
       ],
-      "enforcementPhase": "audit-only",
+      "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance. supportedEffects is the verified union of allowedValues (Audit/Deny/Disabled -- no AuditIfNotExists is exposed at the member level for this regulatory-compliance initiative, unlike MCSB/CIS), computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01. Applying this method: 78 of the initiative's 694 total member policy references are effect-mapped and 616 are fixed/unexposed at the initiative level. Unlike MCSB/CIS, NIST's fixed-member policyDefinitionReferenceIds are opaque GUIDs rather than descriptive names, so the naming-convention corroboration used for MCSB/CIS's fixed members is not available here, and this session did not individually fetch a statistically meaningful sample of the 616 fixed members (694-member scale makes exhaustive per-member re-fetching impractical without a bulk manifest, which is not available in this public repository). Per reviewer confirmation, four of the initiative's members are DeployIfNotExists/Modify remediation-capable and require the Contributor role (b24988ac-6180-42a0-ab88-20f7382dd24c); this specific 4-member role mapping reflects reviewer verification rather than an independent re-derivation in this session, and the exact policyDefinitionReferenceIds should be reconfirmed against their individual policy JSON -- and a narrower, less-privileged role considered if available -- before granting the remediation identity Contributor access. A separate, newer 'NIST SP 800-53 R5.1.1' initiative also exists (GUID 60205a79-6280-4e20-a147-e2011e09dc78, metadata.version 1.8.0, 221 members) for the updated NIST revision; this record tracks the original 'Rev. 5' initiative named in the customer requirement and R5.1.1 should be independently re-verified before any future switch.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance. This initiative is NOT purely audit-only: 78 of its 694 total member policy references are effect-mapped/assignable (Audit/Deny/Disabled -- no AuditIfNotExists is exposed at the member level for this regulatory-compliance initiative, unlike MCSB/CIS), computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01, but 616 are fixed/unexposed at the initiative level and, per reviewer confirmation, four of those fixed members are DeployIfNotExists/Modify remediation-capable with no assignment-time override to Audit/Disabled -- i.e. assigning this initiative at all unavoidably enables those four remediation members, which is why enforcementPhase is deployifnotexists-opt-in (the opt-in act is the assignment itself) and supportedEffects includes DeployIfNotExists/Modify in addition to the exposed Audit/Deny/Disabled parameter values. Unlike MCSB/CIS, NIST's fixed-member policyDefinitionReferenceIds are opaque GUIDs rather than descriptive names, so the naming-convention corroboration used for MCSB/CIS's fixed members is not available here, and this session did not individually fetch a statistically meaningful sample of the 616 fixed members (694-member scale makes exhaustive per-member re-fetching impractical without a bulk manifest, which is not available in this public repository). The four-remediation-member role mapping (Contributor, b24988ac-6180-42a0-ab88-20f7382dd24c) reflects reviewer verification rather than an independent re-derivation in this session, and the exact policyDefinitionReferenceIds should be reconfirmed against their individual policy JSON -- and a narrower, less-privileged role considered if available -- before granting the remediation identity Contributor access. A separate, newer 'NIST SP 800-53 R5.1.1' initiative also exists (GUID 60205a79-6280-4e20-a147-e2011e09dc78, metadata.version 1.8.0, 221 members) for the updated NIST revision; this record tracks the original 'Rev. 5' initiative named in the customer requirement and R5.1.1 should be independently re-verified before any future switch.",
       "rolesVaryByMember": false
     },
     {
@@ -1750,13 +1753,13 @@
         "REQ-DATA-06",
         "REQ-LOG-01",
         "REQ-LOG-02",
-        "REQ-DEF-01",
+        "REQ-DEF-02",
         "REQ-BKP-01",
         "REQ-BKP-02"
       ],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Custom initiative reusing existing domain definitions with stricter parameters (issue #22); does not itself create any policy resource until issue #22 is implemented.",
-      "notes": "Reuses existing verified domain controls above rather than duplicating policy rules; cannot be assigned outside the opt-in Critical Infrastructure branch; does not claim NERC CIP certification or full compliance. No policyDefinition/policySetDefinition exists yet (definitionId is null), so there is no remediation identity to require until issue #22 composes this initiative from the already-verified member records listed in dependencies, each of which documents its own roleDefinitionIds."
+      "notes": "Reuses existing verified domain controls above rather than duplicating policy rules; cannot be assigned outside the opt-in Critical Infrastructure branch; does not claim NERC CIP certification or full compliance. No policyDefinition/policySetDefinition exists yet (definitionId is null), so there is no remediation identity to require until issue #22 composes this initiative from the already-verified member records listed in dependencies, each of which documents its own roleDefinitionIds. Depends on REQ-DEF-02 (the individually assignable, safe-by-default Microsoft Defender CSPM plan), not the unsafe all-plans REQ-DEF-01 initiative."
     },
     {
       "id": "REQ-CIP-02",
@@ -1793,7 +1796,7 @@
     },
     {
       "topic": "Management-port and NSG audits",
-      "note": "REQ-NET-01 and REQ-NET-03 rely on Microsoft Defender for Cloud security assessments populated by the Microsoft Defender CSPM plan (REQ-DEF-02), which they now explicitly depend on rather than the unsafe, all-or-nothing REQ-DEF-01 initiative. Enabling that specific plan (with its effect parameter explicitly overridden to Disabled by default per this repository's no-cost profile, and only opted in to DeployIfNotExists deliberately) populates compliance data for these audits; it does not require a second, separate custom rule."
+      "note": "REQ-NET-01 and REQ-NET-03 are populated by the free, default-on Foundational CSPM tier of Microsoft Defender for Cloud (confirmed via Microsoft Learn's compute security recommendations), not the paid Defender CSPM plan (REQ-DEF-02) or the unsafe, all-or-nothing REQ-DEF-01 initiative; they have no assignment-time dependency on either. They rely purely on the built-in policy's own Defender for Cloud security-assessment integration."
     },
     {
       "topic": "Tag requirement vs. tag inheritance",

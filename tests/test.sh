@@ -261,7 +261,11 @@ printf '18/19 Parse cross-platform scripts and check macOS Bash 3.2 compatibilit
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done
-if rg -n 'declare -A|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}' "${PROJECT_DIR}/scripts" -g '*.sh'; then
+# test.sh itself is excluded from the banned-construct scan below because its
+# own pattern definition necessarily spells out the banned words/tokens
+# literally, which would otherwise make it match itself; test.sh is manually
+# kept free of `declare -A`/case-conversion/`mapfile`/`readarray`.
+if rg -n 'declare -A|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}|\bmapfile\b|\breadarray\b' "${PROJECT_DIR}/scripts" "${PROJECT_DIR}/tests" -g '*.sh' -g '!test.sh'; then
   printf 'ERROR: A script uses a Bash 4+ feature unavailable in stock macOS Bash 3.2.\n' >&2
   exit 1
 fi

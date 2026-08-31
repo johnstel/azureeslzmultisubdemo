@@ -111,6 +111,7 @@ printf '9/10 Validate the catalog against policy/control-catalog.schema.json...\
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import jsonschema' >/dev/null 2>&1; then
   python3 - "${CATALOG}" "${SCHEMA:-${PROJECT_DIR}/policy/control-catalog.schema.json}" <<'PYEOF' || fail "Catalog failed JSON Schema validation."
 import json
+import re
 import sys
 
 import jsonschema
@@ -120,7 +121,20 @@ with open(catalog_path, encoding="utf-8") as f:
     catalog = json.load(f)
 with open(schema_path, encoding="utf-8") as f:
     schema = json.load(f)
-jsonschema.validate(catalog, schema)
+jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
+
+# jsonschema's built-in "uri" format checker accepts RFC 3986-valid URIs with
+# an empty authority (e.g. "http://" is syntactically a valid URI), so it does
+# not by itself reject a scheme-only sourceIssue/sourceUrl. Enforce the
+# stricter "absolute http(s) URI with a non-empty host" rule this catalog
+# actually needs, matching the equivalent check in the jq/PowerShell fallbacks.
+http_host_re = re.compile(r"^https?://[^/:?#]+")
+if not http_host_re.match(catalog.get("sourceIssue", "") or ""):
+    sys.exit(f"sourceIssue is not an absolute http(s) URI with a non-empty host: {catalog.get('sourceIssue')!r}")
+for control in catalog.get("controls", []):
+    source_url = (control.get("mechanism") or {}).get("sourceUrl")
+    if source_url is not None and not http_host_re.match(source_url):
+        sys.exit(f"{control.get('id')}: mechanism.sourceUrl is not an absolute http(s) URI with a non-empty host: {source_url!r}")
 PYEOF
 else
   printf '  (python3 + jsonschema not available; falling back to the full schema-equivalent jq re-implementation in tests/control-catalog-schema-check.jq.)\n'
@@ -141,8 +155,17 @@ matrix_count="$(rg -o '\*\*Total control records:\*\* ([0-9]+)' -r '$1' "${MATRI
 # rows present in the matrix (not merely search for expected rows), so that a
 # stale, duplicated, or otherwise-untracked extra row is caught even though it
 # never matches any JSON-derived expected string.
-mapfile -t matrix_ids < <(rg -o '^\| (REQ-[A-Z]+-[0-9]{2}) \|' -r '$1' "${MATRIX}")
-mapfile -t json_ids < <(jq -r '.controls[].id' "${CATALOG}")
+# Note: uses a `while read` loop, not the Bash 4.0+ builtin that reads lines
+# directly into an array, so this script stays syntax- and behavior-compatible
+# with the stock Bash 3.2 shipped on macOS.
+matrix_ids=()
+while IFS= read -r matrix_id; do
+  matrix_ids+=("${matrix_id}")
+done < <(rg -o '^\| (REQ-[A-Z]+-[0-9]{2}) \|' -r '$1' "${MATRIX}")
+json_ids=()
+while IFS= read -r json_id; do
+  json_ids+=("${json_id}")
+done < <(jq -r '.controls[].id' "${CATALOG}")
 
 sorted_matrix_ids="$(printf '%s\n' "${matrix_ids[@]}" | sort)"
 sorted_unique_matrix_ids="$(printf '%s\n' "${matrix_ids[@]}" | sort -u)"
@@ -201,5 +224,81 @@ while IFS= read -r note; do
   normalized_note="$(printf '%s' "${note}" | normalize)"
   [[ "${normalized_matrix}" == *"${normalized_note}"* ]] || fail "Matrix Overlap notes section does not represent a declared overlapNotes entry: ${note}"
 done < <(jq -r '.overlapNotes[].note' "${CATALOG}")
+
+# --- Structural bidirectional checks: domain sections, cautions, overlap topics ---
+# Unlike the substring checks above (which only prove every JSON entry is
+# represented somewhere in the matrix), the checks below parse the matrix's
+# own structure (headings, bullet lists) as real data and compare it against
+# the JSON catalog as an exact, keyed set in both directions -- so a changed
+# `domain`, or an extra/stale caution or overlap-topic bullet added directly to
+# the matrix, is caught even though it never produces a literal-string diff
+# against an "expected" value derived only from the JSON.
+
+domain_to_heading() {
+  case "$1" in
+    identity) printf '%s' 'Identity (Entra Conditional Access, PIM, access review)' ;;
+    deployment-restrictions) printf '%s' 'Deployment restrictions' ;;
+    tagging) printf '%s' 'Tagging' ;;
+    network-security) printf '%s' 'Network security' ;;
+    logging) printf '%s' 'Logging' ;;
+    data-protection) printf '%s' 'Data protection' ;;
+    security-baseline) printf '%s' 'MCSB / CIS / NIST / service baselines' ;;
+    defender-for-cloud) printf '%s' 'Defender for Cloud' ;;
+    backup) printf '%s' 'Backup' ;;
+    nerc-cip) printf '%s' 'NERC CIP' ;;
+    *) printf '%s' '' ;;
+  esac
+}
+
+# Parse "id<TAB>heading" pairs for every control row actually present in the
+# matrix (heading is whatever "## " section the row currently falls under).
+id_heading_pairs="$(awk '
+  /^## / { heading = substr($0, 4) }
+  /^\| REQ-[A-Z]+-[0-9]+ \|/ {
+    line = $0
+    sub(/^\| /, "", line)
+    split(line, parts, / \| /)
+    print parts[1] "\t" heading
+  }
+' "${MATRIX}")"
+
+domain_mismatch=0
+while IFS=$'\t' read -r ctrl_id ctrl_domain; do
+  expected_heading="$(domain_to_heading "${ctrl_domain}")"
+  [[ -n "${expected_heading}" ]] || fail "Control ${ctrl_id} declares an unrecognized domain \"${ctrl_domain}\" with no known matrix heading mapping."
+  actual_heading="$(printf '%s\n' "${id_heading_pairs}" | awk -F'\t' -v id="${ctrl_id}" '$1 == id { print $2; exit }')"
+  if [[ "${actual_heading}" != "${expected_heading}" ]]; then
+    printf 'ERROR: Control %s has domain "%s" (expected matrix heading "%s") but its matrix row is under heading "%s".\n' "${ctrl_id}" "${ctrl_domain}" "${expected_heading}" "${actual_heading}" >&2
+    domain_mismatch=1
+  fi
+done < <(jq -r '.controls[] | .id + "\t" + .domain' "${CATALOG}")
+[[ "${domain_mismatch}" -eq 0 ]] || exit 1
+
+# Exact bidirectional set comparison of "Important caveats" bullets against
+# JSON .cautions[] (normalized so markdown emphasis/backticks don't cause
+# false mismatches), catching both a missing caution and an extra/stale one.
+matrix_cautions="$(awk '
+  /^## Important caveats$/ { flag = 1; next }
+  /^## / { if (flag) exit }
+  flag && /^- / { sub(/^- /, ""); print }
+' "${MATRIX}")"
+normalized_matrix_cautions="$(printf '%s\n' "${matrix_cautions}" | while IFS= read -r line; do [[ -n "${line}" ]] && printf '%s\n' "${line}" | normalize; done | sort -u)"
+normalized_json_cautions="$(jq -r '.cautions[]' "${CATALOG}" | while IFS= read -r line; do printf '%s\n' "${line}" | normalize; done | sort -u)"
+[[ "${normalized_matrix_cautions}" == "${normalized_json_cautions}" ]] || fail "The matrix's \"Important caveats\" bullets do not exactly match the JSON catalog's .cautions[] (an entry was added, removed, or reworded in only one place). Matrix: [$(printf '%s' "${normalized_matrix_cautions}" | tr '\n' ';')] JSON: [$(printf '%s' "${normalized_json_cautions}" | tr '\n' ';')]"
+
+# Exact bidirectional set comparison of Overlap-notes {topic} entries: parse
+# the "- **Topic:** note" bullets under "## Overlap notes" and compare the
+# topic set (not just note substrings) against JSON .overlapNotes[].topic.
+matrix_overlap_topics="$(awk '
+  /^## Overlap notes/ { flag = 1; next }
+  /^## / { if (flag) exit }
+  flag && /^- \*\*/ {
+    sub(/^- \*\*/, "")
+    sub(/:\*\*.*$/, "")
+    print
+  }
+' "${MATRIX}" | sort -u)"
+json_overlap_topics="$(jq -r '.overlapNotes[].topic' "${CATALOG}" | sort -u)"
+[[ "${matrix_overlap_topics}" == "${json_overlap_topics}" ]] || fail "The matrix's \"Overlap notes\" topic bullets do not exactly match the JSON catalog's .overlapNotes[].topic set (a topic was added, removed, or renamed in only one place). Matrix topics: [$(printf '%s' "${matrix_overlap_topics}" | tr '\n' ';')] JSON topics: [$(printf '%s' "${json_overlap_topics}" | tr '\n' ';')]"
 
 printf '\nControl catalog validation passed.\n'
