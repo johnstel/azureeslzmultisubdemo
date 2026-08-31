@@ -39,25 +39,51 @@ $ProjectDir = Split-Path -Parent $ScriptDir
 # Bash's `cd "$dir" && pwd -P`, which the containment check below depends on
 # to prevent an alias (lexical or filesystem-level) from bypassing the
 # tracked identity/ folder guard in -Mode populated.
+#
+# A single left-to-right pass is not sufficient: once a link is dereferenced,
+# its target may itself contain further symlinked components anywhere along
+# its own path (for example identity-alias -> /tmp/repo-alias/identity where
+# /tmp/repo-alias is itself a symlink to the repo root). Each outer iteration
+# below re-walks the *entire* current path from its root and, on finding the
+# first link, splices the resolved target in place of the walked prefix and
+# restarts the walk from scratch; this repeats until a full pass finds no
+# remaining links. A bounded iteration count guards against a symlink cycle.
 function Resolve-FinalTarget {
     param([string]$Path)
-    $resolved = (Resolve-Path -LiteralPath $Path).ProviderPath
-    $root = [System.IO.Path]::GetPathRoot($resolved)
-    $parts = $resolved.Substring($root.Length).Split(
-        [System.IO.Path]::DirectorySeparatorChar,
-        [System.StringSplitOptions]::RemoveEmptyEntries)
-    $current = $root.TrimEnd([System.IO.Path]::DirectorySeparatorChar)
-    if ([string]::IsNullOrEmpty($current)) { $current = [string][System.IO.Path]::DirectorySeparatorChar }
-    foreach ($part in $parts) {
-        $current = Join-Path $current $part
-        $item = Get-Item -LiteralPath $current -Force
-        if ($item.LinkType) {
-            # ResolveLinkTarget($true) follows the entire link chain
-            # (symlink-to-symlink, or a junction) to its final target.
-            $current = $item.ResolveLinkTarget($true).FullName
+    $current = (Resolve-Path -LiteralPath $Path).ProviderPath
+    $maxIterations = 64
+    for ($iteration = 0; $iteration -lt $maxIterations; $iteration++) {
+        $root = [System.IO.Path]::GetPathRoot($current)
+        $parts = $current.Substring($root.Length).Split(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.StringSplitOptions]::RemoveEmptyEntries)
+        $walked = $root.TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+        if ([string]::IsNullOrEmpty($walked)) { $walked = [string][System.IO.Path]::DirectorySeparatorChar }
+        $linkIndex = -1
+        $linkTarget = $null
+        for ($i = 0; $i -lt $parts.Length; $i++) {
+            $walked = Join-Path $walked $parts[$i]
+            $item = Get-Item -LiteralPath $walked -Force
+            if ($item.LinkType) {
+                # ResolveLinkTarget($true) follows the entire link chain
+                # (symlink-to-symlink, or a junction) to its final target.
+                $linkIndex = $i
+                $linkTarget = $item.ResolveLinkTarget($true).FullName
+                break
+            }
+        }
+        if ($linkIndex -lt 0) {
+            # A full pass found no links left to resolve: fully resolved.
+            return $current
+        }
+        if ($linkIndex -eq $parts.Length - 1) {
+            $current = $linkTarget
+        } else {
+            $remaining = ($parts[($linkIndex + 1)..($parts.Length - 1)]) -join [System.IO.Path]::DirectorySeparatorChar
+            $current = Join-Path $linkTarget $remaining
         }
     }
-    return $current
+    throw "Resolve-FinalTarget: too many levels of symbolic links resolving '$Path' (possible link cycle)."
 }
 
 if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -73,10 +99,20 @@ function Stop-Validation {
 
 if ($Mode -eq 'populated') {
     $trackedIdentityDir = Resolve-FinalTarget -Path (Join-Path $ProjectDir 'identity')
-    if ($IdentityDir -eq $trackedIdentityDir -or $IdentityDir.StartsWith($trackedIdentityDir + [System.IO.Path]::DirectorySeparatorChar)) {
+    # Windows drive-letter and UNC paths are case-insensitive at the
+    # filesystem level (e.g. C:\repo\IDENTITY is the same directory as
+    # C:\repo\identity), so a casing variant must not bypass this guard
+    # there. Case-sensitive filesystems (Linux/macOS) must retain ordinal,
+    # case-sensitive comparison so a genuinely distinct, differently-cased
+    # directory is not incorrectly treated as the tracked folder.
+    $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $isSameDir = [string]::Equals($IdentityDir, $trackedIdentityDir, $pathComparison)
+    $isDescendant = $IdentityDir.StartsWith($trackedIdentityDir + [System.IO.Path]::DirectorySeparatorChar, $pathComparison)
+    if ($isSameDir -or $isDescendant) {
         Stop-Validation '-Mode populated must validate a path outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first.'
     }
 }
+
 
 $knownIdsPath = Join-Path $ProjectDir 'identity/schema/known-entra-ids.json'
 if (-not (Test-Path -LiteralPath $knownIdsPath)) { Stop-Validation "Missing reference file: $knownIdsPath" }

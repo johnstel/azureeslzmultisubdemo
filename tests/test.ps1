@@ -749,6 +749,24 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         New-Item -ItemType SymbolicLink -Path $identitySymlinkDir -Target $identitySrcDir | Out-Null
         Expect-IdentityValidationFailure -Description 'populated mode bypass via a symbolic link aliasing the tracked identity/ folder' -Arguments @('-Mode', 'populated', '-Path', $identitySymlinkDir)
         Remove-Item -LiteralPath $identitySymlinkDir -Force
+
+        # Case: a *chained* symlink must also be rejected, where the final
+        # link's target path itself contains a further symlinked component
+        # (not just the leaf link itself). Resolving only the leaf link and
+        # continuing with the original remaining path components is not
+        # enough here, since the repo-root component embedded in the target
+        # is itself a symlink that must also be dereferenced:
+        #   identity-chain-alias -> <repoAliasDir>/identity
+        #   <repoAliasDir>        -> <repo root>
+        $repoAliasDir = Join-Path $TempDir 'repo-alias'
+        if (Test-Path -LiteralPath $repoAliasDir) { Remove-Item -LiteralPath $repoAliasDir -Force }
+        New-Item -ItemType SymbolicLink -Path $repoAliasDir -Target $ProjectDir | Out-Null
+        $identityChainAliasDir = Join-Path $TempDir 'identity-chain-alias'
+        if (Test-Path -LiteralPath $identityChainAliasDir) { Remove-Item -LiteralPath $identityChainAliasDir -Force }
+        New-Item -ItemType SymbolicLink -Path $identityChainAliasDir -Target (Join-Path $repoAliasDir 'identity') | Out-Null
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a chained symbolic link whose target path itself contains a further symlinked component' -Arguments @('-Mode', 'populated', '-Path', $identityChainAliasDir)
+        Remove-Item -LiteralPath $identityChainAliasDir -Force
+        Remove-Item -LiteralPath $repoAliasDir -Force
     } else {
         # Case: a Windows reparse-point junction that targets the tracked
         # identity/ folder must also be rejected. Junctions do not require
@@ -758,6 +776,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         New-Item -ItemType Junction -Path $identityJunctionDir -Target $identitySrcDir | Out-Null
         Expect-IdentityValidationFailure -Description 'populated mode bypass via a Windows junction aliasing the tracked identity/ folder' -Arguments @('-Mode', 'populated', '-Path', $identityJunctionDir)
         Remove-Item -LiteralPath $identityJunctionDir -Force
+
+        # Case: Windows drive-letter paths are case-insensitive at the
+        # filesystem level, so a casing variant of the tracked identity/
+        # folder (or a UNC-style equivalent) must still be treated as the
+        # same directory and rejected by the populated-mode guard.
+        $caseVariantPath = Join-Path $ProjectDir 'IDENTITY'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via a case-variant of the tracked identity/ folder on a case-insensitive Windows filesystem' -Arguments @('-Mode', 'populated', '-Path', $caseVariantPath)
     }
 
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
