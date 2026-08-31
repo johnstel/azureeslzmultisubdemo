@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$CatalogPathOverride
+)
 
 # Offline structural validation for policy/control-catalog.json.
 # Re-implements the rules documented in policy/control-catalog.schema.json using
@@ -11,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir = Split-Path -Parent $ScriptDir
-$CatalogPath = Join-Path $ProjectDir 'policy/control-catalog.json'
+$CatalogPath = if ($CatalogPathOverride) { $CatalogPathOverride } else { Join-Path $ProjectDir 'policy/control-catalog.json' }
 $MatrixPath = Join-Path $ProjectDir 'docs/CONTROL-MATRIX.md'
 
 function Stop-Test {
@@ -143,67 +145,26 @@ if ($pythonCmd) {
 if ($jsonschemaAvailable) {
     $pyScript = @'
 import json
-import re
 import sys
 
 import jsonschema
-
-from urllib.parse import urlsplit
 
 catalog_path, schema_path = sys.argv[1:3]
 with open(catalog_path, encoding="utf-8") as f:
     catalog = json.load(f)
 with open(schema_path, encoding="utf-8") as f:
     schema = json.load(f)
+# The schema's "pattern" constraint on sourceIssue/mechanism.sourceUrl (a
+# conservative, intentionally narrow source-URL grammar: HTTPS only,
+# non-empty DNS labels with no leading/trailing hyphen, no userinfo/IP
+# literal/port, and path/query/fragment restricted to safe ASCII URI
+# characters with well-formed percent-escapes) is the single source of
+# truth for URL validity -- jsonschema.validate() below enforces it exactly
+# as declared, so no supplemental ad hoc URI check is layered on top here.
+# The jq/PowerShell-native fallbacks read the *same* pattern strings out of
+# this schema file (rather than a hand-copied duplicate) so all four
+# validation paths can never diverge.
 jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
-
-# jsonschema's built-in "uri" format checker accepts RFC 3986-valid URIs with
-# an empty authority (e.g. "http://" is syntactically a valid URI) and, being
-# a generic RFC 3986 syntax check, does not restrict the scheme to http(s) or
-# validate that the authority is a genuinely resolvable host (it would accept
-# malformed authorities like "https://%zz" or "https://exa[mple.com" as long
-# as *some* URI-like grammar production matches). Enforce the stricter rule
-# this catalog actually needs -- absolute http(s) scheme, a non-empty,
-# well-formed host (valid percent-encoding, no illegal/unmatched bracket or
-# host characters), a validly-formed port when present, no whitespace
-# anywhere, and no malformed userinfo -- using Python's standards-compliant
-# urllib.parse.urlsplit (which itself raises ValueError on things like an
-# unmatched IPv6 bracket or a non-numeric port) plus explicit host-content
-# checks urlsplit does not perform on its own. Consistent with the jq/Bash
-# fallbacks.
-_pct_incomplete_re = re.compile(r"%(?![0-9A-Fa-f]{2})")
-_host_reg_name_re = re.compile(r"^[A-Za-z0-9\-._~%!$&'()*+,;=]+$")
-_ipv4_re = re.compile(r"^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$")
-
-def is_valid_http_uri(value):
-    if not isinstance(value, str) or not value:
-        return False
-    if re.search(r"\s", value):
-        return False
-    try:
-        parts = urlsplit(value)
-        parts.port  # forces validation of a non-numeric/out-of-range port
-        host = parts.hostname
-    except ValueError:
-        return False
-    if parts.scheme not in ("http", "https"):
-        return False
-    if not parts.netloc or not host:
-        return False
-    if "%" in host and _pct_incomplete_re.search(host):
-        return False
-    if ":" not in host and not (_ipv4_re.match(host) or _host_reg_name_re.match(host)):
-        return False
-    if parts.username is not None and re.search(r"\s", parts.username):
-        return False
-    return True
-
-if not is_valid_http_uri(catalog.get("sourceIssue")):
-    sys.exit(f"sourceIssue is not a well-formed absolute http(s) URI with a valid non-empty host: {catalog.get('sourceIssue')!r}")
-for control in catalog.get("controls", []):
-    source_url = (control.get("mechanism") or {}).get("sourceUrl")
-    if source_url is not None and not is_valid_http_uri(source_url):
-        sys.exit(f"{control.get('id')}: mechanism.sourceUrl is not a well-formed absolute http(s) URI with a valid non-empty host: {source_url!r}")
 '@
     $tmpPy = New-TemporaryFile
     Set-Content -LiteralPath $tmpPy -Value $pyScript
@@ -214,6 +175,7 @@ for control in catalog.get("controls", []):
 } else {
     Write-Host '  (python3 + jsonschema not available; falling back to the full schema-equivalent native-PowerShell re-implementation below.)'
 
+    $schemaDocument = Get-Content -LiteralPath $SchemaPath -Raw | ConvertFrom-Json
     $classificationEnum = @('azure-policy', 'entra-pim', 'defender-cspm-ciem', 'shared-service-architecture', 'manual-evidence')
     $phaseEnum = @('audit-only', 'deny-do-not-enforce', 'deployifnotexists-opt-in', 'manual-evidence')
     $dateRe = '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
@@ -233,30 +195,34 @@ for control in catalog.get("controls", []):
             return $false
         }
     }
-    # Real `format: uri` semantics for the absolute http(s) URIs used
-    # throughout this catalog. A regex-only check (even one excluding certain
-    # characters from the host) is not sufficient: it cannot reliably reject
-    # invalid percent-escapes (e.g. "https://%zz"), unmatched IPv6 brackets
-    # (e.g. "https://exa[mple.com"), or malformed ports without effectively
-    # reimplementing a URI parser. Use .NET's standards-compliant
-    # [System.Uri]::TryCreate (RFC 3986 parsing) to reject those cases, then
-    # apply explicit checks TryCreate does not itself guarantee: the scheme
-    # must be exactly http/https (TryCreate accepts any registered/unknown
-    # scheme), the parsed host must be non-empty, and the original string may
-    # not contain whitespace anywhere or an incomplete percent-escape
-    # (TryCreate silently accepts "%zz" as literal text when Uri validation
-    # treats it as unreserved, whereas RFC 3986 requires two hex digits after
-    # every "%").
+    # Real `format: uri` semantics for the absolute HTTPS source URLs used
+    # throughout this catalog. Earlier revisions of this check hand-copied a
+    # validation regex/parser here, in the jq fallback, and in the Python
+    # heredoc above -- and those copies repeatedly drifted out of sync
+    # across review rounds. To make divergence structurally impossible, the
+    # grammar itself is no longer hand-copied here at all: it is read at
+    # runtime from policy/control-catalog.schema.json's own declared
+    # "pattern" for sourceIssue/mechanism.sourceUrl ($schemaDocument, loaded
+    # above), so this fallback, the Python jsonschema path, and the jq
+    # fallback all share the exact same grammar string as their single
+    # source of truth. That grammar is intentionally narrower than generic
+    # RFC 3986 syntax -- HTTPS only; non-empty DNS labels with no
+    # leading/trailing hyphen (no IP literals, no unmatched IPv6-style
+    # brackets); no userinfo or port; and a path/query/fragment restricted
+    # to safe ASCII URI characters with well-formed two-hex-digit
+    # percent-escapes (rejecting whitespace, backslash, angle brackets,
+    # pipes, and other control characters) -- because it only needs to
+    # cover this catalog's real evidence sources (github.com,
+    # learn.microsoft.com, raw.githubusercontent.com).
+    $urlPattern = $schemaDocument.properties.sourceIssue.pattern
+    $mechanismUrlPattern = $schemaDocument.'$defs'.mechanism.properties.sourceUrl.pattern
+    if ($urlPattern -ne $mechanismUrlPattern) {
+        $schemaErrors.Add('top-level: schema sourceIssue and mechanism.sourceUrl patterns have diverged')
+    }
     function Test-ValidHttpUri {
-        param($Value)
+        param($Value, $Pattern)
         if (-not (Test-NonEmptyString $Value)) { return $false }
-        if ($Value -match '\s') { return $false }
-        if ($Value -match '%(?![0-9A-Fa-f]{2})') { return $false }
-        $parsedUri = $null
-        if (-not [System.Uri]::TryCreate($Value, [System.UriKind]::Absolute, [ref]$parsedUri)) { return $false }
-        if ($parsedUri.Scheme -notin @('http', 'https')) { return $false }
-        if ([string]::IsNullOrEmpty($parsedUri.Host)) { return $false }
-        return $true
+        return [regex]::IsMatch($Value, $Pattern)
     }
 
     function Get-Prop {
@@ -314,7 +280,7 @@ for control in catalog.get("controls", []):
     if (-not (Test-ValidCalendarDate $generatedOn)) { $schemaErrors.Add('top-level: missing/invalid generatedOn date') }
     if (-not (Test-NonEmptyString (Get-Prop $catalog 'purpose'))) { $schemaErrors.Add('top-level: missing/invalid purpose') }
     $sourceIssue = Get-Prop $catalog 'sourceIssue'
-    if (-not (Test-ValidHttpUri $sourceIssue)) { $schemaErrors.Add('top-level: missing/invalid sourceIssue uri') }
+    if (-not (Test-ValidHttpUri $sourceIssue $urlPattern)) { $schemaErrors.Add('top-level: missing/invalid sourceIssue uri') }
     $classificationValuesRaw = Get-Prop $catalog 'classificationValues'
     $classificationValuesIsArray = Test-IsArray $classificationValuesRaw
     $classificationValues = Get-ArrayItems $classificationValuesRaw
@@ -375,7 +341,7 @@ for control in catalog.get("controls", []):
         # non-string sourceUrl (e.g. the boolean $false, or 0) is not silently
         # skipped by PowerShell's implicit boolean coercion of that value.
         if ((Test-Prop $mechanism 'sourceUrl') -and ($null -ne $sourceUrl) -and ($sourceUrl -isnot [string])) { $schemaErrors.Add("${cid}: mechanism.sourceUrl must be string or null") }
-        if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and (-not (Test-ValidHttpUri $sourceUrl))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl is not a well-formed absolute http(s) URI with a non-empty host") }
+        if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and (-not (Test-ValidHttpUri $sourceUrl $mechanismUrlPattern))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl is not a well-formed absolute HTTPS URL matching the catalog's source-URL grammar") }
         if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and ($sourceUrl -match 'raw\.githubusercontent\.com') -and ($sourceUrl.EndsWith('/'))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl points at a directory listing") }
         $builtIn = Get-Prop $mechanism 'builtIn'
         $definitionId = Get-Prop $mechanism 'definitionId'

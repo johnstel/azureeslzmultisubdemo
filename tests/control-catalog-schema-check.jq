@@ -40,39 +40,29 @@ def is_valid_calendar_date:
     | $normalized == .
   end;
 
-# Real `format: uri` semantics for the absolute http(s) URIs used throughout
-# this catalog. A single monolithic regex that merely excludes certain
-# characters from the host (e.g. "^https?://[^\s/:?#]+") is not sufficient:
-# it would wrongly accept malformed authorities such as "https://%zz"
-# (invalid percent-escape -- RFC 3986 requires exactly two hex digits after
-# every "%") or "https://exa[mple.com" (an unmatched/illegal bracket outside
-# of an IPv6 literal), since "[" and "%" are not excluded by that character
-# class. jq has no built-in URI parser, so this conservative-but-complete
-# implementation decomposes the URI via capture groups and validates each
-# part: no whitespace or incomplete percent-escapes anywhere in the string;
-# an exact (case-sensitive) "http"/"https" scheme; a non-empty authority that
-# is either a bracketed IPv6 literal (only hex digits, colons and dots inside
-# the brackets) or a valid reg-name/IPv4 host built only from RFC 3986
-# unreserved/sub-delims/pct-encoded characters (which excludes "[" and "]"
-# for non-literal hosts, catching the unmatched-bracket case); an optional
-# numeric, non-empty, in-range (<=65535) port; and an optional userinfo
-# built from the same restricted character set.
-def is_valid_http_uri:
-  type == "string" and
-  (test("\\s") | not) and
-  (test("%(?![0-9A-Fa-f]{2})") | not) and
-  (
-    (capture("^(?<scheme>[A-Za-z][A-Za-z0-9+.-]*)://(?<authority>[^/?#]*)(?<rest>[/?#].*)?$")? // null) as $m
-    | if $m == null then false
-      else
-        ($m.scheme == "http" or $m.scheme == "https") and
-        ($m.authority | test("^(?:[A-Za-z0-9\\-._~%!$&'()*+,;=]*@)?(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9\\-._~%!$&'()*+,;=]+)(?::[0-9]+)?$")) and
-        (
-          (($m.authority | capture("(?::(?<port>[0-9]+))?$")).port) as $port
-          | ($port == null or $port == "") or (($port | tonumber) <= 65535)
-        )
-      end
-  );
+# Real `format: uri` semantics for the absolute HTTPS source URLs used
+# throughout this catalog. jq has no built-in URI parser, and previous
+# revisions of this conservative-but-complete implementation duplicated a
+# hand-written authority-validating regex here, in the Python heredocs, and
+# in the PowerShell native fallback -- which repeatedly drifted out of sync
+# across review rounds. To make divergence structurally impossible, the
+# regex itself is no longer hand-copied here at all: it is read at runtime
+# from policy/control-catalog.schema.json's own declared "pattern" for
+# sourceIssue/mechanism.sourceUrl (injected as $schema_holder via
+# `--slurpfile`), so this file, the Python jsonschema path, and the
+# PowerShell native fallback all share the exact same grammar string as
+# their single source of truth. That grammar is intentionally narrower than
+# generic RFC 3986 syntax -- HTTPS only; non-empty DNS labels with no
+# leading/trailing hyphen (no IP literals, no unmatched IPv6-style
+# brackets); no userinfo or port; and a path/query/fragment restricted to
+# safe ASCII URI characters with well-formed two-hex-digit percent-escapes
+# (rejecting whitespace, backslash, angle brackets, pipes, and other control
+# characters) -- because it only needs to cover this catalog's real evidence
+# sources (github.com, learn.microsoft.com, raw.githubusercontent.com).
+def url_pattern: $schema_holder[0].properties.sourceIssue.pattern;
+def mechanism_url_pattern: $schema_holder[0]["$defs"].mechanism.properties.sourceUrl.pattern;
+def is_valid_http_uri(pattern):
+  type == "string" and test(pattern);
 
 # Emits `label` for every element of `arr` that is not a non-empty string.
 # No-op (and does not itself flag anything) if `arr` is not an array; the
@@ -89,7 +79,8 @@ def bad_pattern_items(arr; re; msg):
   (if (.catalogVersion? // null | type) != "string" then "top-level: missing/invalid catalogVersion" else empty end),
   (if (.generatedOn? // null | is_valid_calendar_date | not) then "top-level: missing/invalid generatedOn date" else empty end),
   (if (.purpose? // null | is_nonempty_string | not) then "top-level: missing/invalid purpose" else empty end),
-  (if (.sourceIssue? // null | is_valid_http_uri | not) then "top-level: missing/invalid sourceIssue uri" else empty end),
+  (if (url_pattern != mechanism_url_pattern) then "top-level: schema sourceIssue and mechanism.sourceUrl patterns have diverged" else empty end),
+  (if (.sourceIssue? // null | is_valid_http_uri(url_pattern) | not) then "top-level: missing/invalid sourceIssue uri" else empty end),
   (if (.classificationValues? // null | type) != "array" or ((.classificationValues // []) | length) < 1 then "top-level: missing/invalid classificationValues" else empty end),
   (if (.classificationValues? // null | type) == "array" and ((.classificationValues | unique | length) != (.classificationValues | length)) then "top-level: classificationValues entries are not unique" else empty end),
   bad_string_items(.classificationValues?; "top-level: a classificationValues entry is not a non-empty string"),
@@ -124,7 +115,7 @@ def bad_pattern_items(arr; re; msg):
     (if ($c.mechanism | has("category")) and (($c.mechanism.category | type) != "string") then "\($id): mechanism.category must be a string" else empty end),
     (if ($c.mechanism | has("notes")) and (($c.mechanism.notes | type) != "string") then "\($id): mechanism.notes must be a string" else empty end),
     (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and (($c.mechanism.sourceUrl | type) != "string") then "\($id): mechanism.sourceUrl must be string or null" else empty end),
-    (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and ($c.mechanism.sourceUrl | type == "string") and ($c.mechanism.sourceUrl | is_valid_http_uri | not) then "\($id): mechanism.sourceUrl is not a well-formed absolute http(s) URI with a non-empty host" else empty end),
+    (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and ($c.mechanism.sourceUrl | type == "string") and ($c.mechanism.sourceUrl | is_valid_http_uri(mechanism_url_pattern) | not) then "\($id): mechanism.sourceUrl is not a well-formed absolute HTTPS URL matching the catalog's source-URL grammar" else empty end),
     (if ($c.mechanism | has("sourceUrl")) and ($c.mechanism.sourceUrl != null) and ($c.mechanism.sourceUrl | matches_safely("raw\\.githubusercontent\\.com")) and ($c.mechanism.sourceUrl | type == "string" and endswith("/")) then "\($id): mechanism.sourceUrl points at a directory listing" else empty end),
     (if ($c.mechanism.builtIn == true and (($c.mechanism.verificationMethod == "raw-json") or ($c.mechanism.verificationMethod == "initiative-json-member"))) and (($c.mechanism.definitionId? // "") | matches_safely(guid_re) | not) then "\($id): definitionId is not a well-formed GUID for a directly-verified built-in" else empty end),
     (if ($c.supportedEffects? // null | type) != "array" or (($c.supportedEffects // []) | length) < 1 then "\($id): supportedEffects missing/empty" else empty end),
