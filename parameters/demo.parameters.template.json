@@ -50,6 +50,24 @@
     "evidenceLocation": {
       "value": "eastus2"
     },
+    "deployCentralLogAnalytics": {
+      "value": false
+    },
+    "deploySentinel": {
+      "value": false
+    },
+    "existingLogAnalyticsWorkspaceResourceId": {
+      "value": ""
+    },
+    "centralMonitoringLocation": {
+      "value": "eastus2"
+    },
+    "centralLogAnalyticsRetentionInDays": {
+      "value": 30
+    },
+    "centralLogAnalyticsDailyQuotaGb": {
+      "value": -1
+    },
     "enableCriticalInfrastructure": {
       "value": false
     },
