@@ -327,6 +327,41 @@ exit 0
 '@ | Set-Content -LiteralPath $mockAzPath -NoNewline
     if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod +x $mockAzPath }
 
+    # PowerShell command resolution on Windows honors PATHEXT (.cmd, .exe, etc.), so an
+    # extensionless mock named "az" is invisible to it there and Get-Command would silently
+    # fall through to the real az.cmd on PATH. Provide a Windows-resolvable az.cmd mock with
+    # identical logging/behavior so teardown.ps1 (which invokes az directly, not via bash)
+    # is exercised against the mock on every platform.
+    $mockAzCmdPath = Join-Path $mockBinDir 'az.cmd'
+    @'
+@echo off
+echo %* >> "%AZ_CALL_LOG%"
+if /I "%~1"=="group" if /I "%~2"=="exists" (
+  echo true
+  exit /b 0
+)
+exit /b 0
+'@ | Set-Content -LiteralPath $mockAzCmdPath -NoNewline
+
+    # Wrapper invoked by the nested PowerShell process: verifies az actually resolves to the
+    # temporary mock directory (not a real, PATHEXT-resolved az.cmd elsewhere on PATH) before
+    # ever calling teardown.ps1, and fails loudly rather than silently running a real teardown.
+    $wrapperScript = Join-Path $TempDir 'invoke-teardown-with-mock-check.ps1'
+    @'
+param(
+    [Parameter(Mandatory = $true)][string]$ParameterFile,
+    [Parameter(Mandatory = $true)][string]$ExpectedMockDir,
+    [Parameter(Mandatory = $true)][string]$TeardownScript
+)
+$azCommand = Get-Command az -ErrorAction SilentlyContinue
+$resolvedSource = if ($azCommand) { $azCommand.Source } else { $null }
+if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Error "az resolved to '$resolvedSource' instead of the temporary mock directory '$ExpectedMockDir'."
+    exit 1
+}
+& $TeardownScript $ParameterFile -Execute
+'@ | Set-Content -LiteralPath $wrapperScript
+
     $whitespaceParamFile = Join-Path $TempDir 'whitespace.parameters.json'
     $templateJson = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $templateJson.parameters.tenantRootManagementGroupId.value = 'mg-root'
@@ -366,10 +401,14 @@ exit 0
         $env:AZ_CALL_LOG = $azCallLog
         $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
         $ps1Script = Join-Path $ProjectDir 'scripts/teardown.ps1'
-        & bash -c "echo 'eslz-demo' | pwsh -NoLogo -NoProfile -File '$ps1Script' '$whitespaceParamFile' -Execute" | Out-Null
+        $nestedOutput = & bash -c "echo 'eslz-demo' | pwsh -NoLogo -NoProfile -File '$wrapperScript' -ParameterFile '$whitespaceParamFile' -ExpectedMockDir '$mockBinDir' -TeardownScript '$ps1Script'" 2>&1
+        $nestedExitCode = $LASTEXITCODE
         $env:PATH = $originalPath
         Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
         Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+        if ($nestedExitCode -ne 0) {
+            Stop-Test "teardown.ps1 safety test failed: az did not resolve to the temporary mock directory (or teardown.ps1 failed unexpectedly). Nested output: $nestedOutput"
+        }
         $azCalls = Get-Content -LiteralPath $azCallLog -Raw
         if ($azCalls -match 'rg-eslz-demo-monitoring') {
             Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
