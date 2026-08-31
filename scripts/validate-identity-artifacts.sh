@@ -112,10 +112,15 @@ pim_dir="${identity_dir}/pim"
 [[ -d "${pim_dir}" ]] || fail "Missing directory: ${pim_dir}"
 
 # Validates emergencyAccessExclusion.required and .placeholder against the
-# active mode. Sets the shared $placeholder variable for optional follow-up
-# containment checks (see check_placeholder_excluded_from).
+# active mode. Sets the global EMERGENCY_PLACEHOLDER_OUT variable as an
+# explicit, documented out-parameter for callers that also need to run
+# check_placeholder_excluded_from (a plain "$(...)" return isn't used here so
+# that fail()'s `exit 1` terminates the whole script rather than just a
+# command-substitution subshell).
+EMERGENCY_PLACEHOLDER_OUT=""
 check_emergency_placeholder() {
   local template="$1" name="$2"
+  local exclusion_required placeholder
 
   exclusion_required="$(jq -r '.emergencyAccessExclusion.required' "${template}")"
   [[ "${exclusion_required}" == "true" ]] || \
@@ -131,13 +136,16 @@ check_emergency_placeholder() {
     is_guid "${placeholder}" || \
       fail "${name} emergencyAccessExclusion.placeholder must be a valid object ID (GUID) in populated mode, found '${placeholder}'."
   fi
+  EMERGENCY_PLACEHOLDER_OUT="${placeholder}"
 }
 
-# Confirms the emergencyAccessExclusion.placeholder (set by
-# check_emergency_placeholder above) is actually excluded via the given
-# array field, e.g. conditions.users.excludeGroups for Conditional Access.
+# Confirms the given placeholder (passed explicitly by the caller, normally
+# via $EMERGENCY_PLACEHOLDER_OUT immediately after check_emergency_placeholder)
+# is actually excluded via the given array field, e.g.
+# conditions.users.excludeGroups for Conditional Access.
 check_placeholder_excluded_from() {
-  local template="$1" name="$2" array_field="$3"
+  local template="$1" name="$2" array_field="$3" placeholder="$4"
+  local array_count contains_placeholder
 
   array_count="$(jq "[.${array_field}[]] | length" "${template}")"
   [[ "${array_count}" -ge 1 ]] || \
@@ -147,6 +155,7 @@ check_placeholder_excluded_from() {
   [[ "${contains_placeholder}" -ge 1 ]] || \
     fail "${name} ${array_field} must include the declared emergencyAccessExclusion.placeholder."
 }
+
 
 
 ca_count=0
@@ -162,7 +171,7 @@ for template in "${ca_dir}"/*.template.json; do
     fail "${name} must default to state=enabledForReportingButNotEnforced (report-only), found '${state}'."
 
   check_emergency_placeholder "${template}" "${name}"
-  check_placeholder_excluded_from "${template}" "${name}" 'conditions.users.excludeGroups'
+  check_placeholder_excluded_from "${template}" "${name}" 'conditions.users.excludeGroups' "${EMERGENCY_PLACEHOLDER_OUT}"
 
   # Subject (conditions.users): must use Graph-compatible values. Either
   # includeUsers (only 'All', 'None', 'GuestsOrExternalUsers', or a GUID) or
@@ -209,7 +218,8 @@ for template in "${ca_dir}"/*.template.json; do
   # Grant controls: authenticationStrength must be modeled as its own Graph
   # relationship object (id + displayName), never as a builtInControls
   # string entry.
-  if rg -q '"authenticationStrength"' <(jq '.grantControls.builtInControls // []' "${template}"); then
+  built_in_controls_raw="$(jq -c '.grantControls.builtInControls // []' "${template}")"
+  if printf '%s' "${built_in_controls_raw}" | rg -q '"authenticationStrength"'; then
     fail "${name} grantControls.builtInControls must not contain 'authenticationStrength'; use the grantControls.authenticationStrength relationship object instead."
   fi
   built_in_controls_present="$(jq '.grantControls | has("builtInControls")' "${template}")"
@@ -315,6 +325,11 @@ if [[ "${mode}" == "template" ]]; then
   for allowed in "${allowed_guids[@]}"; do
     allow_filter_args+=(-e ":${allowed}\$")
   done
+  if [[ "${#allow_filter_args[@]}" -eq 0 ]]; then
+    # No known-safe GUIDs loaded (e.g. an empty known-entra-ids.json): any
+    # GUID found anywhere under identity_dir is unexplained and must fail.
+    allow_filter_args=(-e '$^')
+  fi
   if rg -no -e "${guid_pattern_global}" "${identity_dir}" -g '*.json' | \
     rg -v "${allow_filter_args[@]}"; then
     fail "A tenant-specific GUID was found in ${identity_dir}. Replace it with a REPLACE_WITH_* placeholder, or add it to identity/schema/known-entra-ids.json only if it is a public Microsoft constant."
