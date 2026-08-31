@@ -1,0 +1,1748 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "catalogVersion": "1.0.0",
+  "generatedOn": "2026-08-31",
+  "purpose": "Authoritative v2 mapping from each customer requirement to its implementation mechanism (Azure Policy built-in/custom definition or initiative, Entra/PIM artifact, Defender CSPM/CIEM feature, shared-service architecture pattern, or manual evidence process) before v2 policy code is expanded. Sourced from public Microsoft Learn and the Azure/azure-policy GitHub repository; no tenant credentials were used.",
+  "sourceIssue": "https://github.com/johnstel/azureeslzmultisubdemo/issues/3",
+  "classificationValues": [
+    "azure-policy",
+    "entra-pim",
+    "defender-cspm-ciem",
+    "shared-service-architecture",
+    "manual-evidence"
+  ],
+  "enforcementPhaseValues": [
+    "audit-only",
+    "deny-do-not-enforce",
+    "deployifnotexists-opt-in",
+    "manual-evidence"
+  ],
+  "cautions": [
+    "Azure service security baselines (for example, the Storage, Key Vault, or Compute security baselines) are Microsoft Learn guidance mapped into individual service controls; they are not one universal assignable Azure Policy initiative. See REQ-BASE-04.",
+    "NERC CIP has no single turnkey built-in Azure Policy initiative. Compliance requires customer-owned evidence, a registered-entity applicability decision, and procedural controls outside Azure Policy. See REQ-CIP-01 and REQ-CIP-02. This catalog and repository do not claim NERC CIP certification or compliance.",
+    "The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here.",
+    "Entries with mechanism.verificationMethod of 'secondary-source' were corroborated by multiple public references but could not be confirmed by directly fetching the built-in's raw JSON in this research session; re-confirm with `az policy definition show` / `az policy set-definition show` before assignment."
+  ],
+  "controls": [
+    {
+      "id": "REQ-ID-01",
+      "domain": "identity",
+      "customerRequirement": "Require phishing-resistant MFA for privileged Entra roles.",
+      "scope": "tenant (Entra ID)",
+      "classification": "entra-pim",
+      "mechanism": {
+        "kind": "conditional-access-template",
+        "builtIn": false,
+        "displayName": "Conditional Access: privileged-role phishing-resistant MFA (report-only template)",
+        "sourceUrl": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-all-users-device-code",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "documentation-pattern"
+      },
+      "supportedEffects": [
+        "reportOnly",
+        "enabledEnforced"
+      ],
+      "requiredParameters": [
+        "targetRoleGroupObjectIds",
+        "emergencyAccessExclusionObjectIds"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Entra Conditional Access policy JSON export (report-only) tracked in repository identity artifacts (issue #2).",
+      "notes": "Not implementable with Azure Policy; requires Microsoft Graph/Entra ID configuration outside this repository's automated scope."
+    },
+    {
+      "id": "REQ-ID-02",
+      "domain": "identity",
+      "customerRequirement": "Require MFA for any access to Azure management (Azure Resource Manager).",
+      "scope": "tenant (Entra ID)",
+      "classification": "entra-pim",
+      "mechanism": {
+        "kind": "conditional-access-template",
+        "builtIn": false,
+        "displayName": "Conditional Access: require MFA for Azure Management (report-only template)",
+        "sourceUrl": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/howto-conditional-access-policy-azure-management",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "documentation-pattern"
+      },
+      "supportedEffects": [
+        "reportOnly",
+        "enabledEnforced"
+      ],
+      "requiredParameters": [
+        "emergencyAccessExclusionObjectIds"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Entra Conditional Access policy JSON export (report-only) tracked in repository identity artifacts (issue #2).",
+      "notes": "Not implementable with Azure Policy; requires Entra Conditional Access."
+    },
+    {
+      "id": "REQ-ID-03",
+      "domain": "identity",
+      "customerRequirement": "Block legacy (basic) authentication protocols.",
+      "scope": "tenant (Entra ID)",
+      "classification": "entra-pim",
+      "mechanism": {
+        "kind": "conditional-access-template",
+        "builtIn": false,
+        "displayName": "Conditional Access: block legacy authentication (report-only template)",
+        "sourceUrl": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-block-legacy-authentication",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "documentation-pattern"
+      },
+      "supportedEffects": [
+        "reportOnly",
+        "enabledEnforced"
+      ],
+      "requiredParameters": [
+        "emergencyAccessExclusionObjectIds"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Entra Conditional Access policy JSON export (report-only) tracked in repository identity artifacts (issue #2).",
+      "notes": "Not implementable with Azure Policy; requires Entra Conditional Access."
+    },
+    {
+      "id": "REQ-ID-04",
+      "domain": "identity",
+      "customerRequirement": "Replace permanent subscription Owner with eligible, time-bound, PIM-compatible privileged access.",
+      "scope": "subscription",
+      "classification": "entra-pim",
+      "mechanism": {
+        "kind": "azure-authorization-eligible-role-assignment",
+        "builtIn": false,
+        "displayName": "PIM-ready eligible role assignment inputs (Microsoft.Authorization roleEligibilityScheduleRequests)",
+        "sourceUrl": "https://learn.microsoft.com/en-us/azure/role-based-access-control/security-groups",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "documentation-pattern"
+      },
+      "supportedEffects": [
+        "eligible",
+        "activeTimeBound"
+      ],
+      "requiredParameters": [
+        "eligibleGroupObjectId",
+        "maxActivationDurationHours"
+      ],
+      "roleDefinitionIds": [
+        "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+      ],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Bicep RBAC module output plus Entra PIM eligible-assignment configuration (issue #8).",
+      "notes": "Owner role ID 8e3af657-a8ff-443c-a75c-2fe8c4bcb635 is already used for permanent assignment in modules/subscription-rbac.bicep; issue #8 changes the assignment pattern, not the role definition."
+    },
+    {
+      "id": "REQ-ID-05",
+      "domain": "identity",
+      "customerRequirement": "Detect and periodically review excessive service-principal and managed-identity role assignments, and review subscription Owner counts.",
+      "scope": "subscription",
+      "classification": "manual-evidence",
+      "mechanism": {
+        "kind": "read-only-inventory-script",
+        "builtIn": false,
+        "displayName": "Read-only Azure role-assignment inventory report (Bash/PowerShell)",
+        "sourceUrl": null,
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "internal-design"
+      },
+      "supportedEffects": [
+        "report"
+      ],
+      "requiredParameters": [
+        "subscriptionId"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-ID-04"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Generated inventory report (not committed to source control); reviewed on a documented cadence (issue #21).",
+      "notes": "Cannot determine business necessity automatically; requires human access-review decision and Entra access-review cadence documentation."
+    },
+    {
+      "id": "REQ-ID-06",
+      "domain": "identity",
+      "customerRequirement": "Use Defender for Cloud CIEM (Cloud Infrastructure Entitlement Management) findings to complement manual identity review.",
+      "scope": "subscription",
+      "classification": "defender-cspm-ciem",
+      "mechanism": {
+        "kind": "defender-plan-feature",
+        "builtIn": true,
+        "displayName": "Microsoft Defender CSPM (Permissions Management / CIEM entitlement insights)",
+        "definitionId": "72f8cee7-2937-403d-84a1-a4e3e57f3c21",
+        "majorVersion": "n/a",
+        "verifiedVersion": "n/a",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "initiative-json-member"
+      },
+      "supportedEffects": [
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-DEF-02"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Defender for Cloud CIEM recommendations (requires Defender CSPM plan license; not enabled by safe defaults).",
+      "notes": "Paid Defender CSPM plan; disabled by default per issue #20 safety constraints. CIEM findings complement, not replace, the manual inventory in REQ-ID-05."
+    },
+    {
+      "id": "REQ-DEPLOY-01",
+      "domain": "deployment-restrictions",
+      "customerRequirement": "Restrict resource deployment to an approved set of Azure regions.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Allowed locations",
+        "definitionId": "e56962a6-4747-49cd-b67b-bf8b01975c4c",
+        "majorVersion": "1",
+        "verifiedVersion": "1.1.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/General/AllowedLocations_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "General"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "listOfAllowedLocations"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment enforcementMode.",
+      "notes": "Already implemented as a custom equivalent in modules/policy-library.bicep; issue #11 should evaluate migrating to this verified built-in for the customer-control profile."
+    },
+    {
+      "id": "REQ-DEPLOY-02",
+      "domain": "deployment-restrictions",
+      "customerRequirement": "Restrict deployment to an approved allowlist of Azure resource types.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Allowed resource types",
+        "definitionId": "a08ec900-254a-4555-9bf5-e42af04b5c5c",
+        "majorVersion": "1",
+        "verifiedVersion": "1.1.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/General/AllowedResourceTypes_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "General"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "listOfResourceTypesAllowed"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment enforcementMode.",
+      "notes": "Allowlist must include diagnostics, extensions, private endpoint, backup, and policy-remediation child resource types before enabling Deny (issue #11 acceptance criteria)."
+    },
+    {
+      "id": "REQ-DEPLOY-03",
+      "domain": "deployment-restrictions",
+      "customerRequirement": "Block deployment of an explicit denylist of Azure resource types.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Not allowed resource types",
+        "definitionId": "6c112d4e-5bc7-47ae-a041-ea2d9dccd749",
+        "majorVersion": "2",
+        "verifiedVersion": "2.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/General/InvalidResourceTypes_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "General"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "listOfResourceTypesNotAllowed"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment enforcementMode.",
+      "notes": "Can supersede/complement the existing custom demo-block-expensive definition in modules/policy-library.bicep."
+    },
+    {
+      "id": "REQ-DEPLOY-04",
+      "domain": "deployment-restrictions",
+      "customerRequirement": "Restrict virtual machine deployment to an approved allowlist of VM size SKUs.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Allowed virtual machine size SKUs",
+        "definitionId": "cccc23c7-8427-4f53-ad12-b6a63eb452b3",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Compute/VMSkusAllowed_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "Compute"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "listOfAllowedSKUs"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment enforcementMode."
+    },
+    {
+      "id": "REQ-DEPLOY-05",
+      "domain": "deployment-restrictions",
+      "customerRequirement": "Require managed disks for virtual machines.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Audit VMs that do not use managed disks",
+        "definitionId": "06a78e20-9358-41c9-923c-fb736d382a4d",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Compute/VMRequireManagedDisk_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Compute"
+      },
+      "supportedEffects": [
+        "Audit"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "This built-in has a fixed Audit effect; it cannot be tightened to Deny without a custom definition."
+    },
+    {
+      "id": "REQ-DEPLOY-06",
+      "domain": "deployment-restrictions",
+      "customerRequirement": "Audit creation of public IP address resources as a public-exposure signal.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": false,
+        "displayName": "Demo - audit public IP address resources",
+        "definitionId": "${namePrefix}-audit-public-ip",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "sourceUrl": null,
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "in-repository-custom-definition"
+      },
+      "supportedEffects": [
+        "audit"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "modules/policy-library.bicep (auditPublicIp definition).",
+      "notes": "Existing custom definition; no equivalent single-purpose built-in was found that only audits Microsoft.Network/publicIPAddresses creation."
+    },
+    {
+      "id": "REQ-TAG-01",
+      "domain": "tagging",
+      "customerRequirement": "Require the 'CostCenter' tag on every resource group.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Require a tag on resource groups",
+        "definitionId": "96670d01-0a4d-4649-9c89-2d3abc0a5025",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/ResourceGroupRequireTag_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "tagName=CostCenter"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment parameter value.",
+      "notes": "Replaces the existing 'Application' tag requirement with 'ApplicationName' per issue #12; each of the six tags is one instance of the same built-in definition with a different tagName parameter."
+    },
+    {
+      "id": "REQ-TAG-02",
+      "domain": "tagging",
+      "customerRequirement": "Require the 'ApplicationName' tag on every resource group.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Require a tag on resource groups",
+        "definitionId": "96670d01-0a4d-4649-9c89-2d3abc0a5025",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/ResourceGroupRequireTag_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "tagName=ApplicationName"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment parameter value.",
+      "notes": "Replaces the existing 'Application' tag requirement with 'ApplicationName' per issue #12; each of the six tags is one instance of the same built-in definition with a different tagName parameter."
+    },
+    {
+      "id": "REQ-TAG-03",
+      "domain": "tagging",
+      "customerRequirement": "Require the 'Owner' tag on every resource group.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Require a tag on resource groups",
+        "definitionId": "96670d01-0a4d-4649-9c89-2d3abc0a5025",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/ResourceGroupRequireTag_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "tagName=Owner"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment parameter value.",
+      "notes": "Replaces the existing 'Application' tag requirement with 'ApplicationName' per issue #12; each of the six tags is one instance of the same built-in definition with a different tagName parameter."
+    },
+    {
+      "id": "REQ-TAG-04",
+      "domain": "tagging",
+      "customerRequirement": "Require the 'Environment' tag on every resource group.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Require a tag on resource groups",
+        "definitionId": "96670d01-0a4d-4649-9c89-2d3abc0a5025",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/ResourceGroupRequireTag_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "tagName=Environment"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment parameter value.",
+      "notes": "Replaces the existing 'Application' tag requirement with 'ApplicationName' per issue #12; each of the six tags is one instance of the same built-in definition with a different tagName parameter."
+    },
+    {
+      "id": "REQ-TAG-05",
+      "domain": "tagging",
+      "customerRequirement": "Require the 'DataClassification' tag on every resource group.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Require a tag on resource groups",
+        "definitionId": "96670d01-0a4d-4649-9c89-2d3abc0a5025",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/ResourceGroupRequireTag_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "tagName=DataClassification"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment parameter value.",
+      "notes": "Replaces the existing 'Application' tag requirement with 'ApplicationName' per issue #12; each of the six tags is one instance of the same built-in definition with a different tagName parameter."
+    },
+    {
+      "id": "REQ-TAG-06",
+      "domain": "tagging",
+      "customerRequirement": "Require the 'SSP-ID' tag on every resource group.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Require a tag on resource groups",
+        "definitionId": "96670d01-0a4d-4649-9c89-2d3abc0a5025",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/ResourceGroupRequireTag_Deny.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags"
+      },
+      "supportedEffects": [
+        "Deny"
+      ],
+      "requiredParameters": [
+        "tagName=SSP-ID"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + policy assignment parameter value.",
+      "notes": "Replaces the existing 'Application' tag requirement with 'ApplicationName' per issue #12; each of the six tags is one instance of the same built-in definition with a different tagName parameter."
+    },
+    {
+      "id": "REQ-TAG-07",
+      "domain": "tagging",
+      "customerRequirement": "Inherit the 'CostCenter' tag from the resource group to taggable child resources when missing, without overwriting existing values.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Inherit a tag from the resource group if missing",
+        "definitionId": "ea3f2387-9b95-492a-a190-fcdc54f7b070",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/InheritTag_Add_Modify.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags",
+        "notes": "Built-in JSON specifies Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) as the remediation roleDefinitionId."
+      },
+      "supportedEffects": [
+        "Modify"
+      ],
+      "requiredParameters": [
+        "tagName=CostCenter"
+      ],
+      "roleDefinitionIds": [
+        "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      ],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-TAG-01"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Issue #16. Modify effect only adds a missing tag; it never overwrites an existing tag value."
+    },
+    {
+      "id": "REQ-TAG-08",
+      "domain": "tagging",
+      "customerRequirement": "Inherit the 'ApplicationName' tag from the resource group to taggable child resources when missing, without overwriting existing values.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Inherit a tag from the resource group if missing",
+        "definitionId": "ea3f2387-9b95-492a-a190-fcdc54f7b070",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/InheritTag_Add_Modify.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags",
+        "notes": "Built-in JSON specifies Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) as the remediation roleDefinitionId."
+      },
+      "supportedEffects": [
+        "Modify"
+      ],
+      "requiredParameters": [
+        "tagName=ApplicationName"
+      ],
+      "roleDefinitionIds": [
+        "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      ],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-TAG-02"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Issue #16. Modify effect only adds a missing tag; it never overwrites an existing tag value."
+    },
+    {
+      "id": "REQ-TAG-09",
+      "domain": "tagging",
+      "customerRequirement": "Inherit the 'Owner' tag from the resource group to taggable child resources when missing, without overwriting existing values.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Inherit a tag from the resource group if missing",
+        "definitionId": "ea3f2387-9b95-492a-a190-fcdc54f7b070",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/InheritTag_Add_Modify.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags",
+        "notes": "Built-in JSON specifies Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) as the remediation roleDefinitionId."
+      },
+      "supportedEffects": [
+        "Modify"
+      ],
+      "requiredParameters": [
+        "tagName=Owner"
+      ],
+      "roleDefinitionIds": [
+        "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      ],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-TAG-03"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Issue #16. Modify effect only adds a missing tag; it never overwrites an existing tag value."
+    },
+    {
+      "id": "REQ-TAG-10",
+      "domain": "tagging",
+      "customerRequirement": "Inherit the 'Environment' tag from the resource group to taggable child resources when missing, without overwriting existing values.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Inherit a tag from the resource group if missing",
+        "definitionId": "ea3f2387-9b95-492a-a190-fcdc54f7b070",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/InheritTag_Add_Modify.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags",
+        "notes": "Built-in JSON specifies Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) as the remediation roleDefinitionId."
+      },
+      "supportedEffects": [
+        "Modify"
+      ],
+      "requiredParameters": [
+        "tagName=Environment"
+      ],
+      "roleDefinitionIds": [
+        "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      ],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-TAG-04"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Issue #16. Modify effect only adds a missing tag; it never overwrites an existing tag value."
+    },
+    {
+      "id": "REQ-TAG-11",
+      "domain": "tagging",
+      "customerRequirement": "Inherit the 'DataClassification' tag from the resource group to taggable child resources when missing, without overwriting existing values.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Inherit a tag from the resource group if missing",
+        "definitionId": "ea3f2387-9b95-492a-a190-fcdc54f7b070",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/InheritTag_Add_Modify.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags",
+        "notes": "Built-in JSON specifies Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) as the remediation roleDefinitionId."
+      },
+      "supportedEffects": [
+        "Modify"
+      ],
+      "requiredParameters": [
+        "tagName=DataClassification"
+      ],
+      "roleDefinitionIds": [
+        "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      ],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-TAG-05"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Issue #16. Modify effect only adds a missing tag; it never overwrites an existing tag value."
+    },
+    {
+      "id": "REQ-TAG-12",
+      "domain": "tagging",
+      "customerRequirement": "Inherit the 'SSP-ID' tag from the resource group to taggable child resources when missing, without overwriting existing values.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Inherit a tag from the resource group if missing",
+        "definitionId": "ea3f2387-9b95-492a-a190-fcdc54f7b070",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Tags/InheritTag_Add_Modify.json",
+        "verificationMethod": "raw-json",
+        "category": "Tags",
+        "notes": "Built-in JSON specifies Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) as the remediation roleDefinitionId."
+      },
+      "supportedEffects": [
+        "Modify"
+      ],
+      "requiredParameters": [
+        "tagName=SSP-ID"
+      ],
+      "roleDefinitionIds": [
+        "b24988ac-6180-42a0-ab88-20f7382dd24c"
+      ],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-TAG-06"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Issue #16. Modify effect only adds a missing tag; it never overwrites an existing tag value."
+    },
+    {
+      "id": "REQ-NET-01",
+      "domain": "network-security",
+      "customerRequirement": "Detect open management ports (RDP/SSH) on virtual machines.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Management ports should be closed on your virtual machines",
+        "definitionId": "22730e10-96f6-4aac-ad84-9383d35b5917",
+        "majorVersion": "3",
+        "verifiedVersion": "3.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_OpenManagementPortsOnVirtualMachines_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Security Center",
+        "notes": "Existence condition depends on a Microsoft Defender for Cloud security assessment; requires Defender/Foundational CSPM to populate compliance data."
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-DEF-01"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + Defender for Cloud recommendation/assessment."
+    },
+    {
+      "id": "REQ-NET-02",
+      "domain": "network-security",
+      "customerRequirement": "Require subnets to be associated with a Network Security Group.",
+      "scope": "connectivity",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Subnets should be associated with a Network Security Group",
+        "definitionId": "e71308d3-144b-4262-b144-efdc3cc90517",
+        "majorVersion": "3",
+        "verifiedVersion": "3.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Network/NetworkSecurityGroupsOnSubnets_Audit.json",
+        "verificationMethod": "secondary-source",
+        "category": "Network",
+        "notes": "GUID corroborated by multiple public secondary sources (Azure Policy documentation mirrors); the raw built-in JSON file path could not be located directly in this session. Re-confirm with `az policy definition show --name e71308d3-144b-4262-b144-efdc3cc90517` before assignment (tracked for issue #13)."
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state; documented exception path via governed exemptions (issue #10) for platform subnets such as AzureFirewallSubnet/GatewaySubnet."
+    },
+    {
+      "id": "REQ-NET-03",
+      "domain": "network-security",
+      "customerRequirement": "Protect non-internet-facing virtual machines with a Network Security Group.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Non-internet-facing virtual machines should be protected with network security groups",
+        "definitionId": "bb91dfba-c30d-4263-9add-9c2384e659a6",
+        "majorVersion": "3",
+        "verifiedVersion": "3.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_NetworkSecurityGroupsOnInternalVirtualMachines_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Security Center"
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-DEF-01"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + Defender for Cloud recommendation/assessment."
+    },
+    {
+      "id": "REQ-NET-04",
+      "domain": "network-security",
+      "customerRequirement": "Audit private-link/private-endpoint readiness for storage accounts.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Storage accounts should use private link",
+        "definitionId": "6edd7eda-6dd8-40f7-810d-67160c639cd9",
+        "majorVersion": "2",
+        "verifiedVersion": "2.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/StorageAccountPrivateEndpointEnabled_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Storage"
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Issue #17: deny of public network access is deferred to an explicit later-enforcement parameter, not the safe default."
+    },
+    {
+      "id": "REQ-NET-05",
+      "domain": "network-security",
+      "customerRequirement": "Audit private-link/private-endpoint readiness for Key Vault.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Azure Key Vaults should use private link",
+        "definitionId": "a6abeaec-4d90-4a02-805f-6b26c4d3fbe9",
+        "majorVersion": "1",
+        "verifiedVersion": "1.2.1",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/Should_Use_PrivateEndpoint_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Key Vault",
+        "notes": "Deny is not a supported effect for this policy because a Key Vault and its private endpoint cannot be created simultaneously."
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state."
+    },
+    {
+      "id": "REQ-NET-06",
+      "domain": "network-security",
+      "customerRequirement": "Validate that Internet-bound traffic from production/critical subnets routes through an approved Azure Firewall.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "[Preview]: All Internet traffic should be routed via your deployed Azure Firewall",
+        "definitionId": "fc5e4038-4584-4632-8c85-c0448d374b2c",
+        "majorVersion": "3",
+        "verifiedVersion": "3.0.0-preview",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Network/ASC_All_Internet_traffic_should_be_routed_via_Azure_Firewall.json",
+        "verificationMethod": "raw-json",
+        "category": "Network",
+        "notes": "Still in Preview as of the verification date; preview built-ins are excluded from safe/default customer profiles per repository convention (never silently select preview definitions)."
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Compiled ARM template (opt-in only) + policy compliance state; route-table architecture inputs documented separately from policy evidence (issue #17)."
+    },
+    {
+      "id": "REQ-LOG-01",
+      "domain": "logging",
+      "customerRequirement": "Export subscription Activity Logs to the effective central Log Analytics workspace.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Configure Azure Activity logs to stream to specified Log Analytics workspace",
+        "definitionId": "2465583e-4e78-4c15-b6be-a36cbc7c8b0f",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Monitoring/DataConnectorsAzureActivity.json",
+        "verificationMethod": "raw-json",
+        "category": "Monitoring"
+      },
+      "supportedEffects": [
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "logAnalytics",
+        "logsEnabled"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Cannot be enabled without a usable existing-or-optional workspace resource ID (issue #18 acceptance criteria); the built-in JSON embeds its own remediation roleDefinitionIds \u2014 confirm at the source URL before assignment."
+    },
+    {
+      "id": "REQ-LOG-02",
+      "domain": "logging",
+      "customerRequirement": "Export supported resource-level diagnostic logs to the effective central Log Analytics workspace.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policySetDefinition",
+        "builtIn": true,
+        "displayName": "Enable allLogs category group resource logging for supported resources to Log Analytics",
+        "definitionId": "0884adba-2312-4468-abeb-5422caed1038",
+        "majorVersion": "unknown",
+        "verifiedVersion": "unknown",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Monitoring/",
+        "verificationMethod": "secondary-source",
+        "category": "Monitoring",
+        "notes": "GUID corroborated by public secondary sources (Azure Monitor diagnostic-settings-at-scale documentation); the raw initiative JSON file path could not be located directly in this session because the initiative is very large (~140 member policies). Re-confirm the exact GUID and version with `az policy set-definition show --name 0884adba-2312-4468-abeb-5422caed1038` before assignment."
+      },
+      "supportedEffects": [
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "logAnalyticsWorkspaceId"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-LOG-01"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Not every Azure resource type is covered by this initiative; unsupported types must be documented rather than claimed as covered (issue #18)."
+    },
+    {
+      "id": "REQ-DATA-01",
+      "domain": "data-protection",
+      "customerRequirement": "Require secure transfer (HTTPS) for storage accounts.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Secure transfer to storage accounts should be enabled",
+        "definitionId": "404c3081-a854-4457-ae30-26a93ef643f9",
+        "majorVersion": "2",
+        "verifiedVersion": "2.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/Storage_AuditForHTTPSEnabled_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Storage"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Also included as a member policy of the Microsoft cloud security benchmark (REQ-BASE-01); do not duplicate as a separate custom definition (overlap avoidance)."
+    },
+    {
+      "id": "REQ-DATA-02",
+      "domain": "data-protection",
+      "customerRequirement": "Disallow public blob access on storage accounts.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Storage account public access should be disallowed",
+        "definitionId": "4fa4b6c0-31ca-4c0d-b10d-24b96f62a751",
+        "majorVersion": "3",
+        "verifiedVersion": "3.1.1",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/ASC_Storage_DisallowPublicBlobAccess_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Storage"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Overlaps with MCSB (REQ-BASE-01); do not duplicate as a separate custom definition."
+    },
+    {
+      "id": "REQ-DATA-03",
+      "domain": "data-protection",
+      "customerRequirement": "Restrict storage account network access to approved networks.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Storage accounts should restrict network access",
+        "definitionId": "34c877ad-507e-4c82-993e-3452a6e0ad3c",
+        "majorVersion": "1",
+        "verifiedVersion": "1.1.1",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/Storage_NetworkAcls_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Storage"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state."
+    },
+    {
+      "id": "REQ-DATA-04",
+      "domain": "data-protection",
+      "customerRequirement": "Require a minimum TLS version for storage accounts.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Storage accounts should have the specified minimum TLS version",
+        "definitionId": "fe83a0eb-a853-422d-aac2-1bffd182c5d0",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/StorageAccountMinimumTLSVersion_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Storage"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "minimumTlsVersion"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy assignment parameter value (recommended: TLS1_2)."
+    },
+    {
+      "id": "REQ-DATA-05",
+      "domain": "data-protection",
+      "customerRequirement": "Require Key Vault soft delete.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Key vaults should have soft delete enabled",
+        "definitionId": "1e66c121-a66a-4b1f-9b83-0fd99bf0fc2d",
+        "majorVersion": "3",
+        "verifiedVersion": "3.1.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/SoftDeleteMustBeEnabled_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Key Vault"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state."
+    },
+    {
+      "id": "REQ-DATA-06",
+      "domain": "data-protection",
+      "customerRequirement": "Require Key Vault purge protection in addition to soft delete (never disabled).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Key vaults should have deletion protection enabled",
+        "definitionId": "0b60c0b2-2dc2-4e1c-b5c9-abbed971de53",
+        "majorVersion": "2",
+        "verifiedVersion": "2.1.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/Recoverable_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Key Vault",
+        "notes": "Flags a Key Vault noncompliant if EITHER soft delete OR purge protection is missing; both are required together for compliance. This is a single control, not two."
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-DATA-05"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state."
+    },
+    {
+      "id": "REQ-DATA-07",
+      "domain": "data-protection",
+      "customerRequirement": "Require Key Vault to use Azure RBAC for data-plane authorization instead of access policies.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Azure Key Vault should use RBAC permission model",
+        "definitionId": "12d4fa5e-1f9f-4c21-97a9-b99b3c6611b5",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/Should_Use_RBAC.json",
+        "verificationMethod": "raw-json",
+        "category": "Key Vault"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state."
+    },
+    {
+      "id": "REQ-DATA-08",
+      "domain": "data-protection",
+      "customerRequirement": "Use customer-managed keys (CMK) for encryption at rest on eligible services, where the customer supplies a Key Vault and key.",
+      "scope": "landingzones",
+      "classification": "shared-service-architecture",
+      "mechanism": {
+        "kind": "service-specific-audit-policy",
+        "builtIn": true,
+        "displayName": "Service-specific CMK audit built-ins (for example, storage/SQL/Cosmos DB 'should use customer-managed key' policies)",
+        "definitionId": null,
+        "majorVersion": "n/a",
+        "verifiedVersion": "n/a",
+        "sourceUrl": null,
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "not-yet-selected"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "approvedKeyVaultResourceId",
+        "approvedKeyName"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-DATA-05",
+        "REQ-DATA-06"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Per-service CMK configuration status; key rotation, availability, and recovery are customer-owned dependencies documented alongside the specific built-in chosen in issue #14.",
+      "notes": "CMK is intentionally service-specific and audit-first, not a single universal built-in that covers every Azure service; the exact GUID(s) will be selected and verified per service in issue #14, not fabricated here."
+    },
+    {
+      "id": "REQ-BASE-01",
+      "domain": "security-baseline",
+      "customerRequirement": "Assign the current stable Microsoft Cloud Security Benchmark (MCSB) as the default security baseline.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policySetDefinition",
+        "builtIn": true,
+        "displayName": "Microsoft cloud security benchmark",
+        "definitionId": "1f3afdf9-d0c9-4c3d-847f-89da613e70a8",
+        "majorVersion": "57",
+        "verifiedVersion": "57.58.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/AzureSecurityCenter.json",
+        "verificationMethod": "raw-json",
+        "category": "Security Center",
+        "notes": "This initiative is updated in place very frequently (metadata.version increments often); re-fetch the raw JSON immediately before each assignment to confirm the current version. There is no separate 'MCSB v2' preview initiative GUID as of the verification date; effects vary per member policy."
+      },
+      "supportedEffects": [
+        "Audit",
+        "AuditIfNotExists",
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
+      "notes": "Default-enabled baseline for the customer-control profile (issue #15); never claims regulatory certification by itself."
+    },
+    {
+      "id": "REQ-BASE-02",
+      "domain": "security-baseline",
+      "customerRequirement": "Optionally assign the CIS Microsoft Azure Foundations Benchmark as an overlay.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policySetDefinition",
+        "builtIn": true,
+        "displayName": "CIS Microsoft Azure Foundations Benchmark v2.0.0",
+        "definitionId": "06f19060-9e68-4070-92ca-f15cc126059e",
+        "majorVersion": "1",
+        "verifiedVersion": "1.10.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Regulatory%20Compliance/CISv2_0_0.json",
+        "verificationMethod": "raw-json",
+        "category": "Regulatory Compliance",
+        "notes": "An older CIS v1.4.0 initiative also exists (GUID c3f5c4d9-9a1d-4a99-85c0-7f93e384d5c5, metadata.version 1.14.0); v2.0.0 is recommended as the current stable option."
+      },
+      "supportedEffects": [
+        "Audit",
+        "AuditIfNotExists",
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-BASE-01"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls."
+    },
+    {
+      "id": "REQ-BASE-03",
+      "domain": "security-baseline",
+      "customerRequirement": "Optionally assign the NIST SP 800-53 Rev. 5 initiative as an overlay.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policySetDefinition",
+        "builtIn": true,
+        "displayName": "NIST SP 800-53 Rev. 5",
+        "definitionId": "179d1daa-458f-4e47-8086-2a68d0d6c38f",
+        "majorVersion": "14",
+        "verifiedVersion": "14.20.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Regulatory%20Compliance/NIST_SP_800-53_R5.json",
+        "verificationMethod": "raw-json",
+        "category": "Regulatory Compliance"
+      },
+      "supportedEffects": [
+        "Audit",
+        "AuditIfNotExists",
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-BASE-01"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); relevant background reference for the NERC CIP overlay (issue #22) but does not itself establish NERC CIP compliance."
+    },
+    {
+      "id": "REQ-BASE-04",
+      "domain": "security-baseline",
+      "customerRequirement": "Apply Azure per-service security baseline guidance (for example, the Storage, Key Vault, and Compute security baselines) where relevant.",
+      "scope": "landingzones",
+      "classification": "manual-evidence",
+      "mechanism": {
+        "kind": "documentation-guidance",
+        "builtIn": false,
+        "displayName": "Azure security baselines (per-service Microsoft Learn guidance, not a single assignable initiative)",
+        "sourceUrl": "https://learn.microsoft.com/en-us/security/benchmark/azure/security-baselines-overview",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "documentation-pattern"
+      },
+      "supportedEffects": [
+        "n/a"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-DATA-01",
+        "REQ-DATA-02",
+        "REQ-DATA-03",
+        "REQ-DATA-04",
+        "REQ-DATA-05",
+        "REQ-DATA-06",
+        "REQ-DATA-07"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Cross-reference from each Azure service security baseline document to the specific policy controls implemented above.",
+      "notes": "Per issue #3/#15 acceptance criteria: Azure service security baselines are guidance mapped into individual service controls (see REQ-DATA-* and REQ-NET-* rows), not one universal assignable Azure Policy initiative."
+    },
+    {
+      "id": "REQ-DEF-01",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Provide a single explicit assignment point for configuring Microsoft Defender for Cloud plans.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policySetDefinition",
+        "builtIn": true,
+        "displayName": "Configure Microsoft Defender for Cloud plans",
+        "definitionId": "f08c57cd-dbd6-49a4-a85e-9ae77ac959b0",
+        "majorVersion": "1",
+        "verifiedVersion": "1.1.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
+        "verificationMethod": "raw-json",
+        "category": "Security Center"
+      },
+      "supportedEffects": [
+        "DeployIfNotExists"
+      ],
+      "requiredParameters": [
+        "individualPlanEnableParameters"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Compiled ARM template (all member plans parameterized off/disabled by default) + Defender for Cloud plan status.",
+      "notes": "Every paid plan requires an explicit independent parameter and cost warning per issue #20; no plan is enabled in the safe demo profile."
+    },
+    {
+      "id": "REQ-DEF-02",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Optionally enable Microsoft Defender CSPM (Cloud Security Posture Management).",
+      "scope": "demo-root",
+      "classification": "defender-cspm-ciem",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Configure Microsoft Defender CSPM plan",
+        "definitionId": "72f8cee7-2937-403d-84a1-a4e3e57f3c21",
+        "majorVersion": "n/a",
+        "verifiedVersion": "n/a",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
+        "verificationMethod": "initiative-json-member",
+        "category": "Security Center",
+        "notes": "Confirmed as a member of REQ-DEF-01's initiative JSON; the individual policy's own raw JSON file path was not resolved directly in this session."
+      },
+      "supportedEffects": [
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-DEF-01"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default."
+    },
+    {
+      "id": "REQ-DEF-03",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Optionally enable Microsoft Defender for Servers.",
+      "scope": "landingzones",
+      "classification": "defender-cspm-ciem",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Configure Microsoft Defender for Servers plan",
+        "definitionId": "5eb6d64a-4086-4d7a-92da-ec51aed0332d",
+        "majorVersion": "n/a",
+        "verifiedVersion": "n/a",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
+        "verificationMethod": "initiative-json-member",
+        "category": "Security Center"
+      },
+      "supportedEffects": [
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-DEF-01"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default.",
+      "notes": "Prefer current agentless scanning / Azure Monitor Agent auto-provisioning; do not add the deprecated Log Analytics (MMA) agent dependency (see REQ-DEF-05)."
+    },
+    {
+      "id": "REQ-DEF-04",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Optionally enable Microsoft Defender for Storage.",
+      "scope": "landingzones",
+      "classification": "defender-cspm-ciem",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Configure Microsoft Defender for Storage plan",
+        "definitionId": "cfdc5972-75b3-4418-8ae1-7f5c36839390",
+        "majorVersion": "n/a",
+        "verifiedVersion": "n/a",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Security%20Center/MDC_Defender_Full_Plans_DINE.json",
+        "verificationMethod": "initiative-json-member",
+        "category": "Security Center"
+      },
+      "supportedEffects": [
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-DEF-01"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default."
+    },
+    {
+      "id": "REQ-DEF-05",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Do not depend on the deprecated Log Analytics (MMA) monitoring agent for auto-provisioning.",
+      "scope": "demo-root",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "[Deprecated]: Auto provisioning of the Log Analytics agent should be enabled on your subscription",
+        "definitionId": "475aae12-b88a-4572-8b36-9b712b2b3a17",
+        "majorVersion": "1",
+        "verifiedVersion": "1.1.0-deprecated",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_Automatic_provisioning_log_analytics_monitoring_agent.json",
+        "verificationMethod": "raw-json",
+        "category": "Security Center",
+        "notes": "Deprecated: the Log Analytics (MMA/OMS) agent retired August 31, 2024. Default effect is Disabled. Do not assign in new deployments."
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Not assigned; retained in the catalog only to document the deprecated control and its replacement.",
+      "notes": "Current replacement: 'Enable Azure Monitor for VMs with Azure Monitoring Agent (AMA)' initiative, GUID 924bfe3a-762f-40e7-86dd-5c8b95eb09e6 (verified via public secondary source; re-confirm raw JSON before use), plus the resource-diagnostics initiative in REQ-LOG-02."
+    },
+    {
+      "id": "REQ-BKP-01",
+      "domain": "backup",
+      "customerRequirement": "Audit that virtual machines have Azure Backup coverage.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Azure Backup should be enabled for Virtual Machines",
+        "definitionId": "013e242c-8828-4970-87b3-ab247555486d",
+        "majorVersion": "3",
+        "verifiedVersion": "3.0.0",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/VirtualMachines_EnableAzureBackup_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state."
+    },
+    {
+      "id": "REQ-BKP-02",
+      "domain": "backup",
+      "customerRequirement": "Configure backup on tagged virtual machines to an approved, existing Recovery Services vault and backup policy.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Configure backup on virtual machines with a given tag to an existing recovery services vault in the same location",
+        "definitionId": "345fa903-145c-4fe1-8bcd-93ec2adccde8",
+        "majorVersion": "9",
+        "verifiedVersion": "9.6.1",
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/VirtualMachineWithTag_DINE.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "vaultLocation",
+        "inclusionTagName",
+        "inclusionTagValue",
+        "backupPolicyId"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-BKP-01"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Requires a customer-supplied, existing vault and backup policy resource ID; safe defaults create no vault and configure no backup (issue #19)."
+    },
+    {
+      "id": "REQ-CIP-01",
+      "domain": "nerc-cip",
+      "customerRequirement": "Compose an opt-in, stricter technical control overlay for subscriptions under the Critical Infrastructure management-group branch.",
+      "scope": "critical-infrastructure",
+      "classification": "shared-service-architecture",
+      "mechanism": {
+        "kind": "custom-policy-initiative",
+        "builtIn": false,
+        "displayName": "Demo - NERC CIP technical overlay (to be composed from existing verified controls)",
+        "definitionId": null,
+        "majorVersion": "n/a",
+        "verifiedVersion": "n/a",
+        "sourceUrl": null,
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "not-yet-created"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "dataClassificationRequiredValues",
+        "sspIdRequiredPattern"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-DEPLOY-01",
+        "REQ-DEPLOY-02",
+        "REQ-DEPLOY-04",
+        "REQ-TAG-05",
+        "REQ-TAG-06",
+        "REQ-NET-01",
+        "REQ-NET-02",
+        "REQ-NET-03",
+        "REQ-NET-06",
+        "REQ-DATA-01",
+        "REQ-DATA-02",
+        "REQ-DATA-03",
+        "REQ-DATA-04",
+        "REQ-DATA-05",
+        "REQ-DATA-06",
+        "REQ-LOG-01",
+        "REQ-LOG-02",
+        "REQ-DEF-01",
+        "REQ-BKP-01",
+        "REQ-BKP-02"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Custom initiative reusing existing domain definitions with stricter parameters (issue #22); does not itself create any policy resource until issue #22 is implemented.",
+      "notes": "Reuses existing verified domain controls above rather than duplicating policy rules; cannot be assigned outside the opt-in Critical Infrastructure branch; does not claim NERC CIP certification or full compliance."
+    },
+    {
+      "id": "REQ-CIP-02",
+      "domain": "nerc-cip",
+      "customerRequirement": "Document the responsibility and evidence matrix for NERC CIP technical requirements not fully covered by Azure Policy.",
+      "scope": "critical-infrastructure",
+      "classification": "manual-evidence",
+      "mechanism": {
+        "kind": "documentation",
+        "builtIn": false,
+        "displayName": "NERC CIP responsibility and evidence matrix (docs/NERC-CIP-MATRIX.md, to be authored)",
+        "sourceUrl": "https://learn.microsoft.com/en-us/compliance/regulatory/offering-nerc-cip",
+        "verifiedOn": "2026-08-31",
+        "verificationMethod": "documentation-pattern"
+      },
+      "supportedEffects": [
+        "n/a"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-CIP-01"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Customer-owned evidence collection (personnel, physical, incident-response, and change-management procedures) is outside Azure Policy and outside this repository's automated scope.",
+      "notes": "NERC CIP has no single turnkey built-in Azure Policy initiative and requires customer-owned evidence and a registered-entity compliance determination; this repository does not claim certification (issue #23)."
+    }
+  ],
+  "overlapNotes": [
+    {
+      "topic": "Storage and Key Vault data-protection controls",
+      "note": "REQ-DATA-01 through REQ-DATA-07 are already member policies of the Microsoft cloud security benchmark (REQ-BASE-01) and, where selected, the CIS (REQ-BASE-02) and NIST (REQ-BASE-03) overlays. Assign them once as the authoritative source of truth and do not create duplicate custom definitions for the same control intent."
+    },
+    {
+      "topic": "Management-port and NSG audits",
+      "note": "REQ-NET-01 and REQ-NET-03 rely on Microsoft Defender for Cloud security assessments, which are also surfaced through the MCSB initiative (REQ-BASE-01) and the Defender for Cloud plan configuration (REQ-DEF-01). Enabling Defender plans populates compliance data for these audits; it does not require a second, separate custom rule."
+    },
+    {
+      "topic": "Tag requirement vs. tag inheritance",
+      "note": "REQ-TAG-01..06 (require tag on resource group) and REQ-TAG-07..12 (inherit tag to child resources) are complementary, not duplicative: the first establishes the source of truth at the resource-group scope, and the second propagates it without overwriting existing values."
+    }
+  ]
+}
