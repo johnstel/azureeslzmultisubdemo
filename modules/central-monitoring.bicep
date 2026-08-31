@@ -104,10 +104,10 @@ output effectiveLogAnalyticsWorkspaceResourceId string = createNewWorkspace
   ? newWorkspace.outputs.workspaceResourceId
   : (useExistingWorkspace ? existingLogAnalyticsWorkspaceResourceId : '')
 
-@description('True when the configuration requested both a new workspace and an existing workspace at the same time. When true, the deployment fails explicitly via a configuration-error guard resource rather than silently deploying nothing.')
+@description('Always false when the deployment succeeds: true only describes the error state that the configuration-error guard resource used to fail the deployment before this output could ever be observed. Retained for documentation of the validation contract, not for runtime error handling by callers.')
 output conflictingMonitoringInputs bool = conflictingMonitoringInputs
 
-@description('True when Sentinel was requested without either a new or an existing effective workspace. When true, the deployment fails explicitly via a configuration-error guard resource rather than silently disabling Sentinel.')
+@description('Always false when the deployment succeeds: true only describes the error state that the configuration-error guard resource used to fail the deployment before this output could ever be observed. Retained for documentation of the validation contract, not for runtime error handling by callers.')
 output sentinelRequiresEffectiveWorkspace bool = sentinelRequiresEffectiveWorkspace
 
 @description('True when Microsoft Sentinel is enabled on the effective workspace.')

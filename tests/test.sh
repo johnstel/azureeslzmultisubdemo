@@ -109,7 +109,7 @@ rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/centra
 
 printf '13/14 Confirm teardown scripts only remove a demo-created monitoring resource group and never touch a supplied existing workspace...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
-rg -q 'central_log_analytics_enabled.*==.*.true.*then' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q 'centralLogAnalyticsEnabled' "${PROJECT_DIR}/scripts/teardown.ps1"
