@@ -84,6 +84,37 @@ param deployEvidenceResources bool = false
 ])
 param evidenceLocation string = 'eastus2'
 
+@description('Set true to create a new central Log Analytics workspace in the connectivity subscription. Leave false (default); supply an existing workspace via existingLogAnalyticsWorkspaceResourceId instead. Creating a workspace introduces ongoing data-ingestion and retention charges.')
+param deployCentralLogAnalytics bool = false
+
+@description('Set true to enable Microsoft Sentinel on the effective central monitoring workspace. Sentinel adds per-GB analysis charges on top of Log Analytics ingestion cost.')
+param deploySentinel bool = false
+
+@description('Resource ID of an existing customer-owned Log Analytics workspace to reuse as the effective monitoring workspace. This is the default integration path and must not be set at the same time as deployCentralLogAnalytics=true.')
+param existingLogAnalyticsWorkspaceResourceId string = ''
+
+@description('Region for a newly created central Log Analytics workspace, restricted to the same continental-US allowlist as evidenceLocation to stay within this demo policy and cost scope. Ignored when reusing an existing workspace.')
+@allowed([
+  'centralus'
+  'eastus'
+  'eastus2'
+  'northcentralus'
+  'southcentralus'
+  'westcentralus'
+  'westus'
+  'westus2'
+  'westus3'
+])
+param centralMonitoringLocation string = 'eastus2'
+
+@description('Data retention in days for a newly created central Log Analytics workspace. Longer retention increases storage cost.')
+@minValue(30)
+@maxValue(730)
+param centralLogAnalyticsRetentionInDays int = 30
+
+@description('Daily ingestion cap in GB for a newly created central Log Analytics workspace. -1 disables the cap (cost risk); set a small positive value to bound demo ingestion cost.')
+param centralLogAnalyticsDailyQuotaGb int = -1
+
 @description('Set true to create the opt-in Critical Infrastructure management group under Landing Zones.')
 param enableCriticalInfrastructure bool = false
 
@@ -267,6 +298,29 @@ module workloadEvidence 'modules/evidence-workload.bicep' = if (deployEvidenceRe
   ]
 }
 
+module centralMonitoring 'modules/central-monitoring.bicep' = {
+  name: 'central-monitoring'
+  scope: subscription(connectivitySubscriptionId)
+  params: {
+    namePrefix: namePrefix
+    location: centralMonitoringLocation
+    deployCentralLogAnalytics: deployCentralLogAnalytics
+    deploySentinel: deploySentinel
+    existingLogAnalyticsWorkspaceResourceId: existingLogAnalyticsWorkspaceResourceId
+    retentionInDays: centralLogAnalyticsRetentionInDays
+    dailyQuotaGb: centralLogAnalyticsDailyQuotaGb
+    tags: {
+      Owner: 'Platform Team'
+      CostCenter: 'Demo'
+      Environment: 'Sandbox'
+      Purpose: 'Central Monitoring'
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 output hierarchy object = {
   demoRoot: demoRootManagementGroupId
   platform: platformManagementGroupId
@@ -280,4 +334,7 @@ output roleAssignmentsEnabled bool = deployRoleAssignments
 output evidenceResourcesEnabled bool = deployEvidenceResources
 output criticalInfrastructureEnabled bool = enableCriticalInfrastructure
 output deploymentRegion string = deploymentLocation
+output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
+output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
+output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
 
