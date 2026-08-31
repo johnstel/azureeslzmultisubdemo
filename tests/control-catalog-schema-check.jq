@@ -41,16 +41,38 @@ def is_valid_calendar_date:
   end;
 
 # Real `format: uri` semantics for the absolute http(s) URIs used throughout
-# this catalog: requires a scheme, a non-empty host with no forbidden host
-# characters, and no whitespace anywhere in the value (URIs cannot legally
-# contain a literal space/tab/newline), matching against the *entire* string
-# (anchored start AND end) rather than only a prefix -- a prefix-only anchor
-# like "^https?://[^/:?#]+" would wrongly accept "https://example.com/a b"
-# because everything after the matched host prefix is never examined.
+# this catalog. A single monolithic regex that merely excludes certain
+# characters from the host (e.g. "^https?://[^\s/:?#]+") is not sufficient:
+# it would wrongly accept malformed authorities such as "https://%zz"
+# (invalid percent-escape -- RFC 3986 requires exactly two hex digits after
+# every "%") or "https://exa[mple.com" (an unmatched/illegal bracket outside
+# of an IPv6 literal), since "[" and "%" are not excluded by that character
+# class. jq has no built-in URI parser, so this conservative-but-complete
+# implementation decomposes the URI via capture groups and validates each
+# part: no whitespace or incomplete percent-escapes anywhere in the string;
+# an exact (case-sensitive) "http"/"https" scheme; a non-empty authority that
+# is either a bracketed IPv6 literal (only hex digits, colons and dots inside
+# the brackets) or a valid reg-name/IPv4 host built only from RFC 3986
+# unreserved/sub-delims/pct-encoded characters (which excludes "[" and "]"
+# for non-literal hosts, catching the unmatched-bracket case); an optional
+# numeric, non-empty, in-range (<=65535) port; and an optional userinfo
+# built from the same restricted character set.
 def is_valid_http_uri:
   type == "string" and
   (test("\\s") | not) and
-  test("^https?://[^\\s/:?#]+(:[0-9]+)?(/[^\\s]*)?$");
+  (test("%(?![0-9A-Fa-f]{2})") | not) and
+  (
+    (capture("^(?<scheme>[A-Za-z][A-Za-z0-9+.-]*)://(?<authority>[^/?#]*)(?<rest>[/?#].*)?$")? // null) as $m
+    | if $m == null then false
+      else
+        ($m.scheme == "http" or $m.scheme == "https") and
+        ($m.authority | test("^(?:[A-Za-z0-9\\-._~%!$&'()*+,;=]*@)?(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9\\-._~%!$&'()*+,;=]+)(?::[0-9]+)?$")) and
+        (
+          (($m.authority | capture("(?::(?<port>[0-9]+))?$")).port) as $port
+          | ($port == null or $port == "") or (($port | tonumber) <= 65535)
+        )
+      end
+  );
 
 # Emits `label` for every element of `arr` that is not a non-empty string.
 # No-op (and does not itself flag anything) if `arr` is not an array; the

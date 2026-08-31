@@ -116,6 +116,8 @@ import sys
 
 import jsonschema
 
+from urllib.parse import urlsplit
+
 catalog_path, schema_path = sys.argv[1:3]
 with open(catalog_path, encoding="utf-8") as f:
     catalog = json.load(f)
@@ -124,22 +126,52 @@ with open(schema_path, encoding="utf-8") as f:
 jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
 
 # jsonschema's built-in "uri" format checker accepts RFC 3986-valid URIs with
-# an empty authority (e.g. "http://" is syntactically a valid URI) and does
-# not reject embedded whitespace in the path/query/fragment (e.g.
-# "https://example.com/a b" is accepted by a naive prefix-only check). Enforce
-# the stricter "absolute http(s) URI, non-empty host, no whitespace anywhere"
-# rule this catalog actually needs, matched against the *entire* string
-# (fullmatch), consistent with the jq/PowerShell fallbacks.
-http_uri_re = re.compile(r"^https?://[^\s/:?#]+(:[0-9]+)?(/[^\s]*)?$")
+# an empty authority (e.g. "http://" is syntactically a valid URI) and, being
+# a generic RFC 3986 syntax check, does not restrict the scheme to http(s) or
+# validate that the authority is a genuinely resolvable host (it would accept
+# malformed authorities like "https://%zz" or "https://exa[mple.com" as long
+# as *some* URI-like grammar production matches). Enforce the stricter rule
+# this catalog actually needs -- absolute http(s) scheme, a non-empty,
+# well-formed host (valid percent-encoding, no illegal/unmatched bracket or
+# host characters), a validly-formed port when present, no whitespace
+# anywhere, and no malformed userinfo -- using Python's standards-compliant
+# urllib.parse.urlsplit (which itself raises ValueError on things like an
+# unmatched IPv6 bracket or a non-numeric port) plus explicit host-content
+# checks urlsplit does not perform on its own. Consistent with the jq/
+# PowerShell fallbacks.
+_pct_incomplete_re = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_host_reg_name_re = re.compile(r"^[A-Za-z0-9\-._~%!$&'()*+,;=]+$")
+_ipv4_re = re.compile(r"^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$")
+
 def is_valid_http_uri(value):
-    return isinstance(value, str) and http_uri_re.fullmatch(value) is not None
+    if not isinstance(value, str) or not value:
+        return False
+    if re.search(r"\s", value):
+        return False
+    try:
+        parts = urlsplit(value)
+        parts.port  # forces validation of a non-numeric/out-of-range port
+        host = parts.hostname
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    if not parts.netloc or not host:
+        return False
+    if "%" in host and _pct_incomplete_re.search(host):
+        return False
+    if ":" not in host and not (_ipv4_re.match(host) or _host_reg_name_re.match(host)):
+        return False
+    if parts.username is not None and re.search(r"\s", parts.username):
+        return False
+    return True
 
 if not is_valid_http_uri(catalog.get("sourceIssue")):
-    sys.exit(f"sourceIssue is not a well-formed absolute http(s) URI with a non-empty host: {catalog.get('sourceIssue')!r}")
+    sys.exit(f"sourceIssue is not a well-formed absolute http(s) URI with a valid non-empty host: {catalog.get('sourceIssue')!r}")
 for control in catalog.get("controls", []):
     source_url = (control.get("mechanism") or {}).get("sourceUrl")
     if source_url is not None and not is_valid_http_uri(source_url):
-        sys.exit(f"{control.get('id')}: mechanism.sourceUrl is not a well-formed absolute http(s) URI with a non-empty host: {source_url!r}")
+        sys.exit(f"{control.get('id')}: mechanism.sourceUrl is not a well-formed absolute http(s) URI with a valid non-empty host: {source_url!r}")
 PYEOF
 else
   printf '  (python3 + jsonschema not available; falling back to the full schema-equivalent jq re-implementation in tests/control-catalog-schema-check.jq.)\n'

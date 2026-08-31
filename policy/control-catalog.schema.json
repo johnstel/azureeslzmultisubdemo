@@ -21,7 +21,7 @@
     "catalogVersion": { "type": "string" },
     "generatedOn": { "type": "string", "format": "date" },
     "purpose": { "type": "string", "minLength": 1 },
-    "sourceIssue": { "type": "string", "format": "uri" },
+    "sourceIssue": { "type": "string", "format": "uri", "pattern": "^https?://[^\\s]+$" },
     "classificationValues": {
       "type": "array",
       "items": { "type": "string" },
@@ -76,7 +76,7 @@
         },
         "majorVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
         "verifiedVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
-        "sourceUrl": { "type": ["string", "null"], "format": "uri" },
+        "sourceUrl": { "type": ["string", "null"], "format": "uri", "pattern": "^https?://[^\\s]+$" },
         "verifiedOn": { "type": "string", "format": "date" },
         "verificationMethod": {
           "type": "string",
