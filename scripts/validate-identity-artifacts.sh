@@ -105,6 +105,33 @@ is_known_role_id() {
   return 1
 }
 
+# Compares a JSON array at ${jq_path} in ${template} (sorted) against the
+# sorted set of expected string values passed as remaining args. Used to
+# enforce exact (not merely containment) subject/application/client-type/
+# grant-control semantics for each named policy, so a template cannot be
+# silently broadened (e.g. an extra application, an added client type, or an
+# additional grant control loosening an OR-combined requirement).
+assert_exact_string_array() {
+  local template="$1" name="$2" jq_path="$3" description="$4"
+  shift 4
+  local actual expected
+  actual="$(jq -c "(${jq_path} // []) | sort" "${template}")"
+  expected="$(printf '%s\n' "$@" | jq -R . | jq -cs 'sort')"
+  [[ "${actual}" == "${expected}" ]] || \
+    fail "${name} ${description} must equal exactly [$(printf '"%s", ' "$@" | sed 's/, $//')] (found ${actual})."
+}
+
+# Confirms the given object property is absent (or, for arrays, absent/empty)
+# at ${jq_path} in ${template}. Used to reject broadened grant controls or a
+# principal scope mixing includeUsers and includeRoles on a policy that must
+# only use one of them.
+assert_absent_or_empty() {
+  local template="$1" name="$2" jq_path="$3" description="$4"
+  local count
+  count="$(jq "(${jq_path} // []) | length" "${template}")"
+  [[ "${count}" -eq 0 ]] || fail "${name} ${description} must be absent or empty."
+}
+
 ca_dir="${identity_dir}/conditional-access"
 pim_dir="${identity_dir}/pim"
 
@@ -237,40 +264,57 @@ for template in "${ca_dir}"/*.template.json; do
   fi
 
   # Policy-specific semantic checks, keyed by the known template filenames.
+  # Each check is an exact match, not a containment check: extra/broadened
+  # principals, applications, client types, or grant controls must fail, not
+  # just missing ones, so a template cannot silently widen its blast radius.
   case "${name}" in
     ca-privileged-role-mfa.template.json)
       [[ "${include_roles_present}" == "true" ]] || \
         fail "${name} must scope the subject with conditions.users.includeRoles (privileged directory roles)."
-      apps_all="$(jq '[.conditions.applications.includeApplications[] | select(. == "All")] | length' "${template}")"
-      [[ "${apps_all}" -ge 1 ]] || fail "${name} conditions.applications.includeApplications must include 'All'."
-      client_all="$(jq '[.conditions.clientAppTypes[] | select(. == "all")] | length' "${template}")"
-      [[ "${client_all}" -ge 1 ]] || fail "${name} conditions.clientAppTypes must include 'all'."
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers"
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications" "All"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "all"
       [[ "${authentication_strength_present}" == "true" ]] || \
         fail "${name} grantControls.authenticationStrength must be set."
       [[ "${auth_strength_id}" == "${phishing_resistant_id}" ]] || \
         fail "${name} grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy (${phishing_resistant_id})."
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)"
       ;;
     ca-azure-mgmt-mfa.template.json)
       [[ "${include_users_present}" == "true" ]] || \
         fail "${name} must scope the subject to all users with conditions.users.includeUsers."
-      users_all="$(jq '.conditions.users.includeUsers == ["All"]' "${template}")"
-      [[ "${users_all}" == "true" ]] || fail "${name} conditions.users.includeUsers must equal [\"All\"]."
-      app_scoped="$(jq --arg id "${azure_mgmt_app_id}" '[.conditions.applications.includeApplications[] | select(. == $id)] | length' "${template}")"
-      [[ "${app_scoped}" -ge 1 ]] || \
-        fail "${name} conditions.applications.includeApplications must include the Microsoft Azure Management application id (${azure_mgmt_app_id})."
-      mfa_control="$(jq '[.grantControls.builtInControls[]? | select(. == "mfa")] | length' "${template}")"
-      [[ "${mfa_control}" -ge 1 ]] || fail "${name} grantControls.builtInControls must include 'mfa'."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles"
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications" "${azure_mgmt_app_id}"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "all"
+      assert_exact_string_array "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls" "mfa"
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.authenticationStrength' \
+        "grantControls.authenticationStrength"
       ;;
     ca-block-legacy-auth.template.json)
       [[ "${include_users_present}" == "true" ]] || \
         fail "${name} must scope the subject to all users with conditions.users.includeUsers."
-      users_all="$(jq '.conditions.users.includeUsers == ["All"]' "${template}")"
-      [[ "${users_all}" == "true" ]] || fail "${name} conditions.users.includeUsers must equal [\"All\"]."
-      non_legacy_client_types="$(jq '[.conditions.clientAppTypes[] | select(. != "exchangeActiveSync" and . != "other")] | length' "${template}")"
-      [[ "${non_legacy_client_types}" -eq 0 ]] || \
-        fail "${name} conditions.clientAppTypes must only contain legacy client types (exchangeActiveSync, other)."
-      block_control="$(jq '[.grantControls.builtInControls[]? | select(. == "block")] | length' "${template}")"
-      [[ "${block_control}" -ge 1 ]] || fail "${name} grantControls.builtInControls must include 'block'."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles"
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications" "All"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "exchangeActiveSync" "other"
+      assert_exact_string_array "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls" "block"
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.authenticationStrength' \
+        "grantControls.authenticationStrength"
       ;;
   esac
 
@@ -300,6 +344,22 @@ for template in "${pim_dir}"/*.template.json; do
 
   approver_count="$(jq '.activation.approvers | length' "${template}")"
   [[ "${approver_count}" -ge 1 ]] || fail "${name} activation.approvers must not be empty."
+
+  # Each approver identifier follows the same mode-aware placeholder rules as
+  # emergencyAccessExclusion.placeholder: an unpopulated REPLACE_WITH_* input
+  # in template mode, a real object ID (GUID) in populated mode.
+  read_lines_into approvers < <(jq -r '.activation.approvers[]' "${template}")
+  for approver in "${approvers[@]}"; do
+    if [[ "${mode}" == "template" ]]; then
+      [[ "${approver}" =~ ^REPLACE_WITH_.+$ ]] || \
+        fail "${name} activation.approvers entry '${approver}' must be an unpopulated REPLACE_WITH_* input in template mode."
+    else
+      [[ "${approver}" =~ ^REPLACE_WITH_.+$ ]] && \
+        fail "${name} activation.approvers entry '${approver}' still contains an unpopulated REPLACE_WITH_* value; replace it with a real object ID before populated-mode validation."
+      is_guid "${approver}" || \
+        fail "${name} activation.approvers entry '${approver}' must be a valid object ID (GUID) in populated mode, found '${approver}'."
+    fi
+  done
 
   duration="$(jq -r '.activation.maximumActivationDurationHours' "${template}")"
   [[ "${duration}" =~ ^[0-9]+$ ]] && [[ "${duration}" -ge 1 ]] && [[ "${duration}" -le 8 ]] || \

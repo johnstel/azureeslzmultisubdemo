@@ -41,7 +41,11 @@
         "approvers": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string",
+            "pattern": "^(REPLACE_WITH_.+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+          },
+          "description": "Object ID(s) of the PIM approver group/user. In the committed template this must remain a REPLACE_WITH_* placeholder; a locally populated (never committed) copy replaces it with a real group/user object ID before any apply workflow runs. See scripts/validate-identity-artifacts.sh --mode."
         },
         "requireMultiFactorAuthentication": {
           "type": "boolean",

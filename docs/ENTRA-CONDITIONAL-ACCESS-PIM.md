@@ -203,9 +203,11 @@ purely by reading JSON files on local disk:
 - every PIM template stays eligible (never permanent) with approval, MFA,
   justification, and notifications required, and a 1–8 hour activation
   window;
-- the emergency-access placeholder is present and, depending on mode, either
-  an unpopulated `REPLACE_WITH_*` value or a syntactically valid object ID —
-  and (for Conditional Access) is actually excluded;
+- the emergency-access placeholder (Conditional Access) and every PIM
+  `activation.approvers` entry are present and, depending on mode, either an
+  unpopulated `REPLACE_WITH_*` value or a syntactically valid object ID —
+  and (for Conditional Access) the emergency-access placeholder is actually
+  excluded;
 - `conditions.users` uses Graph-compatible subject values: `includeUsers`
   only contains `All`, `None`, `GuestsOrExternalUsers`, or object IDs, and
   `includeRoles` only contains known directory role template IDs (GUIDs),
@@ -213,9 +215,12 @@ purely by reading JSON files on local disk:
 - `conditions.applications.includeApplications` and
   `conditions.clientAppTypes` are non-empty, and each of the three named
   Conditional Access templates matches its intended subject, application,
-  client-type, and grant-control combination (for example,
-  `ca-block-legacy-auth` must scope `clientAppTypes` to legacy protocols only
-  and grant `block`);
+  client-type, and grant-control combination **exactly** — not just a
+  superset — so a template cannot be silently broadened (for example,
+  `ca-block-legacy-auth` must scope `clientAppTypes` to exactly the legacy
+  protocol set and grant exactly `block`; `ca-privileged-role-mfa` must not
+  also declare `includeUsers` or an additional `builtInControls` entry
+  alongside its `authenticationStrength` relationship);
 - `grantControls.authenticationStrength`, when present, references a known
   built-in `authenticationStrengthPolicy` id and is never duplicated as a
   `grantControls.builtInControls` string;

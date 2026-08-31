@@ -98,6 +98,36 @@ function Test-PlaceholderExcludedFrom {
     }
 }
 
+# Compares the given array (sorted) against the sorted set of expected
+# string values. Used to enforce exact (not merely containment) subject/
+# application/client-type/grant-control semantics for each named policy, so
+# a template cannot be silently broadened (e.g. an extra application, an
+# added client type, or an additional grant control loosening an
+# OR-combined requirement).
+function Assert-ExactStringArray {
+    param([string[]]$ActualValues, [string[]]$ExpectedValues, [string]$Name, [string]$Description)
+
+    $actualSorted = @($ActualValues | Sort-Object)
+    $expectedSorted = @($ExpectedValues | Sort-Object)
+    $actualJson = ($actualSorted | ConvertTo-Json -Compress -AsArray)
+    $expectedJson = ($expectedSorted | ConvertTo-Json -Compress -AsArray)
+    if ($actualJson -ne $expectedJson) {
+        Stop-Validation "$Name $Description must equal exactly $expectedJson (found $actualJson)."
+    }
+}
+
+# Confirms the given array is absent/empty. Used to reject broadened grant
+# controls or a principal scope mixing includeUsers and includeRoles on a
+# policy that must only use one of them.
+function Assert-AbsentOrEmpty {
+    param([string[]]$ActualValues, [string]$Name, [string]$Description)
+
+    if (@($ActualValues).Count -ne 0) {
+        Stop-Validation "$Name $Description must be absent or empty."
+    }
+}
+
+
 $caDir = Join-Path $IdentityDir 'conditional-access'
 $pimDir = Join-Path $IdentityDir 'pim'
 
@@ -131,6 +161,7 @@ foreach ($templateFile in $caTemplates) {
         Stop-Validation "$name conditions.users must declare includeUsers or includeRoles."
     }
 
+    $includeUsers = @()
     if ($includeUsersPresent) {
         $includeUsers = @($policy.conditions.users.includeUsers)
         if ($includeUsers.Count -eq 0) { Stop-Validation "$name conditions.users.includeUsers must not be empty." }
@@ -141,6 +172,7 @@ foreach ($templateFile in $caTemplates) {
         }
     }
 
+    $includeRoles = @()
     if ($includeRolesPresent) {
         $includeRoles = @($policy.conditions.users.includeRoles)
         if ($includeRoles.Count -eq 0) { Stop-Validation "$name conditions.users.includeRoles must not be empty." }
@@ -182,32 +214,39 @@ foreach ($templateFile in $caTemplates) {
     }
 
     # Policy-specific semantic checks, keyed by the known template filenames.
+    # Each check is an exact match, not a containment check: extra/broadened
+    # principals, applications, client types, or grant controls must fail,
+    # not just missing ones, so a template cannot silently widen its blast
+    # radius.
     switch ($name) {
         'ca-privileged-role-mfa.template.json' {
             if (-not $includeRolesPresent) { Stop-Validation "$name must scope the subject with conditions.users.includeRoles (privileged directory roles)." }
-            if ($applications -notcontains 'All') { Stop-Validation "$name conditions.applications.includeApplications must include 'All'." }
-            if ($clientAppTypes -notcontains 'all') { Stop-Validation "$name conditions.clientAppTypes must include 'all'." }
+            Assert-AbsentOrEmpty -ActualValues $includeUsers -Name $name -Description 'conditions.users.includeUsers'
+            Assert-ExactStringArray -ActualValues $applications -ExpectedValues @('All') -Name $name -Description 'conditions.applications.includeApplications'
+            Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('all') -Name $name -Description 'conditions.clientAppTypes'
             if (-not $authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be set." }
             if ($authStrengthId -ne $phishingResistantId) {
                 Stop-Validation "$name grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy ($phishingResistantId)."
             }
+            Assert-AbsentOrEmpty -ActualValues $builtInControls -Name $name -Description 'grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)'
         }
         'ca-azure-mgmt-mfa.template.json' {
             if (-not $includeUsersPresent) { Stop-Validation "$name must scope the subject to all users with conditions.users.includeUsers." }
-            $usersAll = (@($policy.conditions.users.includeUsers).Count -eq 1) -and (@($policy.conditions.users.includeUsers)[0] -eq 'All')
-            if (-not $usersAll) { Stop-Validation "$name conditions.users.includeUsers must equal ['All']." }
-            if ($applications -notcontains $azureMgmtAppId) {
-                Stop-Validation "$name conditions.applications.includeApplications must include the Microsoft Azure Management application id ($azureMgmtAppId)."
-            }
-            if ($builtInControls -notcontains 'mfa') { Stop-Validation "$name grantControls.builtInControls must include 'mfa'." }
+            Assert-ExactStringArray -ActualValues $includeUsers -ExpectedValues @('All') -Name $name -Description 'conditions.users.includeUsers'
+            Assert-AbsentOrEmpty -ActualValues $includeRoles -Name $name -Description 'conditions.users.includeRoles'
+            Assert-ExactStringArray -ActualValues $applications -ExpectedValues @($azureMgmtAppId) -Name $name -Description 'conditions.applications.includeApplications'
+            Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('all') -Name $name -Description 'conditions.clientAppTypes'
+            Assert-ExactStringArray -ActualValues $builtInControls -ExpectedValues @('mfa') -Name $name -Description 'grantControls.builtInControls'
+            if ($authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be absent." }
         }
         'ca-block-legacy-auth.template.json' {
             if (-not $includeUsersPresent) { Stop-Validation "$name must scope the subject to all users with conditions.users.includeUsers." }
-            $usersAll = (@($policy.conditions.users.includeUsers).Count -eq 1) -and (@($policy.conditions.users.includeUsers)[0] -eq 'All')
-            if (-not $usersAll) { Stop-Validation "$name conditions.users.includeUsers must equal ['All']." }
-            $nonLegacy = @($clientAppTypes | Where-Object { $_ -ne 'exchangeActiveSync' -and $_ -ne 'other' })
-            if ($nonLegacy.Count -gt 0) { Stop-Validation "$name conditions.clientAppTypes must only contain legacy client types (exchangeActiveSync, other)." }
-            if ($builtInControls -notcontains 'block') { Stop-Validation "$name grantControls.builtInControls must include 'block'." }
+            Assert-ExactStringArray -ActualValues $includeUsers -ExpectedValues @('All') -Name $name -Description 'conditions.users.includeUsers'
+            Assert-AbsentOrEmpty -ActualValues $includeRoles -Name $name -Description 'conditions.users.includeRoles'
+            Assert-ExactStringArray -ActualValues $applications -ExpectedValues @('All') -Name $name -Description 'conditions.applications.includeApplications'
+            Assert-ExactStringArray -ActualValues $clientAppTypes -ExpectedValues @('exchangeActiveSync', 'other') -Name $name -Description 'conditions.clientAppTypes'
+            Assert-ExactStringArray -ActualValues $builtInControls -ExpectedValues @('block') -Name $name -Description 'grantControls.builtInControls'
+            if ($authStrengthPresent) { Stop-Validation "$name grantControls.authenticationStrength must be absent." }
         }
     }
 
@@ -237,6 +276,24 @@ foreach ($templateFile in $pimTemplates) {
 
     $approvers = @($policy.activation.approvers)
     if ($approvers.Count -eq 0) { Stop-Validation "$name activation.approvers must not be empty." }
+
+    # Each approver identifier follows the same mode-aware placeholder rules
+    # as emergencyAccessExclusion.placeholder: an unpopulated REPLACE_WITH_*
+    # input in template mode, a real object ID (GUID) in populated mode.
+    foreach ($approver in $approvers) {
+        if ($Mode -eq 'template') {
+            if ($approver -notmatch '^REPLACE_WITH_.+$') {
+                Stop-Validation "$name activation.approvers entry '$approver' must be an unpopulated REPLACE_WITH_* input in template mode."
+            }
+        } else {
+            if ($approver -match '^REPLACE_WITH_.+$') {
+                Stop-Validation "$name activation.approvers entry '$approver' still contains an unpopulated REPLACE_WITH_* value; replace it with a real object ID before populated-mode validation."
+            }
+            if (-not (Test-Guid $approver)) {
+                Stop-Validation "$name activation.approvers entry '$approver' must be a valid object ID (GUID) in populated mode, found '$approver'."
+            }
+        }
+    }
 
     $duration = $policy.activation.maximumActivationDurationHours
     if ($duration -lt 1 -or $duration -gt 8) {
