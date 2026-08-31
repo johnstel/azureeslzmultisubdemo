@@ -536,6 +536,47 @@ rm -rf "${IDENTITY_SYMLINK_DIR}" && ln -s "${PROJECT_DIR}/identity" "${IDENTITY_
 expect_identity_validation_failure "populated mode bypass via a symbolic link aliasing the tracked identity/ folder" --mode populated --path "${IDENTITY_SYMLINK_DIR}"
 rm -f "${IDENTITY_SYMLINK_DIR}"
 
+# Case: on a genuinely case-insensitive filesystem (default macOS APFS,
+# exFAT/vfat, some NTFS/SMB mounts), a casing variant of the tracked
+# identity/ folder (e.g. IDENTITY) transparently resolves to the exact same
+# directory with no symlink involved at all. `filesystem_is_case_insensitive`
+# must detect this by probing the real filesystem rather than assuming
+# case-(in)sensitivity from uname/OS, and the containment check must fold
+# case before comparing when it does. Tested here against a loopback-mounted
+# vfat (genuinely case-insensitive) filesystem containing its own copy of the
+# script and identity/ folder, so PROJECT_DIR itself resolves inside the
+# case-insensitive filesystem (mirroring a case-insensitive-volume checkout).
+# Skipped (not failed) if a case-insensitive filesystem cannot be created
+# in this environment (no mkfs.vfat, no root/passwordless sudo, no loop
+# device support), since this exercises real filesystem behavior rather
+# than mocked assumptions.
+CASE_INSENSITIVE_IMG="${TEMP_DIR}/case-insensitive-fs.img"
+CASE_INSENSITIVE_MNT="${TEMP_DIR}/case-insensitive-mnt"
+if command -v mkfs.vfat >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+  mkdir -p "${CASE_INSENSITIVE_MNT}"
+  dd if=/dev/zero of="${CASE_INSENSITIVE_IMG}" bs=1M count=16 >/dev/null 2>&1
+  mkfs.vfat "${CASE_INSENSITIVE_IMG}" >/dev/null 2>&1
+  if sudo -n mount -o loop,uid="$(id -u)",gid="$(id -g)" "${CASE_INSENSITIVE_IMG}" "${CASE_INSENSITIVE_MNT}" 2>/dev/null; then
+    CASE_INSENSITIVE_REPO="${CASE_INSENSITIVE_MNT}/repo"
+    mkdir -p "${CASE_INSENSITIVE_REPO}/scripts"
+    cp "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh" "${CASE_INSENSITIVE_REPO}/scripts/"
+    cp -r "${IDENTITY_SRC_DIR}" "${CASE_INSENSITIVE_REPO}/identity"
+    if bash "${CASE_INSENSITIVE_REPO}/scripts/validate-identity-artifacts.sh" \
+      --mode populated --path "${CASE_INSENSITIVE_REPO}/IDENTITY" >/dev/null 2>&1; then
+      printf 'ERROR: validate-identity-artifacts.sh unexpectedly succeeded for case: %s\n' \
+        "populated mode bypass via a casing variant of the tracked identity/ folder on a genuinely case-insensitive filesystem" >&2
+      sudo -n umount "${CASE_INSENSITIVE_MNT}" 2>/dev/null || true
+      exit 1
+    fi
+    sudo -n umount "${CASE_INSENSITIVE_MNT}" 2>/dev/null || true
+  else
+    printf '  (skipping case-insensitive filesystem test: unable to mount a loopback vfat filesystem in this environment)\n'
+  fi
+else
+  printf '  (skipping case-insensitive filesystem test: mkfs.vfat or passwordless sudo not available in this environment)\n'
+fi
+rm -f "${CASE_INSENSITIVE_IMG}"
+
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
 printf '\nAll local validation and safety tests passed.\n'

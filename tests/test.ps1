@@ -450,17 +450,33 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     }
 
     function Expect-IdentityValidationFailure {
-        param([string]$Description, [string[]]$Arguments)
+        param([string]$Description, [string[]]$Arguments, [string]$ScriptPath = $validatorPath, [string]$ExpectedMessage)
+        # Invoked as a separate pwsh process (rather than "& $ScriptPath
+        # @Arguments") so that -Mode/-Path flags stored in $Arguments are
+        # parsed as real command-line arguments. PowerShell's array
+        # splatting only binds elements positionally when calling a script
+        # or function directly - it does not re-parse "-Name" strings held
+        # in an array as named parameters, so "-Mode", "populated" would
+        # otherwise bind literally to the first positional parameter and
+        # fail ValidateSet before any real validation logic ever runs.
         $failed = $false
+        $errorText = ''
         $global:LASTEXITCODE = 0
         try {
-            & $validatorPath @Arguments | Out-Null
+            $errorText = (& pwsh -NoLogo -NoProfile -File $ScriptPath @Arguments 2>&1 | Out-String)
             if ($LASTEXITCODE -ne 0) { $failed = $true }
         } catch {
             $failed = $true
+            $errorText = $_ | Out-String
         }
         if (-not $failed) {
             Stop-Test "validate-identity-artifacts.ps1 unexpectedly succeeded for case: $Description"
+        }
+        if ($ExpectedMessage) {
+            $normalizedErrorText = (($errorText -replace '(?m)^\s*\|\s?', ' ') -replace '\s+', ' ').Trim()
+            if ($normalizedErrorText -notlike "*$ExpectedMessage*") {
+                Stop-Test "validate-identity-artifacts.ps1 failed for the wrong reason for case: $Description (expected message containing '$ExpectedMessage', got: $errorText)"
+            }
         }
     }
 
@@ -767,6 +783,77 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Expect-IdentityValidationFailure -Description 'populated mode bypass via a chained symbolic link whose target path itself contains a further symlinked component' -Arguments @('-Mode', 'populated', '-Path', $identityChainAliasDir)
         Remove-Item -LiteralPath $identityChainAliasDir -Force
         Remove-Item -LiteralPath $repoAliasDir -Force
+
+        # Case: on a genuinely case-insensitive filesystem (default macOS
+        # APFS, exFAT/vfat, some NTFS/SMB mounts), a casing variant of the
+        # tracked identity/ folder (e.g. IDENTITY) transparently resolves to
+        # the exact same directory with no symlink involved at all.
+        # Test-FilesystemCaseInsensitive must detect this by probing the
+        # real filesystem rather than assuming case-(in)sensitivity from
+        # $IsWindows/$IsMacOS/$IsLinux. Tested here against a loopback-
+        # mounted vfat (genuinely case-insensitive) filesystem containing
+        # its own copy of the script and identity/ folder, so the resolved
+        # project directory itself lives inside the case-insensitive
+        # filesystem (mirroring a case-insensitive-volume checkout).
+        # Skipped (not failed) if a case-insensitive filesystem cannot be
+        # created in this environment (no mkfs.vfat, no root/passwordless
+        # sudo, no loop device support), since this exercises real
+        # filesystem behavior rather than a mocked assumption.
+        $caseInsensitiveImg = Join-Path $TempDir 'case-insensitive-fs.img'
+        $caseInsensitiveMnt = Join-Path $TempDir 'case-insensitive-mnt'
+        $canMount = $false
+        if ((Get-Command mkfs.vfat -ErrorAction SilentlyContinue) -and (Get-Command sudo -ErrorAction SilentlyContinue)) {
+            & sudo -n true 2>$null
+            $canMount = ($LASTEXITCODE -eq 0)
+        }
+        if ($canMount) {
+            New-Item -ItemType Directory -Path $caseInsensitiveMnt -Force | Out-Null
+            & dd if=/dev/zero of=$caseInsensitiveImg bs=1M count=16 2>$null 1>$null
+            & mkfs.vfat $caseInsensitiveImg 2>$null 1>$null
+            $uid = (& id -u).Trim()
+            $gid = (& id -g).Trim()
+            & sudo -n mount -o "loop,uid=$uid,gid=$gid" $caseInsensitiveImg $caseInsensitiveMnt 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $caseInsensitiveRepo = Join-Path $caseInsensitiveMnt 'repo'
+                New-Item -ItemType Directory -Path (Join-Path $caseInsensitiveRepo 'scripts') -Force | Out-Null
+                Copy-Item -LiteralPath $validatorPath -Destination (Join-Path $caseInsensitiveRepo 'scripts/validate-identity-artifacts.ps1')
+                Copy-Item -LiteralPath $identitySrcDir -Destination (Join-Path $caseInsensitiveRepo 'identity') -Recurse
+                $caseVariantMountPath = Join-Path $caseInsensitiveRepo 'IDENTITY'
+                Expect-IdentityValidationFailure -Description 'populated mode bypass via a casing variant of the tracked identity/ folder on a genuinely case-insensitive filesystem' -ScriptPath (Join-Path $caseInsensitiveRepo 'scripts/validate-identity-artifacts.ps1') -Arguments @('-Mode', 'populated', '-Path', $caseVariantMountPath) -ExpectedMessage 'must validate a path outside the tracked identity/ folder'
+                # Give the PowerShell child process's file handles on the
+                # mount time to close before unmounting, retrying with a
+                # lazy unmount as a fallback if the mount is still briefly
+                # reported busy.
+                [System.GC]::Collect()
+                & sudo -n umount $caseInsensitiveMnt 2>$null 1>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Start-Sleep -Seconds 1
+                    & sudo -n umount $caseInsensitiveMnt 2>$null 1>$null
+                }
+                if ($LASTEXITCODE -ne 0) {
+                    & sudo -n umount -l $caseInsensitiveMnt 2>$null 1>$null
+                }
+            } else {
+                Write-Host '  (skipping case-insensitive filesystem test: unable to mount a loopback vfat filesystem in this environment)'
+            }
+        } else {
+            Write-Host '  (skipping case-insensitive filesystem test: mkfs.vfat or passwordless sudo not available in this environment)'
+        }
+        if (Test-Path -LiteralPath $caseInsensitiveImg) { Remove-Item -LiteralPath $caseInsensitiveImg -Force }
+
+        # Case: -Mode populated with no -Path supplied must still reject the
+        # default (tracked identity/) target even when this script itself is
+        # invoked through a symlinked repository checkout. The default path
+        # must be resolved through Resolve-FinalTarget just like an explicit
+        # -Path, or it would retain the unresolved alias while
+        # $trackedIdentityDir is fully resolved, letting the two differ and
+        # bypass the guard.
+        $repoSymlinkDir = Join-Path $TempDir 'repo-symlink-checkout'
+        if (Test-Path -LiteralPath $repoSymlinkDir) { Remove-Item -LiteralPath $repoSymlinkDir -Force }
+        New-Item -ItemType SymbolicLink -Path $repoSymlinkDir -Target $ProjectDir | Out-Null
+        $aliasedValidatorPath = Join-Path $repoSymlinkDir 'scripts/validate-identity-artifacts.ps1'
+        Expect-IdentityValidationFailure -Description 'populated mode bypass via omitted -Path when the script is invoked through a symlinked repository checkout' -ScriptPath $aliasedValidatorPath -Arguments @('-Mode', 'populated') -ExpectedMessage 'must validate a path outside the tracked identity/ folder'
+        Remove-Item -LiteralPath $repoSymlinkDir -Force
     } else {
         # Case: a Windows reparse-point junction that targets the tracked
         # identity/ folder must also be rejected. Junctions do not require
@@ -792,7 +879,19 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     Write-Host 'All Windows PowerShell validation and safety tests passed.'
 }
 finally {
+    # Safety net: if the loopback case-insensitive filesystem mount used by
+    # the case-insensitivity regression test above is still mounted for any
+    # reason (e.g. a lingering file handle delayed the earlier unmount),
+    # force it loose here so cleanup of $TempDir does not fail with "Device
+    # or resource busy".
+    $leftoverMount = Join-Path $TempDir 'case-insensitive-mnt'
+    if ((Get-Command mountpoint -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $leftoverMount)) {
+        & mountpoint -q $leftoverMount 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            & sudo -n umount -l $leftoverMount 2>$null 1>$null
+        }
+    }
     if (Test-Path -LiteralPath $TempDir) {
-        Remove-Item -LiteralPath $TempDir -Recurse -Force
+        Remove-Item -LiteralPath $TempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

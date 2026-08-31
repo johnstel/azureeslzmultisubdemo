@@ -85,16 +85,61 @@ esac
 # string comparison against the raw --path argument can be bypassed with
 # unnormalized forms such as './identity', '/repo/./identity', or
 # 'scripts/../identity' that still resolve to the tracked identity/ folder.
+#
+# NOTE: `pwd -P` resolves symlinks but does NOT correct the casing of a
+# path component to whatever case the filesystem actually stored it as; on
+# a case-insensitive filesystem (default macOS APFS, exFAT/NTFS mounts,
+# etc.) it simply echoes back the casing the caller supplied. So a
+# case-differing alias like '.../IDENTITY' canonicalizes to a *different*
+# string than '.../identity' even though both name the exact same directory
+# there. This is handled separately below via a case-sensitivity probe.
 canonicalize_dir() {
   local __dir="$1"
   ( cd "${__dir}" 2>/dev/null && pwd -P ) || fail "Directory not found: ${__dir}"
 }
 
+# Detects whether the filesystem location containing ${canonical_path} is
+# case-insensitive, by checking whether a case-swapped variant of its final
+# path component also exists there. This probes the actual filesystem
+# rather than assuming case (in)sensitivity from the OS/uname, since e.g.
+# Linux can mount case-insensitive volumes (exFAT, some NTFS/SMB mounts) and
+# macOS can be configured with a case-sensitive APFS volume.
+filesystem_is_case_insensitive() {
+  local __canonical_path="$1"
+  local __parent __leaf __flipped
+  __parent="$(dirname "${__canonical_path}")"
+  __leaf="$(basename "${__canonical_path}")"
+  # Swap case of every letter: a-z<->A-Z. If the leaf has no letters to
+  # swap (flipped == original), there is nothing usable to probe with;
+  # conservatively report case-insensitive so the stricter (fold-case)
+  # comparison is used rather than silently skipping the check.
+  __flipped="$(printf '%s' "${__leaf}" | tr 'a-zA-Z' 'A-Za-z')"
+  if [[ "${__flipped}" == "${__leaf}" ]]; then
+    echo "true"
+    return
+  fi
+  if [[ -e "${__parent}/${__flipped}" ]]; then
+    echo "true"
+  else
+    echo "false"
+  fi
+}
+
 if [[ "${mode}" == "populated" ]]; then
   canonical_identity_dir="$(canonicalize_dir "${identity_dir}")"
   canonical_tracked_dir="$(canonicalize_dir "${PROJECT_DIR}/identity")"
-  case "${canonical_identity_dir}" in
-    "${canonical_tracked_dir}"|"${canonical_tracked_dir}"/*)
+  if [[ "$(filesystem_is_case_insensitive "${canonical_tracked_dir}")" == "true" ]]; then
+    # Fold both sides to a common case before comparing, so a casing
+    # variant of the tracked identity/ folder (e.g. IDENTITY, Identity) on
+    # a case-insensitive/case-preserving filesystem cannot bypass the guard.
+    compare_identity_dir="$(printf '%s' "${canonical_identity_dir}" | tr '[:upper:]' '[:lower:]')"
+    compare_tracked_dir="$(printf '%s' "${canonical_tracked_dir}" | tr '[:upper:]' '[:lower:]')"
+  else
+    compare_identity_dir="${canonical_identity_dir}"
+    compare_tracked_dir="${canonical_tracked_dir}"
+  fi
+  case "${compare_identity_dir}" in
+    "${compare_tracked_dir}"|"${compare_tracked_dir}"/*)
       fail "--mode populated must validate a path outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first."
       ;;
   esac

@@ -87,7 +87,14 @@ function Resolve-FinalTarget {
 }
 
 if ([string]::IsNullOrWhiteSpace($Path)) {
-    $IdentityDir = Join-Path $ProjectDir 'identity'
+    # Always resolve the default path through Resolve-FinalTarget too, not
+    # just an explicitly-supplied -Path: if this script itself is invoked
+    # through a symlinked/junctioned repository checkout, $ProjectDir (and
+    # thus this default) would otherwise retain that unresolved alias while
+    # $trackedIdentityDir below is fully resolved, causing the two operands
+    # to differ in representation even when they name the same directory
+    # and letting the containment check below be bypassed.
+    $IdentityDir = Resolve-FinalTarget -Path (Join-Path $ProjectDir 'identity')
 } else {
     $IdentityDir = Resolve-FinalTarget -Path $Path
 }
@@ -97,15 +104,37 @@ function Stop-Validation {
     throw $Message
 }
 
+# Detects whether the filesystem location containing $CanonicalPath is
+# case-insensitive, by checking whether a case-swapped variant of its final
+# path component also resolves to an existing entry there. This probes the
+# actual filesystem rather than assuming case (in)sensitivity from
+# $IsWindows/$IsMacOS/$IsLinux: macOS ships case-insensitive-by-default
+# APFS but can be reformatted case-sensitive, Windows can host case-
+# sensitive directories (WSL interop, per-directory case-sensitivity since
+# Windows 10), and Linux can mount case-insensitive volumes (exFAT, some
+# SMB/NTFS mounts).
+function Test-FilesystemCaseInsensitive {
+    param([string]$CanonicalPath)
+    $parent = Split-Path -Path $CanonicalPath -Parent
+    $leaf = Split-Path -Path $CanonicalPath -Leaf
+    $flippedLeaf = -join ($leaf.ToCharArray() | ForEach-Object {
+        if ([System.Char]::IsUpper($_)) { [System.Char]::ToLowerInvariant($_) }
+        elseif ([System.Char]::IsLower($_)) { [System.Char]::ToUpperInvariant($_) }
+        else { $_ }
+    })
+    if ($flippedLeaf -ceq $leaf) {
+        # No alphabetic characters to swap-case with: nothing usable to
+        # probe. Conservatively report case-insensitive so the stricter
+        # fold-case comparison is used rather than silently skipping it.
+        return $true
+    }
+    return (Test-Path -LiteralPath (Join-Path $parent $flippedLeaf))
+}
+
 if ($Mode -eq 'populated') {
     $trackedIdentityDir = Resolve-FinalTarget -Path (Join-Path $ProjectDir 'identity')
-    # Windows drive-letter and UNC paths are case-insensitive at the
-    # filesystem level (e.g. C:\repo\IDENTITY is the same directory as
-    # C:\repo\identity), so a casing variant must not bypass this guard
-    # there. Case-sensitive filesystems (Linux/macOS) must retain ordinal,
-    # case-sensitive comparison so a genuinely distinct, differently-cased
-    # directory is not incorrectly treated as the tracked folder.
-    $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $caseInsensitive = Test-FilesystemCaseInsensitive -CanonicalPath $trackedIdentityDir
+    $pathComparison = if ($caseInsensitive) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
     $isSameDir = [string]::Equals($IdentityDir, $trackedIdentityDir, $pathComparison)
     $isDescendant = $IdentityDir.StartsWith($trackedIdentityDir + [System.IO.Path]::DirectorySeparatorChar, $pathComparison)
     if ($isSameDir -or $isDescendant) {
