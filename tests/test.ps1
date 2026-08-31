@@ -157,8 +157,10 @@ try {
     function Expect-IdentityValidationFailure {
         param([string]$Description, [string[]]$Arguments)
         $failed = $false
+        $global:LASTEXITCODE = 0
         try {
             & $validatorPath @Arguments | Out-Null
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
         } catch {
             $failed = $true
         }
