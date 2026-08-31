@@ -108,7 +108,7 @@ printf 'PIM activation templates validated: %s\n' "${pim_count}"
 # "Microsoft Azure Management" application ID.
 guid_pattern='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
 if rg -no -e "${guid_pattern}" "${IDENTITY_DIR}" -g '*.json' | \
-  rg -v '797f4846-ba00-4fd7-ba43-dac1f8f63013'; then
+  rg -v ':797f4846-ba00-4fd7-ba43-dac1f8f63013$'; then
   fail "A tenant-specific GUID was found in identity/. Replace it with a REPLACE_WITH_* placeholder."
 fi
 

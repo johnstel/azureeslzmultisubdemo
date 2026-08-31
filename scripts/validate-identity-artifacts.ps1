@@ -109,8 +109,8 @@ $guidPattern = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9
 $allowedGuid = '797f4846-ba00-4fd7-ba43-dac1f8f63013'
 $jsonFiles = Get-ChildItem -LiteralPath $IdentityDir -Recurse -Filter '*.json'
 foreach ($jsonFile in $jsonFiles) {
-    $matches = [regex]::Matches((Get-Content -LiteralPath $jsonFile.FullName -Raw), $guidPattern)
-    foreach ($match in $matches) {
+    $guidMatches = [regex]::Matches((Get-Content -LiteralPath $jsonFile.FullName -Raw), $guidPattern)
+    foreach ($match in $guidMatches) {
         if ($match.Value -ne $allowedGuid) {
             Stop-Validation "A tenant-specific GUID ($($match.Value)) was found in $($jsonFile.Name). Replace it with a REPLACE_WITH_* placeholder."
         }
