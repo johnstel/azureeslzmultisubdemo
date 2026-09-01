@@ -2196,14 +2196,12 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         'key-vault-deletion-protection',
         'key-vault-diagnostics-readiness',
         'key-vault-network-access',
-        'key-vault-private-link-readiness',
         'key-vault-rbac-authorization',
         'key-vault-soft-delete',
         'storage-approved-customer-managed-key',
         'storage-customer-managed-key',
         'storage-minimum-tls',
         'storage-network-access',
-        'storage-private-link-readiness',
         'storage-public-blob-access',
         'storage-secure-transfer',
         'storage-shared-key-access'
@@ -2217,6 +2215,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     foreach ($expectedBinding in @(
         @{ Name = 'effect'; Value = "[parameters('dataProtectionPolicyEffect')]" },
         @{ Name = 'auditOnlyEffect'; Value = "[variables('dataProtectionAuditOnlyEffect')]" },
+        @{ Name = 'purgeProtectionEffect'; Value = "[variables('dataProtectionPurgeProtectionEffect')]" },
         @{ Name = 'auditIfNotExistsEffect'; Value = "[variables('dataProtectionAuditIfNotExistsEffect')]" },
         @{ Name = 'minimumTlsVersion'; Value = "[parameters('storageMinimumTlsVersion')]" },
         @{ Name = 'approvedKeyVaultUris'; Value = "[parameters('approvedCustomerManagedKeyVaultUris')]" },
@@ -2244,8 +2243,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Where-Object { $_.policyDefinitionId.StartsWith("[tenantResourceId('Microsoft.Authorization/policyDefinitions', ") } |
         ForEach-Object { [regex]::Match($_.policyDefinitionId, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}').Value } |
         Sort-Object -Unique)
-    if ($referencedBuiltInIds.Count -ne 13) {
-        Stop-Test "Expected 13 distinct verified built-in definitions in the data-protection initiative, found $($referencedBuiltInIds.Count)."
+    if ($referencedBuiltInIds.Count -ne 11) {
+        Stop-Test "Expected 11 distinct verified built-in definitions in the data-protection initiative, found $($referencedBuiltInIds.Count)."
     }
     foreach ($referencedBuiltInId in $referencedBuiltInIds) {
         if ($referencedBuiltInId -notin $verifiedBuiltInIds) {
@@ -2262,12 +2261,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         'storage-public-blob-access'             = '3.*.*'
         'storage-network-access'                 = '1.*.*'
         'storage-shared-key-access'              = '2.*.*'
-        'storage-private-link-readiness'         = '2.*.*'
         'key-vault-soft-delete'                  = '3.*.*'
         'key-vault-deletion-protection'          = '2.*.*'
         'key-vault-rbac-authorization'           = '1.*.*'
         'key-vault-network-access'               = '3.*.*'
-        'key-vault-private-link-readiness'       = '1.*.*'
         'key-vault-diagnostics-readiness'        = '5.*.*'
         'storage-customer-managed-key'           = '1.*.*'
         'storage-approved-customer-managed-key'  = $null
@@ -2308,15 +2305,20 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         (Compare-Object @($dataProtectionInitiativeParameters.auditIfNotExistsEffect.allowedValues) @('AuditIfNotExists', 'Disabled'))) {
         Stop-Test 'Data-protection effects must stay audit-first, with no Deny option for audit-only or readiness controls.'
     }
-    $deletionProtectionReference = @($dataProtectionReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'key-vault-deletion-protection' })
-    if ($deletionProtectionReference[0].parameters.effect.value -ne "[[parameters('effect')]") {
-        Stop-Test 'Key Vault purge protection must follow the reviewed data-protection effect and must never be disabled.'
+    if ((Compare-Object @($dataProtectionInitiativeParameters.purgeProtectionEffect.allowedValues) @('Audit', 'Deny')) -or
+        $dataProtectionInitiativeParameters.purgeProtectionEffect.defaultValue -ne 'Audit') {
+        Stop-Test 'The Key Vault purge protection effect must only ever allow Audit or Deny.'
     }
-    $keyVaultPrivateLinkReference = @($dataProtectionReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'key-vault-private-link-readiness' })
-    $keyVaultPrivateLinkParameterNames = @($keyVaultPrivateLinkReference[0].parameters.PSObject.Properties.Name)
-    if ((Compare-Object $keyVaultPrivateLinkParameterNames @('audit_effect')) -or
-        $keyVaultPrivateLinkReference[0].parameters.audit_effect.value -ne "[[parameters('auditOnlyEffect')]") {
-        Stop-Test 'The Key Vault private-link readiness control must bind the operative audit_effect built-in parameter.'
+    if ($compiledJson.variables.dataProtectionPurgeProtectionEffect -cne "[if(equals(parameters('dataProtectionPolicyEffect'), 'Deny'), 'Deny', 'Audit')]") {
+        Stop-Test 'A Disabled data-protection effect must still map to Audit for Key Vault purge protection.'
+    }
+    $deletionProtectionReference = @($dataProtectionReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'key-vault-deletion-protection' })
+    if ($deletionProtectionReference[0].parameters.effect.value -ne "[[parameters('purgeProtectionEffect')]") {
+        Stop-Test 'Key Vault purge protection must bind the Audit/Deny-only purge protection effect and must never be disabled.'
+    }
+    $storageCmkReference = @($dataProtectionReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'storage-customer-managed-key' })
+    if ($storageCmkReference[0].parameters.effect.value -ne "[[parameters('auditOnlyEffect')]") {
+        Stop-Test 'The storage customer-managed key audit must stay bound to the audit-only effect.'
     }
 
     # The in-repository customer-managed key control must stay parameterized and

@@ -262,6 +262,9 @@ var landingZonesManagementGroupId = '${namePrefix}-landingzones'
 var workloadManagementGroupId = '${namePrefix}-${workloadArchetype}'
 var criticalInfrastructureManagementGroupId = '${namePrefix}-criticalinfra'
 var dataProtectionAuditOnlyEffect = dataProtectionPolicyEffect == 'Disabled' ? 'Disabled' : 'Audit'
+// Key Vault purge protection must never be turned off, so a global Disabled
+// selection is mapped back to Audit instead of being propagated.
+var dataProtectionPurgeProtectionEffect = dataProtectionPolicyEffect == 'Deny' ? 'Deny' : 'Audit'
 var dataProtectionAuditIfNotExistsEffect = dataProtectionPolicyEffect == 'Disabled' ? 'Disabled' : 'AuditIfNotExists'
 var requireResourceGroupTagPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
@@ -739,6 +742,18 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
         ]
         defaultValue: 'Audit'
       }
+      purgeProtectionEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Key Vault purge protection effect'
+          description: 'Key Vault purge protection is never disabled, so this control only ever audits or denies. A global Disabled selection still maps to Audit here.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+        ]
+        defaultValue: 'Audit'
+      }
       auditOnlyEffect: {
         type: 'String'
         metadata: {
@@ -900,22 +915,6 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
       {
         policyDefinitionId: tenantResourceId(
           'Microsoft.Authorization/policyDefinitions',
-          '6edd7eda-6dd8-40f7-810d-67160c639cd9'
-        )
-        definitionVersion: '2.*.*'
-        policyDefinitionReferenceId: 'storage-private-link-readiness'
-        parameters: {
-          effect: {
-            value: '[parameters(\'auditIfNotExistsEffect\')]'
-          }
-        }
-        groupNames: [
-          'storage-data-protection'
-        ]
-      }
-      {
-        policyDefinitionId: tenantResourceId(
-          'Microsoft.Authorization/policyDefinitions',
           '1e66c121-a66a-4b1f-9b83-0fd99bf0fc2d'
         )
         definitionVersion: '3.*.*'
@@ -937,8 +936,10 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
         definitionVersion: '2.*.*'
         policyDefinitionReferenceId: 'key-vault-deletion-protection'
         parameters: {
+          // Bound to purgeProtectionEffect, which can only be Audit or Deny, so
+          // purge protection can never be disabled from the reviewed effect.
           effect: {
-            value: '[parameters(\'effect\')]'
+            value: '[parameters(\'purgeProtectionEffect\')]'
           }
         }
         groupNames: [
@@ -971,23 +972,6 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
         parameters: {
           effect: {
             value: '[parameters(\'effect\')]'
-          }
-        }
-        groupNames: [
-          'key-vault-data-protection'
-        ]
-      }
-      {
-        policyDefinitionId: tenantResourceId(
-          'Microsoft.Authorization/policyDefinitions',
-          'a6abeaec-4d90-4a02-805f-6b26c4d3fbe9'
-        )
-        definitionVersion: '1.*.*'
-        policyDefinitionReferenceId: 'key-vault-private-link-readiness'
-        parameters: {
-          // This built-in evaluates audit_effect; its legacy effect parameter is deprecated and unused.
-          audit_effect: {
-            value: '[parameters(\'auditOnlyEffect\')]'
           }
         }
         groupNames: [
@@ -1061,6 +1045,9 @@ module dataProtectionAssignment 'modules/policy-assignment.bicep' = {
       effect: {
         value: dataProtectionPolicyEffect
       }
+      purgeProtectionEffect: {
+        value: dataProtectionPurgeProtectionEffect
+      }
       auditOnlyEffect: {
         value: dataProtectionAuditOnlyEffect
       }
@@ -1099,10 +1086,6 @@ module dataProtectionAssignment 'modules/policy-assignment.bicep' = {
         policyDefinitionReferenceId: 'storage-shared-key-access'
       }
       {
-        message: 'Storage private-link readiness is not met. This control audits readiness only; the customer owns private endpoint, DNS, and network deployment.'
-        policyDefinitionReferenceId: 'storage-private-link-readiness'
-      }
-      {
         message: 'Key vaults must have soft delete enabled so deleted vaults and secrets stay recoverable.'
         policyDefinitionReferenceId: 'key-vault-soft-delete'
       }
@@ -1117,10 +1100,6 @@ module dataProtectionAssignment 'modules/policy-assignment.bicep' = {
       {
         message: 'Key vaults must enable the vault firewall or disable public network access. This control audits network configuration only; it does not deploy a private endpoint.'
         policyDefinitionReferenceId: 'key-vault-network-access'
-      }
-      {
-        message: 'Key Vault private-link readiness is not met. This control audits readiness only; the customer owns private endpoint, DNS, and network deployment.'
-        policyDefinitionReferenceId: 'key-vault-private-link-readiness'
       }
       {
         message: 'Key Vault resource logs are not configured. This control audits diagnostics readiness only; it does not create a diagnostic setting or a Log Analytics workspace.'

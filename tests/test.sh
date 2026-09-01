@@ -1664,6 +1664,7 @@ jq -e '
   .parameters.approvedCustomerManagedKeyNames.defaultValue == [] and
   .variables.dataProtectionAuditOnlyEffect == "[if(equals(parameters(\u0027dataProtectionPolicyEffect\u0027), \u0027Disabled\u0027), \u0027Disabled\u0027, \u0027Audit\u0027)]" and
   .variables.dataProtectionAuditIfNotExistsEffect == "[if(equals(parameters(\u0027dataProtectionPolicyEffect\u0027), \u0027Disabled\u0027), \u0027Disabled\u0027, \u0027AuditIfNotExists\u0027)]" and
+  .variables.dataProtectionPurgeProtectionEffect == "[if(equals(parameters(\u0027dataProtectionPolicyEffect\u0027), \u0027Deny\u0027), \u0027Deny\u0027, \u0027Audit\u0027)]" and
   .resources as $resources |
   ($resources | map(select(.name == "data-protection-initiative")) | first) as $initiative |
   ($resources | map(select(.name == "assign-data-protection")) | first) as $assignment |
@@ -1673,25 +1674,24 @@ jq -e '
     "key-vault-deletion-protection",
     "key-vault-diagnostics-readiness",
     "key-vault-network-access",
-    "key-vault-private-link-readiness",
     "key-vault-rbac-authorization",
     "key-vault-soft-delete",
     "storage-approved-customer-managed-key",
     "storage-customer-managed-key",
     "storage-minimum-tls",
     "storage-network-access",
-    "storage-private-link-readiness",
     "storage-public-blob-access",
     "storage-secure-transfer",
     "storage-shared-key-access"
   ] and
   ($assignment.properties.parameters.parameters.value.effect.value == "[parameters(\u0027dataProtectionPolicyEffect\u0027)]") and
   ($assignment.properties.parameters.parameters.value.auditOnlyEffect.value == "[variables(\u0027dataProtectionAuditOnlyEffect\u0027)]") and
+  ($assignment.properties.parameters.parameters.value.purgeProtectionEffect.value == "[variables(\u0027dataProtectionPurgeProtectionEffect\u0027)]") and
   ($assignment.properties.parameters.parameters.value.auditIfNotExistsEffect.value == "[variables(\u0027dataProtectionAuditIfNotExistsEffect\u0027)]") and
   ($assignment.properties.parameters.parameters.value.minimumTlsVersion.value == "[parameters(\u0027storageMinimumTlsVersion\u0027)]") and
   ($assignment.properties.parameters.parameters.value.approvedKeyVaultUris.value == "[parameters(\u0027approvedCustomerManagedKeyVaultUris\u0027)]") and
   ($assignment.properties.parameters.parameters.value.approvedKeyNames.value == "[parameters(\u0027approvedCustomerManagedKeyNames\u0027)]") and
-  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 14 and
+  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 12 and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
     ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) and
   ($assignment.properties.parameters.nonComplianceMessages.value | all(.message | length > 0))
@@ -1711,8 +1711,8 @@ data_protection_builtin_ids="$(jq -r '
   | select(startswith("[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, "))
   | capture("(?<guid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})").guid
 ' "${TEMP_DIR}/main.json" | sort -u)"
-[[ "$(printf '%s\n' "${data_protection_builtin_ids}" | wc -l | tr -d ' ')" -eq 13 ]] || {
-  printf 'ERROR: Expected 13 distinct verified built-in definitions in the data-protection initiative.\n' >&2
+[[ "$(printf '%s\n' "${data_protection_builtin_ids}" | wc -l | tr -d ' ')" -eq 11 ]] || {
+  printf 'ERROR: Expected 11 distinct verified built-in definitions in the data-protection initiative.\n' >&2
   exit 1
 }
 while IFS= read -r builtin_id; do
@@ -1772,12 +1772,10 @@ jq -e '
     "storage-public-blob-access": "3.*.*",
     "storage-network-access": "1.*.*",
     "storage-shared-key-access": "2.*.*",
-    "storage-private-link-readiness": "2.*.*",
     "key-vault-soft-delete": "3.*.*",
     "key-vault-deletion-protection": "2.*.*",
     "key-vault-rbac-authorization": "1.*.*",
     "key-vault-network-access": "3.*.*",
-    "key-vault-private-link-readiness": "1.*.*",
     "key-vault-diagnostics-readiness": "5.*.*",
     "storage-customer-managed-key": "1.*.*",
     "storage-approved-customer-managed-key": null
@@ -1796,14 +1794,16 @@ jq -e '
   $initiativeParameters.effect.defaultValue == "Audit" and
   $initiativeParameters.auditOnlyEffect.allowedValues == ["Audit", "Disabled"] and
   $initiativeParameters.auditIfNotExistsEffect.allowedValues == ["AuditIfNotExists", "Disabled"] and
+  $initiativeParameters.purgeProtectionEffect.allowedValues == ["Audit", "Deny"] and
+  $initiativeParameters.purgeProtectionEffect.defaultValue == "Audit" and
   ($initiative.properties.parameters.policyDefinitionReferences.value
     | map(select(.policyDefinitionReferenceId == "key-vault-deletion-protection"))
     | first
-    | .parameters.effect.value) == "[[parameters(\u0027effect\u0027)]" and
+    | .parameters.effect.value) == "[[parameters(\u0027purgeProtectionEffect\u0027)]" and
   ($initiative.properties.parameters.policyDefinitionReferences.value
-    | map(select(.policyDefinitionReferenceId == "key-vault-private-link-readiness"))
+    | map(select(.policyDefinitionReferenceId == "storage-customer-managed-key"))
     | first
-    | .parameters) == { "audit_effect": { "value": "[[parameters(\u0027auditOnlyEffect\u0027)]" } }
+    | .parameters.effect.value) == "[[parameters(\u0027auditOnlyEffect\u0027)]"
 ' "${TEMP_DIR}/main.json" >/dev/null || {
   printf 'ERROR: Data-protection effects must stay audit-first, must never disable Key Vault purge protection, and must bind the operative built-in parameter names.\n' >&2
   exit 1

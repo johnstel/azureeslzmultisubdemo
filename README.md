@@ -100,13 +100,16 @@ public-IP audit remains the only public-IP resource control.
 
 The Landing Zones data-protection initiative composes verified built-in
 definitions for storage secure transfer, minimum TLS version, public blob
-access, network access, shared-key authorization, private-link readiness, and
-for Key Vault soft delete, deletion (purge) protection, RBAC authorization,
-firewall/public network access, private-link readiness, and resource-log
-readiness. `dataProtectionPolicyEffect` defaults to `Audit`; controls whose
+access, network access, shared-key authorization, and for Key Vault soft
+delete, deletion (purge) protection, RBAC authorization, firewall/public
+network access, and resource-log readiness. Private-link readiness for both
+services is owned by the private-access initiative described below
+(REQ-NET-04 and REQ-NET-05), so it is not repeated here. `dataProtectionPolicyEffect` defaults to `Audit`; controls whose
 built-in supports only `Audit`/`Disabled` or `AuditIfNotExists`/`Disabled`
 follow that choice without ever being escalated to `Deny`. Purge protection is
-only ever audited or required, never disabled.
+only ever audited or required, never disabled: it is bound to a dedicated
+`purgeProtectionEffect` that allows `Audit` or `Deny` only, so selecting
+`Disabled` for `dataProtectionPolicyEffect` still leaves that control auditing.
 
 Each built-in member is pinned to the exact major version recorded in
 `policy/control-catalog.json` (for example `2.*.*`) through the reusable
@@ -115,7 +118,7 @@ major revision of a built-in never changes the assignment's behaviour without
 review. The in-repository custom member is intentionally unpinned, because
 `definitionVersion` applies only to built-in definitions.
 
-The public-access and private-link controls audit configuration and readiness
+The public-access and diagnostics controls audit configuration and readiness
 only. They do not deploy a private endpoint, private DNS zone, virtual
 network, or diagnostic setting, so a compliant result must not be reported as
 delivered private connectivity or delivered logging.
