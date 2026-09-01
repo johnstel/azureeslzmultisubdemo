@@ -103,13 +103,13 @@ function Test-LiveControls {
         Stop-Remediation 'The tag-inheritance initiative must contain exactly six references.'
     }
     foreach ($expected in $ExpectedReferences.GetEnumerator()) {
-        $matches = @($references | Where-Object {
+        $matchedReferences = @($references | Where-Object {
             [string]$_.policyDefinitionReferenceId -ceq $expected.Key
         })
-        if ($matches.Count -ne 1 -or
-            [string]$matches[0].parameters.tagName.value -cne $expected.Value -or
-            [string]$matches[0].policyDefinitionId -ine $BuiltInId -or
-            [string]$matches[0].definitionVersion -cne '1.*.*') {
+        if ($matchedReferences.Count -ne 1 -or
+            [string]$matchedReferences[0].parameters.tagName.value -cne $expected.Value -or
+            [string]$matchedReferences[0].policyDefinitionId -ine $BuiltInId -or
+            [string]$matchedReferences[0].definitionVersion -cne '1.*.*') {
             Stop-Remediation 'The initiative is not the exact six-reference missing-only tag control.'
         }
     }
