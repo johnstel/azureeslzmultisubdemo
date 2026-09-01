@@ -347,9 +347,13 @@ issue #20; `defenderForServersSubPlan` (default `P2`) and
 choose the Defender for Servers sub-plan and its agentless-VM-scanning
 extension, so this project makes and documents that choice itself instead of
 leaving it to whatever a customer separately selects in Defender for Cloud
-later. This project still never configures or claims to configure the Azure
-Monitor Agent itself — the two AMA audit policies above only audit current
-agent presence, independent of any paid plan.
+later. Microsoft documents agentless VM scanning as supported only on the
+Servers P2 sub-plan, so `modules/defender-plan-assignment.bicep` fails
+deployment rather than silently accepting `defenderForServersSubPlan = 'P1'`
+together with agentless scanning still requested. This project still never
+configures or claims to configure the Azure Monitor Agent itself — the two
+AMA audit policies above only audit current agent presence, independent of
+any paid plan.
 
 This project never silently enables Defender plans, configures Microsoft
 Sentinel analytics/incidents, or claims that any of these controls alone
@@ -358,11 +362,19 @@ regulatory-compliance-dashboard compliance; see `docs/CONTROL-MATRIX.md` for
 the full REQ-DEF-01 through REQ-DEF-09 mapping, including why the
 all-or-nothing "Configure Microsoft Defender for Cloud plans" initiative and
 the deprecated Log Analytics (MMA) auto-provisioning policy are intentionally
-never assigned. REQ-DEF-09 separately documents Foundational CSPM — the
-free, always-on Defender for Cloud baseline that populates the audit-only
-controls above — as its own catalog entry distinct from the paid Defender
-CSPM plan (REQ-DEF-02): Foundational CSPM is not an assignable Azure Policy
-resource and is present whether or not REQ-DEF-02 is ever opted in.
+never assigned. REQ-DEF-09 separately documents Foundational CSPM — the free
+Defender for Cloud baseline that populates the audit-only controls above —
+as its own catalog entry distinct from the paid Defender CSPM plan
+(REQ-DEF-02): Foundational CSPM is configured via the
+`Microsoft.Security/pricings` `CloudPosture` resource's Free pricing tier at
+subscription scope, not an Azure Policy assignment, so this template
+intentionally never deploys it (out of scope: modifying a live
+subscription). Foundational CSPM is present today regardless of whether
+REQ-DEF-02 is ever opted in, but starting October 27, 2026 Microsoft stops
+auto-enabling it on newly created Azure subscriptions — customers must
+explicitly opt in per new subscription outside this template (existing
+subscriptions are unaffected). See REQ-DEF-09's notes in
+`policy/control-catalog.json` for the verified source.
 
 ## Required permissions
 

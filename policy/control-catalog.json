@@ -1627,7 +1627,9 @@
         "Disabled"
       ],
       "requiredParameters": [
-        "effect"
+        "effect",
+        "subPlan",
+        "isAgentlessVmScanningEnabled"
       ],
       "roleDefinitionIds": [
         "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
@@ -1636,7 +1638,7 @@
       "dependencies": [],
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default, independent explicit opt-in (enableDefenderForServers).",
-      "notes": "This built-in definition's own \"effect\" parameter defaults to DeployIfNotExists (verified in the raw source JSON); this repository's audit-first/no-cost demo profile requires the assignment to explicitly override \"effect\" to \"Disabled\" unless enableDefenderForServers=true (issue #20). Its only verified remediation role is Owner, so modules/defender-plan-assignment.bicep never grants that role even when opted in (see REQ-DEF-02's note for the fail-closed identity design). This record has no dependency on REQ-DEF-01 (the unsafe all-plans initiative); it is independently and individually assignable. This plan's own DINE remediation does not itself deploy Azure Monitor Agent auto-provisioning; whether it provisions agentless scanning or AMA depends on sub-plan settings a customer chooses directly in Defender for Cloud (not configured or claimed by this assignment). Do not add the deprecated Log Analytics (MMA) agent dependency (see REQ-DEF-05); REQ-DEF-07/08 audit current AMA presence independently, at no cost. The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
+      "notes": "This built-in definition's own \"effect\" parameter defaults to DeployIfNotExists (verified in the raw source JSON); this repository's audit-first/no-cost demo profile requires the assignment to explicitly override \"effect\" to \"Disabled\" unless enableDefenderForServers=true (issue #20). Its only verified remediation role is Owner, so modules/defender-plan-assignment.bicep never grants that role even when opted in (see REQ-DEF-02's note for the fail-closed identity design). This record has no dependency on REQ-DEF-01 (the unsafe all-plans initiative); it is independently and individually assignable. The assignment also explicitly sets the built-in's subPlan (P1 or P2, default P2) and isAgentlessVmScanningEnabled (default true) extension parameters (modules/defender-plan-assignment.bicep) rather than silently inheriting whichever defaults the built-in itself would otherwise apply; Microsoft documents agentless VM scanning as supported only on the P2 sub-plan (https://learn.microsoft.com/azure/defender-for-cloud/configure-servers-coverage#modify-plan-settings), so the module fails deployment if P1 is selected with agentless scanning still requested, rather than silently accepting an unsupported combination. This plan's own DINE remediation does not itself deploy Azure Monitor Agent auto-provisioning; REQ-DEF-07/08 audit current AMA presence independently, at no cost, using a separate no-identity assignment. Do not add the deprecated Log Analytics (MMA) agent dependency (see REQ-DEF-05). The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
     },
     {
       "id": "REQ-DEF-04",
@@ -1796,29 +1798,29 @@
     {
       "id": "REQ-DEF-09",
       "domain": "defender-for-cloud",
-      "customerRequirement": "Represent Foundational CSPM (issue #20) as an explicit, independent control distinct from the paid Defender CSPM plan (REQ-DEF-02), rather than letting REQ-DEF-02's paid CIEM/CSPM plan stand in for it.",
+      "customerRequirement": "Represent Foundational CSPM (issue #20) as an explicit, independent control distinct from the paid Defender CSPM plan (REQ-DEF-02), rather than letting REQ-DEF-02's paid CIEM/CSPM plan stand in for it, and accurately reflect that it is a configurable subscription-level setting rather than an Azure Policy assignment.",
       "scope": "landingzones",
       "classification": "manual-evidence",
       "mechanism": {
-        "kind": "platform-default-capability",
+        "kind": "subscription-pricing-setting",
         "builtIn": false,
-        "displayName": "Foundational CSPM (free, always-on Microsoft Defender for Cloud baseline; not an assignable Azure Policy resource)",
+        "displayName": "Foundational CSPM (free Microsoft Defender for Cloud baseline, configured via the Microsoft.Security/pricings 'CloudPosture' resource's Free pricing tier at subscription scope -- not an Azure Policy assignment)",
         "definitionId": null,
-        "sourceUrl": "https://learn.microsoft.com/en-us/azure/defender-for-cloud/concept-cloud-security-posture-management",
+        "sourceUrl": "https://learn.microsoft.com/en-us/azure/defender-for-cloud/foundational-cspm-opt-in",
         "verifiedOn": "2026-09-01",
         "verificationMethod": "ms-learn-page",
-        "notes": "Confirmed via Microsoft Learn: Foundational CSPM is automatically enabled at no cost on every Azure subscription (Free pricing tier or higher) and is not exposed as a Microsoft.Security/pricings pricing-tier value or any other assignable Azure Policy resource -- there is no built-in DINE/Audit policy definition distinct from the paid CloudPosture ('Standard' pricingTier) built-ins that represents only the free tier. Both 'Configure Microsoft Defender CSPM to be enabled' (689f7782-ef2c-4270-a6d0-7664869076bd) and REQ-DEF-02's full-features variant (72f8cee7-2937-403d-84a1-a4e3e57f3c21) exist solely to set the paid Standard pricingTier; neither audits or represents the free tier itself (verified from each policy's raw source JSON: both existence conditions check pricingTier == 'Standard')."
+        "notes": "Confirmed via Microsoft Learn: Foundational CSPM is the free tier of the same Microsoft.Security/pricings 'CloudPosture' resource that the paid Defender CSPM plan (REQ-DEF-02, pricingTier Standard) uses -- it is a subscription-scoped ARM/API setting (pricingTier Free), not an Azure Policy definition/initiative, so it is intentionally out of scope for this repository's Azure Policy assignment modules. On every existing Azure subscription today it is automatically enabled at no cost; starting October 27, 2026, Microsoft changes this so that newly created Azure subscriptions no longer get it automatically -- customers must explicitly opt in per new subscription (existing subscriptions keep whatever state they already have and are unaffected). This repository deliberately does not deploy a Microsoft.Security/pricings resource for any subscription (doing so would modify a live subscription's security settings, which issue #20's agent safety constraints and this repository's out-of-scope list both prohibit); this record exists purely to give the catalog and docs an explicit, independent, accurately-described line item for Foundational CSPM and to flag the October 27, 2026 transition for customers managing their own subscriptions outside this template."
       },
       "supportedEffects": [
-        "Disabled"
+        "not-applicable-subscription-pricing-setting"
       ],
       "requiredParameters": [],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Not independently assignable; recorded here so the catalog documents Foundational CSPM as a distinct, no-cost, always-on capability rather than conflating it with the paid Defender CSPM plan.",
-      "notes": "This record deliberately has no policyDefinition/policySetDefinition (definitionId is null), because Foundational CSPM cannot be toggled or assigned via Azure Policy -- it is always on regardless of pricing tier. supportedEffects lists only 'Disabled' as a placeholder (there is no policy to assign, so no effect ever actually applies); this record exists purely to give the catalog an explicit, independent line item for Foundational CSPM. It is the free capability that populates REQ-DEF-06 (vulnerability-assessment audit), REQ-DEF-07/08 (AMA audit), and the network/compute security recommendations referenced in REQ-NET-01/03's notes, none of which require REQ-DEF-02 (paid Defender CSPM/CIEM) or REQ-DEF-01 (the unsafe all-plans initiative) to be assigned. Opting in to REQ-DEF-02 adds Defender CSPM's paid intelligent cloud security graph and CIEM (Entra Permissions Management) features on top of this always-on baseline; it does not create Foundational CSPM, which was already present before any opt-in."
+      "evidenceSource": "Not deployed by this template (out of scope: modifying a live subscription's Microsoft.Security/pricings resource); recorded here so the catalog documents Foundational CSPM as a distinct, no-cost, configurable capability rather than conflating it with the paid Defender CSPM plan, and so customers are pointed at the October 27, 2026 opt-in transition for new subscriptions.",
+      "notes": "This record deliberately has no policyDefinition/policySetDefinition (definitionId is null) because Foundational CSPM is configured via the Microsoft.Security/pricings 'CloudPosture' resource's Free pricing tier -- a native subscription-scoped ARM/API setting, not an Azure Policy assignment -- which this repository intentionally never deploys (out of scope: modifying a live subscription). supportedEffects lists a single non-policy placeholder value because no Azure Policy effect ever applies to this control. It is the free capability that populates REQ-DEF-06 (vulnerability-assessment audit), REQ-DEF-07/08 (AMA audit), and the network/compute security recommendations referenced in REQ-NET-01/03's notes, none of which require REQ-DEF-02 (paid Defender CSPM/CIEM) or REQ-DEF-01 (the unsafe all-plans initiative) to be assigned. Opting in to REQ-DEF-02 adds Defender CSPM's paid intelligent cloud security graph and CIEM (Entra Permissions Management) features on top of this baseline; it does not create Foundational CSPM. Starting October 27, 2026, Microsoft no longer auto-enables Foundational CSPM on newly created Azure subscriptions -- customers must explicitly opt in per new subscription outside this template (existing subscriptions are unaffected); see mechanism.sourceUrl."
     },
     {
       "id": "REQ-BKP-01",

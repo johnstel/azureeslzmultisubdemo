@@ -1006,6 +1006,28 @@ printf '%s' "${storage_deployment}" | jq -e '
   printf 'ERROR: The compiled Storage plan definition/parameter switch is missing an expected field.\n' >&2
   exit 1
 }
+# Assert the exact compiled identity/effect/policyDefinitionId/definitionVersion
+# wiring on the nested assignment resource itself (not just the shared
+# module's source text) for every one of the three plan deployments, so a
+# regression in any single plan's compiled shape is caught even if the
+# module source text still looks correct.
+for defender_deployment_var in cspm_deployment servers_deployment storage_deployment; do
+  printf '%s' "${!defender_deployment_var}" | jq -e '
+    .properties.template.resources.assignment.identity.type == "[if(parameters(\u0027enablePlan\u0027), \u0027SystemAssigned\u0027, \u0027None\u0027)]" and
+    .properties.template.resources.assignment.properties.policyDefinitionId == "[variables(\u0027policyDefinitionId\u0027)]" and
+    .properties.template.resources.assignment.properties.definitionVersion == "[variables(\u0027selectedPlan\u0027).definitionVersion]" and
+    .properties.template.resources.assignment.properties.parameters == "[union(createObject(\u0027effect\u0027, createObject(\u0027value\u0027, if(parameters(\u0027enablePlan\u0027), \u0027DeployIfNotExists\u0027, \u0027Disabled\u0027))), variables(\u0027planParameters\u0027)[parameters(\u0027plan\u0027)])]"
+  ' >/dev/null || {
+    printf 'ERROR: %s does not compile the expected identity/effect/policyDefinitionId/definitionVersion wiring on its nested assignment resource.\n' "${defender_deployment_var}" >&2
+    exit 1
+  }
+done
+printf '%s' "${servers_deployment}" | jq -e '
+  .properties.template.variables | has("validatedServersAgentlessVmScanningEnabled")
+' >/dev/null || {
+  printf 'ERROR: assign-defender-servers must compile the P1/agentless-scanning validation guard (validatedServersAgentlessVmScanningEnabled).\n' >&2
+  exit 1
+}
 ! rg -q "475aae12-b88a-4572-8b36-9b712b2b3a17" "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" || {
   printf 'ERROR: The deprecated Log Analytics (MMA) auto-provisioning policy definition must never be referenced.\n' >&2
   exit 1
@@ -1038,6 +1060,35 @@ jq -e '
 }
 printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.parameters.definitionVersion.value == "3.*.*")' >/dev/null
 printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.template.resources.assignment.identity == null)' >/dev/null
+printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .scope | contains("landingZonesManagementGroupId"))' >/dev/null || {
+  printf 'ERROR: Both AMA audit assignments must be scoped to the Landing Zones management group.\n' >&2
+  exit 1
+}
+# The free vulnerability-assessment audit assignment must independently pin
+# its own verified GUID/version/scope and must never attach an identity
+# (it has no paid-plan dependency and performs no remediation).
+vuln_assessment_deployment="$(jq -c '
+  [.. | objects | select(.type? == "Microsoft.Resources/deployments") | select(.name? == "assign-vuln-assessment-audit")][0]
+' "${TEMP_DIR}/main.json")"
+[[ "${vuln_assessment_deployment}" != "null" ]] || {
+  printf 'ERROR: Expected an assign-vuln-assessment-audit module deployment.\n' >&2
+  exit 1
+}
+printf '%s' "${vuln_assessment_deployment}" | jq -e '
+  .properties.parameters.policyDefinitionId.value == "[variables(\u0027vulnerabilityAssessmentAuditPolicyDefinitionId\u0027)]" and
+  .properties.parameters.definitionVersion.value == "3.*.*" and
+  .properties.template.resources.assignment.identity == null and
+  (.scope | contains("landingZonesManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, and must never attach an identity.\n' >&2
+  exit 1
+}
+jq -e '
+  .variables.vulnerabilityAssessmentAuditPolicyDefinitionId == "[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, \u0027501541f7-f7e7-4cd6-868c-4190fdad3ac9\u0027)]"
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: vulnerabilityAssessmentAuditPolicyDefinitionId must resolve to its own verified built-in GUID.\n' >&2
+  exit 1
+}
 
 rg -q '"REQ-DEF-09"' "${PROJECT_DIR}/policy/control-catalog.json"
 rg -q "Foundational CSPM" "${PROJECT_DIR}/README.md"

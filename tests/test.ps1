@@ -1264,6 +1264,31 @@ exit $LASTEXITCODE
         -not $storagePlanParameters.PSObject.Properties['isSensitiveDataDiscoveryEnabled']) {
         Stop-Test 'The compiled Storage plan definition/parameter switch is missing an expected field.'
     }
+    # Assert the exact compiled identity/effect/policyDefinitionId/definitionVersion
+    # wiring on the nested assignment resource itself (not just the shared
+    # module's source text) for every one of the three plan deployments, so a
+    # regression in any single plan's compiled shape is caught even if the
+    # module source text still looks correct.
+    $expectedIdentityTypeExpr = "[if(parameters('enablePlan'), 'SystemAssigned', 'None')]"
+    $expectedPolicyDefinitionIdExpr = "[variables('policyDefinitionId')]"
+    $expectedDefinitionVersionExpr = "[variables('selectedPlan').definitionVersion]"
+    $expectedParametersExpr = "[union(createObject('effect', createObject('value', if(parameters('enablePlan'), 'DeployIfNotExists', 'Disabled'))), variables('planParameters')[parameters('plan')])]"
+    foreach ($deploymentEntry in @(
+        @{ Name = 'assign-defender-cspm'; Deployment = $cspmDeployment },
+        @{ Name = 'assign-defender-servers'; Deployment = $serversDeployment },
+        @{ Name = 'assign-defender-storage'; Deployment = $storageDeployment }
+    )) {
+        $assignmentResource = $deploymentEntry.Deployment.properties.template.resources.assignment
+        if ($assignmentResource.identity.type -ne $expectedIdentityTypeExpr -or
+            $assignmentResource.properties.policyDefinitionId -ne $expectedPolicyDefinitionIdExpr -or
+            $assignmentResource.properties.definitionVersion -ne $expectedDefinitionVersionExpr -or
+            $assignmentResource.properties.parameters -ne $expectedParametersExpr) {
+            Stop-Test "$($deploymentEntry.Name) does not compile the expected identity/effect/policyDefinitionId/definitionVersion wiring on its nested assignment resource."
+        }
+    }
+    if (-not $serversDeployment.properties.template.variables.PSObject.Properties['validatedServersAgentlessVmScanningEnabled']) {
+        Stop-Test 'assign-defender-servers must compile the P1/agentless-scanning validation guard (validatedServersAgentlessVmScanningEnabled).'
+    }
     $amaAuditDeployments = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
@@ -1289,6 +1314,29 @@ exit $LASTEXITCODE
         if ($deployment.properties.template.resources.assignment.PSObject.Properties['identity']) {
             Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must never create a managed identity."
         }
+        if ($deployment.scope -notmatch 'landingZonesManagementGroupId') {
+            Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must be scoped to the Landing Zones management group."
+        }
+    }
+    # The free vulnerability-assessment audit assignment must independently
+    # pin its own verified GUID/version/scope and must never attach an
+    # identity (it has no paid-plan dependency and performs no remediation).
+    $vulnAssessmentDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-vuln-assessment-audit'
+    } | Select-Object -First 1
+    if (-not $vulnAssessmentDeployment) {
+        Stop-Test 'Expected an assign-vuln-assessment-audit module deployment.'
+    }
+    if ($vulnAssessmentDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('vulnerabilityAssessmentAuditPolicyDefinitionId')]" -or
+        $vulnAssessmentDeployment.properties.parameters.definitionVersion.value -ne '3.*.*' -or
+        $vulnAssessmentDeployment.properties.template.resources.assignment.PSObject.Properties['identity'] -or
+        $vulnAssessmentDeployment.scope -notmatch 'landingZonesManagementGroupId') {
+        Stop-Test 'assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, and must never attach an identity.'
+    }
+    if ($compiledJson.variables.vulnerabilityAssessmentAuditPolicyDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '501541f7-f7e7-4cd6-868c-4190fdad3ac9')]") {
+        Stop-Test 'vulnerabilityAssessmentAuditPolicyDefinitionId must resolve to its own verified built-in GUID.'
     }
     $catalogText = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw
     if ($catalogText -notmatch '"REQ-DEF-09"') {

@@ -149,7 +149,7 @@ param cspmEntraPermissionsManagementEnabled bool = true
 ])
 param serversSubPlan string = 'P2'
 
-@sys.description('Servers plan only. Enables the built-in\'s agentless VM scanning extension; only takes effect when serversSubPlan is P2, per the built-in\'s own existence condition. Defaults to true, matching the built-in\'s own verified default.')
+@sys.description('Servers plan only. Enables the built-in\'s agentless VM scanning extension. Only supported when serversSubPlan is P2 per Microsoft Learn (https://learn.microsoft.com/azure/defender-for-cloud/configure-servers-coverage#modify-plan-settings); setting this true while serversSubPlan is P1 fails deployment rather than being silently accepted. Defaults to true, matching the built-in\'s own verified default.')
 param serversAgentlessVmScanningEnabled bool = true
 
 @sys.description('Servers plan only. Enables the built-in\'s MDE-designated-subscription setting. Defaults to false, matching the built-in\'s own verified default.')
@@ -184,6 +184,17 @@ var validatedLocation = !empty(trim(location)) && toLower(trim(location)) != 'gl
   ? trim(location)
   : fail('location must be a non-global Azure region.')
 
+// Microsoft documents agentless VM scanning as available only for the
+// Servers P2 sub-plan (not P1):
+// https://learn.microsoft.com/azure/defender-for-cloud/configure-servers-coverage#modify-plan-settings
+// Rather than silently accepting P1 with agentless scanning requested (a
+// combination the built-in itself only partially supports via its own
+// existence condition), this module fails deployment explicitly so the
+// mismatch is caught here rather than discovered later.
+var validatedServersAgentlessVmScanningEnabled = plan == 'servers' && serversSubPlan == 'P1' && serversAgentlessVmScanningEnabled
+  ? fail('serversAgentlessVmScanningEnabled must be false when serversSubPlan is P1; agentless VM scanning is only supported on the Servers P2 sub-plan.')
+  : serversAgentlessVmScanningEnabled
+
 var selectedPlan = planDefinitions[plan]
 var policyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', selectedPlan.definitionId)
 
@@ -217,7 +228,7 @@ var planParameters = {
       value: serversSubPlan
     }
     isAgentlessVmScanningEnabled: {
-      value: serversAgentlessVmScanningEnabled ? 'true' : 'false'
+      value: validatedServersAgentlessVmScanningEnabled ? 'true' : 'false'
     }
     isMdeDesignatedSubscriptionEnabled: {
       value: serversMdeDesignatedSubscriptionEnabled ? 'true' : 'false'
