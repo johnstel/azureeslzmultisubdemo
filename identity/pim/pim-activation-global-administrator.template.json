@@ -1,0 +1,25 @@
+{
+  "roleName": "Global Administrator",
+  "assignmentType": "eligible",
+  "activation": {
+    "requireApproval": true,
+    "approvers": [
+      "REPLACE_WITH_PIM_APPROVER_GROUP_OBJECT_ID"
+    ],
+    "requireMultiFactorAuthentication": true,
+    "authenticationContext": "c1",
+    "requireJustification": true,
+    "maximumActivationDurationHours": 4
+  },
+  "notifications": {
+    "notifyAdminsOnActivation": true,
+    "notifyApproversOnActivationRequest": true,
+    "notifyAssigneeOnActivation": true
+  },
+  "emergencyAccessExclusion": {
+    "required": true,
+    "placeholder": "REPLACE_WITH_EMERGENCY_ACCESS_ACCOUNT_OBJECT_ID",
+    "description": "Object ID of a permanent, non-PIM-managed emergency-access (break-glass) account for this role. This role's PIM policy must never govern the break-glass account; it keeps a standing (not eligible) assignment so recovery is possible if PIM, Conditional Access, or MFA is unavailable. A future apply workflow must fail closed if this placeholder is still present."
+  },
+  "notes": "Demo input describing the intended Privileged Identity Management (PIM) role-settings/activation policy for the Global Administrator directory role. Not applied to any tenant by this repository. activation.authenticationContext='c1' references the Microsoft Graph authenticationContextClassReference documented in identity/schema/known-entra-ids.json ('PIM privileged-role activation'); the matching Conditional Access policy that enforces this context, identity/conditional-access/ca-pim-activation-mfa.template.json, must be reviewed and enabled alongside this PIM policy so activation actually requires phishing-resistant MFA. Before controlled deployment: (1) replace both placeholders with real, reviewed object IDs, (2) confirm Entra ID P2 (or Microsoft Entra Suite / EMS E5 equivalent) licensing for every eligible member, (3) verify the emergency-access account already exists and is monitored per Microsoft's break-glass guidance, (4) roll this out only after the corresponding Conditional Access authentication-context policy in identity/conditional-access has been reviewed in report-only mode."
+}

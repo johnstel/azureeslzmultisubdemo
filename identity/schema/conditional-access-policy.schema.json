@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/johnstel/azureeslzmultisubdemo/identity/schema/conditional-access-policy.schema.json",
+  "title": "Entra Conditional Access policy input (report-only demo artifact)",
+  "description": "Declarative shape for a Microsoft Graph conditionalAccessPolicies resource, restricted to report-only demo usage. This file is validated statically and is never sent to Microsoft Graph by this repository. Field shapes follow the Microsoft Graph conditionalAccessPolicy resource: conditions.users.includeUsers accepts 'All', 'None', 'GuestsOrExternalUsers', or user object IDs; conditions.users.includeRoles must contain Microsoft Entra built-in directory role *template IDs* (GUIDs), never display names or the non-Graph value 'All users'.",
+  "type": "object",
+  "required": [
+    "displayName",
+    "state",
+    "conditions",
+    "grantControls",
+    "emergencyAccessExclusion",
+    "notes"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "guid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    }
+  },
+  "properties": {
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "type": "string",
+      "description": "Must remain report-only for this demo. enabledForReportingButNotEnforced never blocks or requires a control.",
+      "const": "enabledForReportingButNotEnforced"
+    },
+    "conditions": {
+      "type": "object",
+      "required": ["users", "applications", "clientAppTypes"],
+      "additionalProperties": false,
+      "properties": {
+        "users": {
+          "type": "object",
+          "required": ["excludeGroups"],
+          "additionalProperties": false,
+          "properties": {
+            "includeUsers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^(All|None|GuestsOrExternalUsers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+              },
+              "description": "Graph-compatible subject scope. Use exactly ['All'] for an all-users policy; individual entries otherwise are Entra user object IDs, 'None', or 'GuestsOrExternalUsers'."
+            },
+            "includeRoles": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/definitions/guid" },
+              "description": "Microsoft Entra built-in directory role *template IDs* (GUIDs) from identity/schema/known-entra-ids.json, never display names or the non-Graph value 'All users'."
+            },
+            "excludeGroups": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" },
+              "description": "Must contain at least one emergency-access (break-glass) group placeholder. Never leave empty."
+            }
+          },
+          "anyOf": [
+            { "required": ["includeUsers"] },
+            { "required": ["includeRoles"] }
+          ]
+        },
+        "applications": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "includeApplications": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "includeAuthenticationContextClassReferences": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^c([1-9]|1[0-9]|2[0-5])$"
+              },
+              "description": "Microsoft Graph authenticationContextClassReference id(s) ('c1'..'c25') that scope this policy to a specific claim raised by a resource, e.g. by PIM role activation. Fixed, tenant-independent Graph claim values documented in identity/schema/known-entra-ids.json; must stay coherent with any identity/pim/*.template.json activation.authenticationContext that references the same id."
+            }
+          },
+          "oneOf": [
+            {
+              "required": ["includeApplications"],
+              "not": { "required": ["includeAuthenticationContextClassReferences"] }
+            },
+            {
+              "required": ["includeAuthenticationContextClassReferences"],
+              "not": { "required": ["includeApplications"] }
+            }
+          ],
+          "description": "Mutually exclusive Graph target shape: a policy either scopes to application(s) via includeApplications, or scopes to a specific authentication context via includeAuthenticationContextClassReferences, never both at once."
+        },
+        "clientAppTypes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["all", "browser", "mobileAppsAndDesktopClients", "exchangeActiveSync", "other"]
+          }
+        }
+      }
+    },
+    "grantControls": {
+      "type": "object",
+      "required": ["operator"],
+      "additionalProperties": false,
+      "properties": {
+        "operator": {
+          "type": "string",
+          "enum": ["OR", "AND"]
+        },
+        "builtInControls": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "block",
+              "mfa",
+              "compliantDevice",
+              "domainJoinedDevice",
+              "approvedApplication",
+              "compliantApplication"
+            ]
+          },
+          "description": "'authenticationStrength' is intentionally not a valid value here: Microsoft Graph models authentication strength as the separate grantControls.authenticationStrength relationship, not as a builtInControls entry."
+        },
+        "authenticationStrength": {
+          "type": "object",
+          "required": ["id", "displayName"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "enum": [
+                "00000000-0000-0000-0000-000000000002",
+                "00000000-0000-0000-0000-000000000003",
+                "00000000-0000-0000-0000-000000000004"
+              ],
+              "description": "Built-in Microsoft Graph authenticationStrengthPolicy id: 000...002 = Multifactor authentication, 000...003 = Passwordless MFA, 000...004 = Phishing-resistant MFA. See identity/schema/known-entra-ids.json."
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "description": "Models the Microsoft Graph grantControls.authenticationStrength relationship: a reference to an authenticationStrengthPolicy id, not a builtInControls string."
+        }
+      },
+      "anyOf": [
+        { "required": ["builtInControls"] },
+        { "required": ["authenticationStrength"] }
+      ]
+    },
+    "emergencyAccessExclusion": {
+      "type": "object",
+      "required": ["required", "placeholder", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "placeholder": {
+          "type": "string",
+          "pattern": "^(REPLACE_WITH_.+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+          "description": "Object ID of the emergency-access/break-glass group or user. In the committed template this must remain a REPLACE_WITH_* placeholder; a locally populated (never committed) copy replaces it with a real group/user object ID before any apply workflow runs. See scripts/validate-identity-artifacts.sh --mode."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

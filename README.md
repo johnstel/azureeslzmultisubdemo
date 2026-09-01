@@ -84,6 +84,28 @@ RBAC is disabled by default with `deployRoleAssignments=false`. The deployment
 principal needs enough access to create these assignments when it is enabled;
 the governance group assignments do not bootstrap the deployment principal.
 
+## Entra Conditional Access and PIM (identity governance, not Azure Policy)
+
+Azure Policy cannot require MFA, block legacy authentication, or govern
+privileged-role activation — those are Microsoft Entra ID/Microsoft Graph
+concepts. `identity/` contains report-only Conditional Access policy inputs
+and eligible-only Privileged Identity Management (PIM) activation-policy
+inputs for later, separately reviewed use. This repository never calls
+Microsoft Graph, never modifies Entra ID, and never enables Conditional
+Access; every artifact defaults to report-only/eligible and requires a
+real emergency-access (break-glass) exclusion before it could ever be
+applied. See the [Entra Conditional Access and PIM runbook](docs/ENTRA-CONDITIONAL-ACCESS-PIM.md)
+for licensing, required directory roles, workload-identity guidance, rollout
+order, monitoring, and rollback. Validate these artifacts locally with:
+
+```bash
+./scripts/validate-identity-artifacts.sh
+```
+
+```powershell
+.\scripts\validate-identity-artifacts.ps1
+```
+
 ## Cost rationale
 
 With `deployEvidenceResources=false`, the project creates only governance-plane
@@ -334,6 +356,20 @@ main.bicep
 docs/
   BEGINNERS-GUIDE.md
   FIRST-RUN-CHECKLIST.md
+  ENTRA-CONDITIONAL-ACCESS-PIM.md
+identity/
+  conditional-access/
+    ca-privileged-role-mfa.template.json
+    ca-azure-mgmt-mfa.template.json
+    ca-block-legacy-auth.template.json
+    ca-pim-activation-mfa.template.json
+  pim/
+    pim-activation-global-administrator.template.json
+    pim-activation-privileged-role-administrator.template.json
+  schema/
+    conditional-access-policy.schema.json
+    pim-activation-policy.schema.json
+    known-entra-ids.json
 modules/
   hierarchy.bicep
   policy-library.bicep
@@ -352,10 +388,12 @@ scripts/
   what-if.ps1
   deploy.ps1
   teardown.ps1
+  validate-identity-artifacts.ps1
   preflight.sh
   what-if.sh
   deploy.sh
   teardown.sh
+  validate-identity-artifacts.sh
 tests/
   test.ps1
   test.sh
@@ -369,3 +407,6 @@ tests/
 - Deny assignments are non-enforcing by default.
 - RBAC and evidence resources are opt-in.
 - Deployment and teardown require exact environment confirmations.
+- No Conditional Access policy or PIM role setting is applied to any
+  tenant; `identity/` templates are static, report-only/eligible-only
+  inputs and always require replacing an emergency-access placeholder.

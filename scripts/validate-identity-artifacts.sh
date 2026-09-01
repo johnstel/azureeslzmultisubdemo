@@ -1,0 +1,736 @@
+#!/usr/bin/env bash
+# Static, offline validation of the Entra Conditional Access and PIM demo
+# artifacts. This script never contacts Microsoft Graph or any tenant; it
+# only inspects JSON files on local disk.
+#
+# Usage:
+#   validate-identity-artifacts.sh [--mode template|populated] [--path DIR]
+#
+#   --mode template (default): validates the committed templates under
+#     identity/. Every emergencyAccessExclusion.placeholder (and every
+#     approvers/excludeGroups entry that must equal it) must still be an
+#     unpopulated REPLACE_WITH_* value, and no tenant-specific GUID may
+#     appear anywhere (only the public, well-known Microsoft constants in
+#     identity/schema/known-entra-ids.json are allowed).
+#   --mode populated: validates a local, gitignored copy of these artifacts
+#     after an operator has replaced every REPLACE_WITH_* placeholder with a
+#     real object ID, in preparation for a future, separately gated apply
+#     workflow. In this mode every placeholder must be a syntactically valid
+#     GUID (not left as REPLACE_WITH_*, not empty), and the tenant-GUID
+#     allowlist check is skipped because populated input is expected to
+#     contain real tenant identifiers. --path must point away from the
+#     tracked identity/ folder in this mode so populated, tenant-specific
+#     values are never committed.
+#   --path DIR (default: <repo>/identity): directory containing
+#     conditional-access/ and pim/ subdirectories to validate.
+set -euo pipefail
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 1
+}
+
+# Canonicalize a directory path (resolving '.', '..', and symlinks) using
+# only POSIX `cd`/`pwd -P`, so this works without a GNU-specific `realpath`
+# binary (portable to stock macOS/BSD as well as Linux). This is required
+# before the populated-mode tracked-folder containment check below: a naive
+# string comparison against the raw --path argument can be bypassed with
+# unnormalized forms such as './identity', '/repo/./identity', or
+# 'scripts/../identity' that still resolve to the tracked identity/ folder.
+#
+# NOTE: `pwd -P` resolves symlinks but does NOT correct the casing of a
+# path component to whatever case the filesystem actually stored it as; on
+# a case-insensitive filesystem (default macOS APFS, exFAT/NTFS mounts,
+# etc.) it simply echoes back the casing the caller supplied. So a
+# case-differing alias like '.../IDENTITY' canonicalizes to a *different*
+# string than '.../identity' even though both name the exact same directory
+# there. This is handled separately below via a case-sensitivity probe.
+canonicalize_dir() {
+  local __dir="$1"
+  ( cd "${__dir}" 2>/dev/null && pwd -P ) || fail "Directory not found: ${__dir}"
+}
+
+# Resolves an existing file to its final filesystem target: like
+# canonicalize_dir() for its parent directory (which fully dereferences any
+# symlinked directory components via `cd`), plus dereferencing the file's own
+# leaf component if it is itself a symlink (or a chain of symlinks). A single
+# resolution is not sufficient: a symlink's target may itself pass through
+# further symlinked directories, so each iteration re-canonicalizes the new
+# parent directory before checking whether the leaf is still a symlink. A
+# bounded iteration count guards against a symlink cycle.
+canonicalize_file() {
+  local __path="$1"
+  local __dir __base __resolved __iterations=0 __link_target
+  __dir="$(dirname "${__path}")"
+  __base="$(basename "${__path}")"
+  __resolved="$(canonicalize_dir "${__dir}")/${__base}"
+  while [[ -L "${__resolved}" ]]; do
+    __iterations=$((__iterations + 1))
+    [[ ${__iterations} -le 64 ]] || fail "Too many levels of symbolic links resolving ${__path} (possible link cycle)."
+    __link_target="$(readlink "${__resolved}")"
+    case "${__link_target}" in
+      /*) __resolved="${__link_target}" ;;
+      *) __resolved="$(dirname "${__resolved}")/${__link_target}" ;;
+    esac
+    __dir="$(dirname "${__resolved}")"
+    __base="$(basename "${__resolved}")"
+    __resolved="$(canonicalize_dir "${__dir}")/${__base}"
+  done
+  printf '%s' "${__resolved}"
+}
+
+# Resolve this script file itself to its final filesystem target before
+# deriving the repository root. If the validator file is invoked through an
+# external symlink (or a chain of them), ${BASH_SOURCE[0]} is that external
+# path; naively taking dirname() of it would derive SCRIPT_DIR/PROJECT_DIR
+# from the caller-controlled symlink's parent directory, and the "trusted"
+# canonical schemas/known-entra-ids.json below would then be loaded from
+# that external tree -- silently reintroducing the caller-controlled-schema
+# bypass this validator is designed to prevent. canonicalize_file() already
+# fully dereferences chained/intermediate symlinks (including within a
+# resolved target's own path), so it is reused here for the script's own
+# path, not just for artifact files further down.
+SCRIPT_PATH="$(canonicalize_file "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "${SCRIPT_PATH}")"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+command -v jq >/dev/null 2>&1 || {
+  printf 'ERROR: jq is required for identity artifact validation.\n' >&2
+  exit 1
+}
+command -v rg >/dev/null 2>&1 || {
+  printf 'ERROR: ripgrep is required for identity artifact validation.\n' >&2
+  exit 1
+}
+
+# bash 3.2 (stock macOS) has no `mapfile`/`readarray` builtin, so read
+# newline-delimited command output into an array with a plain while-read
+# loop instead. Usage: read_lines_into array_name < <(command)
+read_lines_into() {
+  local __array_name="$1"
+  eval "${__array_name}=()"
+  local __line
+  while IFS= read -r __line; do
+    eval "${__array_name}+=(\"\${__line}\")"
+  done
+}
+
+mode='template'
+identity_dir="${PROJECT_DIR}/identity"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      mode="${2:-}"
+      shift 2
+      ;;
+    --path)
+      identity_dir="${2:-}"
+      shift 2
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
+
+case "${mode}" in
+  template|populated) ;;
+  *) fail "--mode must be 'template' or 'populated', found '${mode}'." ;;
+esac
+
+# Detects whether the filesystem location containing ${canonical_path} is
+# case-insensitive, by checking whether a case-swapped variant of its final
+# path component also exists there. This probes the actual filesystem
+# rather than assuming case (in)sensitivity from the OS/uname, since e.g.
+# Linux can mount case-insensitive volumes (exFAT, some NTFS/SMB mounts) and
+# macOS can be configured with a case-sensitive APFS volume.
+filesystem_is_case_insensitive() {
+  local __canonical_path="$1"
+  local __parent __leaf __flipped
+  __parent="$(dirname "${__canonical_path}")"
+  __leaf="$(basename "${__canonical_path}")"
+  # Swap case of every letter: a-z<->A-Z. If the leaf has no letters to
+  # swap (flipped == original), there is nothing usable to probe with;
+  # conservatively report case-insensitive so the stricter (fold-case)
+  # comparison is used rather than silently skipping the check.
+  __flipped="$(printf '%s' "${__leaf}" | tr 'a-zA-Z' 'A-Za-z')"
+  if [[ "${__flipped}" == "${__leaf}" ]]; then
+    echo "true"
+    return
+  fi
+  if [[ -e "${__parent}/${__flipped}" ]]; then
+    echo "true"
+  else
+    echo "false"
+  fi
+}
+
+# Fails if ${__resolved} (already canonicalized/dereferenced via
+# canonicalize_dir()/canonicalize_file()) is the tracked identity/ folder, or
+# lies inside it. Called not just for the requested --path root, but for
+# every subdirectory (conditional-access/, pim/) and individual template file
+# read from it in populated mode: the root can legitimately resolve outside
+# identity/ while a nested directory or file underneath it is itself a
+# symlink/alias back into the tracked, unpopulated tree, which would
+# otherwise let populated-mode validation silently read tracked templates.
+assert_outside_tracked_identity() {
+  local __resolved="$1" __description="$2"
+  local __compare_resolved __compare_tracked
+  if [[ "${IDENTITY_FS_CASE_INSENSITIVE}" == "true" ]]; then
+    __compare_resolved="$(printf '%s' "${__resolved}" | tr '[:upper:]' '[:lower:]')"
+    __compare_tracked="$(printf '%s' "${canonical_tracked_dir}" | tr '[:upper:]' '[:lower:]')"
+  else
+    __compare_resolved="${__resolved}"
+    __compare_tracked="${canonical_tracked_dir}"
+  fi
+  case "${__compare_resolved}" in
+    "${__compare_tracked}"|"${__compare_tracked}"/*)
+      fail "--mode populated must validate ${__description} outside the tracked identity/ folder so real object IDs are never committed. Copy identity/ to a local, gitignored location first."
+      ;;
+  esac
+}
+
+if [[ "${mode}" == "populated" ]]; then
+  canonical_identity_dir="$(canonicalize_dir "${identity_dir}")"
+  canonical_tracked_dir="$(canonicalize_dir "${PROJECT_DIR}/identity")"
+  IDENTITY_FS_CASE_INSENSITIVE="$(filesystem_is_case_insensitive "${canonical_tracked_dir}")"
+  assert_outside_tracked_identity "${canonical_identity_dir}" "the requested --path"
+fi
+
+# Schema/reference files are always read from the tracked repository's
+# canonical identity/schema/ tree -- deliberately independent of the
+# caller-supplied --path/identity_dir. The validators are the trust anchor
+# for what a compliant artifact looks like, so accepting a caller-supplied
+# schema would let external input redefine the very rules used to validate
+# it. Any schema/ directory or files under a populated --path are ignored.
+known_ids_file="${PROJECT_DIR}/identity/schema/known-entra-ids.json"
+[[ -f "${known_ids_file}" ]] || fail "Missing reference file: ${known_ids_file}"
+
+ca_schema_file="${PROJECT_DIR}/identity/schema/conditional-access-policy.schema.json"
+pim_schema_file="${PROJECT_DIR}/identity/schema/pim-activation-policy.schema.json"
+[[ -f "${ca_schema_file}" ]] || fail "Missing reference file: ${ca_schema_file}"
+[[ -f "${pim_schema_file}" ]] || fail "Missing reference file: ${pim_schema_file}"
+
+# A small, offline JSON Schema (draft-07 subset) validator implemented
+# entirely in jq (already a required dependency, so this introduces no new
+# tool/network dependency). It is deliberately general-purpose rather than
+# tailored to a specific file, so it enforces every keyword actually used by
+# identity/schema/*.schema.json -- including additionalProperties: false
+# (rejecting unknown fields), type/pattern/enum/const, $ref to local
+# #/definitions, and oneOf/anyOf/not -- as a structural safety net alongside
+# (not a replacement for) the mode-specific and cross-artifact semantic
+# checks below, which JSON Schema alone cannot express (e.g. template vs.
+# populated placeholder/GUID enforcement, exact per-template principal
+# sets, and CA<->PIM authentication-context coherence).
+read -r -d '' JQ_SCHEMA_VALIDATOR_PROGRAM << 'JQPROG' || true
+def resolve_ref($root; $ref):
+  ($ref | ltrimstr("#/") | split("/")) as $parts
+  | reduce $parts[] as $p ($root; .[$p]);
+
+def check_type($t; $inst):
+  if $t == "integer" then ($inst|type) == "number" and ($inst == ($inst|floor))
+  elif $t == "number" then ($inst|type) == "number"
+  else ($inst|type) == $t
+  end;
+
+def validate($root; $schema; $instance; $path):
+  (if ($schema | has("$ref")) then
+      validate($root; resolve_ref($root; $schema["$ref"]); $instance; $path)
+   else [] end)
+  +
+  (if ($schema | has("type")) then
+      (if check_type($schema.type; $instance) then [] else ["\($path): expected type \($schema.type) but got \($instance|type)"] end)
+   else [] end)
+  +
+  (if ($schema | has("const")) then
+      (if $instance == $schema.const then [] else ["\($path): expected const \($schema.const|tostring) but got \($instance|tostring)"] end)
+   else [] end)
+  +
+  (if ($schema | has("enum")) then
+      (if ([$schema.enum[] | select(. == $instance)] | length) > 0 then [] else ["\($path): value \($instance|tostring) not in enum"] end)
+   else [] end)
+  +
+  (if ($schema | has("pattern")) and (($instance|type) == "string") then
+      (if ($instance | test($schema.pattern)) then [] else ["\($path): value '\($instance)' does not match pattern \($schema.pattern)"] end)
+   else [] end)
+  +
+  (if ($schema | has("minLength")) and (($instance|type) == "string") then
+      (if ($instance | length) >= $schema.minLength then [] else ["\($path): string shorter than minLength \($schema.minLength)"] end)
+   else [] end)
+  +
+  (if ($instance | type) == "array" then
+      (if ($schema | has("minItems")) and (($instance|length) < $schema.minItems) then ["\($path): array has fewer than minItems \($schema.minItems)"] else [] end)
+      +
+      (if ($schema | has("items")) then
+         (reduce range(0; $instance|length) as $i ([]; . + validate($root; $schema.items; $instance[$i]; "\($path)[\($i)]")))
+       else [] end)
+   else [] end)
+  +
+  (if ($instance|type) == "number" then
+      (if ($schema | has("minimum")) and ($instance < $schema.minimum) then ["\($path): \($instance) less than minimum \($schema.minimum)"] else [] end)
+      +
+      (if ($schema | has("maximum")) and ($instance > $schema.maximum) then ["\($path): \($instance) greater than maximum \($schema.maximum)"] else [] end)
+   else [] end)
+  +
+  (if ($instance|type) == "object" then
+      (if ($schema | has("required")) then
+          [ $schema.required[] as $req | select(($instance | has($req)) | not) | "\($path): missing required property '\($req)'" ]
+       else [] end)
+      +
+      (if ($schema | has("properties")) then
+          (reduce ($schema.properties | keys_unsorted[]) as $k
+            ([]; if ($instance | has($k)) then . + validate($root; $schema.properties[$k]; $instance[$k]; "\($path)/\($k)") else . end))
+       else [] end)
+      +
+      (if ($schema | has("additionalProperties")) and ($schema.additionalProperties == false) then
+          (($schema.properties // {} | keys_unsorted)) as $allowed
+          | [ ($instance | keys_unsorted[]) as $key | select(($allowed | index($key)) == null) | "\($path): additional property '\($key)' not allowed by schema" ]
+       else [] end)
+   else [] end)
+  +
+  (if ($schema | has("oneOf")) then
+      ([ $schema.oneOf[] as $s | (validate($root; $s; $instance; $path) | length == 0) ]) as $results
+      | ($results | map(select(.)) | length) as $passCount
+      | (if $passCount == 1 then [] else ["\($path): value must match exactly one schema in oneOf, matched \($passCount)"] end)
+   else [] end)
+  +
+  (if ($schema | has("anyOf")) then
+      ([ $schema.anyOf[] as $s | (validate($root; $s; $instance; $path) | length == 0) ]) as $results
+      | (if ($results | any) then [] else ["\($path): value must match at least one schema in anyOf"] end)
+   else [] end)
+  +
+  (if ($schema | has("not")) then
+      (if (validate($root; $schema.not; $instance; $path) | length) == 0 then ["\($path): value must not match schema in 'not'"] else [] end)
+   else [] end);
+
+($root[0]) as $schema
+| ($instance[0]) as $inst
+| validate($schema; $schema; $inst; "")
+JQPROG
+
+# Validates $2 (a JSON artifact file) against $1 (a JSON Schema file),
+# failing with every collected violation if the instance does not conform.
+validate_against_schema() {
+  local schema_file="$1" template="$2" name="$3"
+  local schema_errors
+  schema_errors="$(jq -n --slurpfile root "${schema_file}" --slurpfile instance "${template}" "${JQ_SCHEMA_VALIDATOR_PROGRAM}")"
+  [[ "$(printf '%s' "${schema_errors}" | jq 'length')" -eq 0 ]] || \
+    fail "${name} failed JSON Schema validation ($(basename "${schema_file}")):
+$(printf '%s' "${schema_errors}" | jq -r '.[] | "  - " + .')"
+}
+
+guid_pattern='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+is_guid() { [[ "$1" =~ $guid_pattern ]]; }
+
+phishing_resistant_id="$(jq -r '.authenticationStrengthPolicyIds["Phishing-resistant MFA"]' "${known_ids_file}")"
+azure_mgmt_app_id="$(jq -r '.wellKnownServicePrincipalAppIds["Microsoft Azure Management"]' "${known_ids_file}")"
+read_lines_into known_role_ids < <(jq -r '.directoryRoleTemplateIds[]' "${known_ids_file}")
+read_lines_into known_auth_strength_ids < <(jq -r '.authenticationStrengthPolicyIds[]' "${known_ids_file}")
+read_lines_into known_auth_context_ids < <(jq -r '.authenticationContextClassReferenceIds | with_entries(select(.key != "$comment")) | .[]' "${known_ids_file}")
+
+auth_context_pattern='^c([1-9]|1[0-9]|2[0-5])$'
+is_known_auth_context_id() {
+  local candidate="$1" known
+  for known in "${known_auth_context_ids[@]}"; do
+    [[ "${candidate}" == "${known}" ]] && return 0
+  done
+  return 1
+}
+
+is_known_role_id() {
+  local candidate="$1" known
+  for known in "${known_role_ids[@]}"; do
+    [[ "${candidate}" == "${known}" ]] && return 0
+  done
+  return 1
+}
+
+# Compares a JSON array at ${jq_path} in ${template} (sorted) against the
+# sorted set of expected string values passed as remaining args. Used to
+# enforce exact (not merely containment) subject/application/client-type/
+# grant-control semantics for each named policy, so a template cannot be
+# silently broadened (e.g. an extra application, an added client type, or an
+# additional grant control loosening an OR-combined requirement).
+assert_exact_string_array() {
+  local template="$1" name="$2" jq_path="$3" description="$4"
+  shift 4
+  local actual expected
+  actual="$(jq -c "(${jq_path} // []) | sort" "${template}")"
+  expected="$(printf '%s\n' "$@" | jq -R . | jq -cs 'sort')"
+  [[ "${actual}" == "${expected}" ]] || \
+    fail "${name} ${description} must equal exactly [$(printf '"%s", ' "$@" | sed 's/, $//')] (found ${actual})."
+}
+
+# Confirms the given object property is absent (or, for arrays, absent/empty)
+# at ${jq_path} in ${template}. Used to reject broadened grant controls or a
+# principal scope mixing includeUsers and includeRoles on a policy that must
+# only use one of them.
+assert_absent_or_empty() {
+  local template="$1" name="$2" jq_path="$3" description="$4"
+  local count
+  count="$(jq "(${jq_path} // []) | length" "${template}")"
+  [[ "${count}" -eq 0 ]] || fail "${name} ${description} must be absent or empty."
+}
+
+ca_dir="${identity_dir}/conditional-access"
+pim_dir="${identity_dir}/pim"
+
+[[ -d "${ca_dir}" ]] || fail "Missing directory: ${ca_dir}"
+[[ -d "${pim_dir}" ]] || fail "Missing directory: ${pim_dir}"
+
+if [[ "${mode}" == "populated" ]]; then
+  assert_outside_tracked_identity "$(canonicalize_dir "${ca_dir}")" "the conditional-access/ directory"
+  assert_outside_tracked_identity "$(canonicalize_dir "${pim_dir}")" "the pim/ directory"
+fi
+
+# Validates emergencyAccessExclusion.required and .placeholder against the
+# active mode. Sets the global EMERGENCY_PLACEHOLDER_OUT variable as an
+# explicit, documented out-parameter for callers that also need to run
+# check_placeholder_excluded_from (a plain "$(...)" return isn't used here so
+# that fail()'s `exit 1` terminates the whole script rather than just a
+# command-substitution subshell).
+EMERGENCY_PLACEHOLDER_OUT=""
+check_emergency_placeholder() {
+  local template="$1" name="$2"
+  local exclusion_required placeholder
+
+  exclusion_required="$(jq -r '.emergencyAccessExclusion.required' "${template}")"
+  [[ "${exclusion_required}" == "true" ]] || \
+    fail "${name} must declare emergencyAccessExclusion.required=true."
+
+  placeholder="$(jq -r '.emergencyAccessExclusion.placeholder' "${template}")"
+  if [[ "${mode}" == "template" ]]; then
+    [[ "${placeholder}" =~ ^REPLACE_WITH_.+$ ]] || \
+      fail "${name} emergencyAccessExclusion.placeholder must be an unpopulated REPLACE_WITH_* input in template mode, found '${placeholder}'."
+  else
+    [[ "${placeholder}" =~ ^REPLACE_WITH_.+$ ]] && \
+      fail "${name} emergencyAccessExclusion.placeholder still contains an unpopulated REPLACE_WITH_* value; replace it with a real object ID before populated-mode validation."
+    is_guid "${placeholder}" || \
+      fail "${name} emergencyAccessExclusion.placeholder must be a valid object ID (GUID) in populated mode, found '${placeholder}'."
+  fi
+  EMERGENCY_PLACEHOLDER_OUT="${placeholder}"
+}
+
+# Confirms the given array field, e.g. conditions.users.excludeGroups for
+# Conditional Access, equals *exactly* the single-element set containing the
+# placeholder passed explicitly by the caller (normally via
+# $EMERGENCY_PLACEHOLDER_OUT immediately after check_emergency_placeholder).
+# This is an exact match, not a containment check: an arbitrary extra
+# excludeGroups entry (beyond the one declared emergency-access placeholder)
+# must fail, so a template cannot silently exclude additional, undeclared
+# groups from a report-only safety control.
+check_placeholder_excluded_from() {
+  local template="$1" name="$2" array_field="$3" placeholder="$4"
+  assert_exact_string_array "${template}" "${name}" ".${array_field}" \
+    "${array_field}" "${placeholder}"
+}
+
+
+
+ca_count=0
+ca_auth_context_values=()
+for template in "${ca_dir}"/*.template.json; do
+  [[ -e "${template}" ]] || fail "No Conditional Access templates found in ${ca_dir}"
+  ca_count=$((ca_count + 1))
+  name="$(basename "${template}")"
+
+  if [[ "${mode}" == "populated" ]]; then
+    assert_outside_tracked_identity "$(canonicalize_file "${template}")" "${name}"
+  fi
+
+  jq empty "${template}" || fail "${name} is not valid JSON."
+  validate_against_schema "${ca_schema_file}" "${template}" "${name}"
+
+  state="$(jq -r '.state' "${template}")"
+  [[ "${state}" == "enabledForReportingButNotEnforced" ]] || \
+    fail "${name} must default to state=enabledForReportingButNotEnforced (report-only), found '${state}'."
+
+  check_emergency_placeholder "${template}" "${name}"
+  check_placeholder_excluded_from "${template}" "${name}" 'conditions.users.excludeGroups' "${EMERGENCY_PLACEHOLDER_OUT}"
+
+  # Subject (conditions.users): must use Graph-compatible values. Either
+  # includeUsers (only 'All', 'None', 'GuestsOrExternalUsers', or a GUID) or
+  # includeRoles (only GUID directory role template IDs from the known-IDs
+  # allowlist) must be present; free-text role display names such as
+  # "Global Administrator" or the non-Graph value "All users" are rejected.
+  include_users_present="$(jq '.conditions.users | has("includeUsers")' "${template}")"
+  include_roles_present="$(jq '.conditions.users | has("includeRoles")' "${template}")"
+  [[ "${include_users_present}" == "true" || "${include_roles_present}" == "true" ]] || \
+    fail "${name} conditions.users must declare includeUsers or includeRoles."
+
+  if [[ "${include_users_present}" == "true" ]]; then
+    read_lines_into include_users < <(jq -r '.conditions.users.includeUsers[]' "${template}")
+    [[ "${#include_users[@]}" -ge 1 ]] || fail "${name} conditions.users.includeUsers must not be empty."
+    for value in "${include_users[@]}"; do
+      case "${value}" in
+        All|None|GuestsOrExternalUsers) ;;
+        *)
+          is_guid "${value}" || fail "${name} conditions.users.includeUsers entry '${value}' must be 'All', 'None', 'GuestsOrExternalUsers', or a user object ID (GUID)."
+          ;;
+      esac
+    done
+  fi
+
+  if [[ "${include_roles_present}" == "true" ]]; then
+    read_lines_into include_roles < <(jq -r '.conditions.users.includeRoles[]' "${template}")
+    [[ "${#include_roles[@]}" -ge 1 ]] || fail "${name} conditions.users.includeRoles must not be empty."
+    for value in "${include_roles[@]}"; do
+      is_guid "${value}" || \
+        fail "${name} conditions.users.includeRoles entry '${value}' must be a directory role template ID (GUID), not a display name or 'All users'."
+      is_known_role_id "${value}" || \
+        fail "${name} conditions.users.includeRoles entry '${value}' is not a known directory role template ID from identity/schema/known-entra-ids.json."
+    done
+  fi
+
+  # Application scope: Graph models this as a mutually exclusive choice
+  # between conditions.applications.includeApplications (broad application
+  # scoping) and conditions.applications.includeAuthenticationContextClassReferences
+  # (a specific authentication-context claim scope, e.g. raised by PIM role
+  # activation) -- never both on the same policy.
+  include_applications_present="$(jq '.conditions.applications | has("includeApplications")' "${template}")"
+  auth_context_present="$(jq '.conditions.applications | has("includeAuthenticationContextClassReferences")' "${template}")"
+  [[ "${include_applications_present}" == "true" || "${auth_context_present}" == "true" ]] || \
+    fail "${name} conditions.applications must declare includeApplications or includeAuthenticationContextClassReferences."
+  if [[ "${include_applications_present}" == "true" && "${auth_context_present}" == "true" ]]; then
+    fail "${name} conditions.applications must not declare both includeApplications and includeAuthenticationContextClassReferences (mutually exclusive Graph target shape)."
+  fi
+  if [[ "${include_applications_present}" == "true" ]]; then
+    application_count="$(jq '.conditions.applications.includeApplications | length' "${template}")"
+    [[ "${application_count}" -ge 1 ]] || fail "${name} conditions.applications.includeApplications must not be empty."
+  fi
+
+  # Client app types must be present and non-empty.
+  client_app_type_count="$(jq '.conditions.clientAppTypes | length' "${template}")"
+  [[ "${client_app_type_count}" -ge 1 ]] || fail "${name} conditions.clientAppTypes must not be empty."
+
+  # Authentication context class references (optional): if declared, every
+  # entry must be a valid Graph 'c1'..'c25' claim id, and known from
+  # identity/schema/known-entra-ids.json. Collected across all templates so
+  # a coherence check after both directories are processed can confirm every
+  # PIM activation.authenticationContext has a matching, declared, report-only
+  # Conditional Access policy actually enforcing it.
+  if [[ "${auth_context_present}" == "true" ]]; then
+    read_lines_into auth_contexts < <(jq -r '.conditions.applications.includeAuthenticationContextClassReferences[]' "${template}")
+    [[ "${#auth_contexts[@]}" -ge 1 ]] || \
+      fail "${name} conditions.applications.includeAuthenticationContextClassReferences must not be empty."
+    for value in "${auth_contexts[@]}"; do
+      [[ "${value}" =~ ${auth_context_pattern} ]] || \
+        fail "${name} conditions.applications.includeAuthenticationContextClassReferences entry '${value}' must be a Graph authenticationContextClassReference id ('c1'..'c25')."
+      is_known_auth_context_id "${value}" || \
+        fail "${name} conditions.applications.includeAuthenticationContextClassReferences entry '${value}' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
+      ca_auth_context_values+=("${value}")
+    done
+  fi
+
+  # Grant controls: authenticationStrength must be modeled as its own Graph
+  # relationship object (id + displayName), never as a builtInControls
+  # string entry.
+  built_in_controls_raw="$(jq -c '.grantControls.builtInControls // []' "${template}")"
+  if printf '%s' "${built_in_controls_raw}" | rg -q '"authenticationStrength"'; then
+    fail "${name} grantControls.builtInControls must not contain 'authenticationStrength'; use the grantControls.authenticationStrength relationship object instead."
+  fi
+  built_in_controls_present="$(jq '.grantControls | has("builtInControls")' "${template}")"
+  authentication_strength_present="$(jq '.grantControls | has("authenticationStrength")' "${template}")"
+  [[ "${built_in_controls_present}" == "true" || "${authentication_strength_present}" == "true" ]] || \
+    fail "${name} grantControls must declare builtInControls or authenticationStrength."
+  if [[ "${authentication_strength_present}" == "true" ]]; then
+    auth_strength_id="$(jq -r '.grantControls.authenticationStrength.id' "${template}")"
+    is_known_id=false
+    for known in "${known_auth_strength_ids[@]}"; do
+      [[ "${auth_strength_id}" == "${known}" ]] && is_known_id=true
+    done
+    [[ "${is_known_id}" == true ]] || \
+      fail "${name} grantControls.authenticationStrength.id '${auth_strength_id}' is not a known built-in authenticationStrengthPolicy id from identity/schema/known-entra-ids.json."
+  fi
+
+  # Policy-specific semantic checks, keyed by the known template filenames.
+  # Each check is an exact match, not a containment check: extra/broadened
+  # principals, applications, client types, or grant controls must fail, not
+  # just missing ones, so a template cannot silently widen its blast radius.
+  case "${name}" in
+    ca-privileged-role-mfa.template.json)
+      [[ "${include_roles_present}" == "true" ]] || \
+        fail "${name} must scope the subject with conditions.users.includeRoles (privileged directory roles)."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles" "${known_role_ids[@]}"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers"
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "all"
+      [[ "${authentication_strength_present}" == "true" ]] || \
+        fail "${name} grantControls.authenticationStrength must be set."
+      [[ "${auth_strength_id}" == "${phishing_resistant_id}" ]] || \
+        fail "${name} grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy (${phishing_resistant_id})."
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)"
+      ;;
+    ca-azure-mgmt-mfa.template.json)
+      [[ "${include_users_present}" == "true" ]] || \
+        fail "${name} must scope the subject to all users with conditions.users.includeUsers."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles"
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications" "${azure_mgmt_app_id}"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "all"
+      assert_exact_string_array "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls" "mfa"
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.authenticationStrength' \
+        "grantControls.authenticationStrength"
+      ;;
+    ca-block-legacy-auth.template.json)
+      [[ "${include_users_present}" == "true" ]] || \
+        fail "${name} must scope the subject to all users with conditions.users.includeUsers."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles"
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "exchangeActiveSync" "other"
+      assert_exact_string_array "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls" "block"
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.authenticationStrength' \
+        "grantControls.authenticationStrength"
+      ;;
+    ca-pim-activation-mfa.template.json)
+      [[ "${include_users_present}" == "true" ]] || \
+        fail "${name} must scope the subject to all users with conditions.users.includeUsers."
+      assert_exact_string_array "${template}" "${name}" '.conditions.users.includeUsers' \
+        "conditions.users.includeUsers" "All"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.users.includeRoles' \
+        "conditions.users.includeRoles"
+      assert_absent_or_empty "${template}" "${name}" '.conditions.applications.includeApplications' \
+        "conditions.applications.includeApplications (this policy must target only the c1 authentication context, not a broader application scope; includeApplications and includeAuthenticationContextClassReferences are mutually exclusive)"
+      [[ "${auth_context_present}" == "true" ]] || \
+        fail "${name} conditions.applications.includeAuthenticationContextClassReferences must be set (this policy exists to enforce the PIM activation authentication context)."
+      assert_exact_string_array "${template}" "${name}" '.conditions.applications.includeAuthenticationContextClassReferences' \
+        "conditions.applications.includeAuthenticationContextClassReferences" "c1"
+      assert_exact_string_array "${template}" "${name}" '.conditions.clientAppTypes' \
+        "conditions.clientAppTypes" "all"
+      [[ "${authentication_strength_present}" == "true" ]] || \
+        fail "${name} grantControls.authenticationStrength must be set."
+      [[ "${auth_strength_id}" == "${phishing_resistant_id}" ]] || \
+        fail "${name} grantControls.authenticationStrength.id must reference the built-in Phishing-resistant MFA policy (${phishing_resistant_id})."
+      assert_absent_or_empty "${template}" "${name}" '.grantControls.builtInControls' \
+        "grantControls.builtInControls (only grantControls.authenticationStrength may satisfy this policy, so an OR-combined builtInControls entry cannot weaken the phishing-resistant requirement)"
+      ;;
+  esac
+
+  notes="$(jq -r '.notes' "${template}")"
+  [[ -n "${notes}" ]] || fail "${name} must document rollout/licensing notes."
+done
+printf 'Conditional Access templates validated (mode=%s): %s\n' "${mode}" "${ca_count}"
+
+pim_count=0
+pim_auth_context_values=()
+for template in "${pim_dir}"/*.template.json; do
+  [[ -e "${template}" ]] || fail "No PIM templates found in ${pim_dir}"
+  pim_count=$((pim_count + 1))
+  name="$(basename "${template}")"
+
+  if [[ "${mode}" == "populated" ]]; then
+    assert_outside_tracked_identity "$(canonicalize_file "${template}")" "${name}"
+  fi
+
+  jq empty "${template}" || fail "${name} is not valid JSON."
+  validate_against_schema "${pim_schema_file}" "${template}" "${name}"
+
+  assignment_type="$(jq -r '.assignmentType' "${template}")"
+  [[ "${assignment_type}" == "eligible" ]] || \
+    fail "${name} assignmentType must be 'eligible' (never permanent), found '${assignment_type}'."
+
+  for bool_field in .activation.requireApproval .activation.requireMultiFactorAuthentication \
+    .activation.requireJustification .notifications.notifyAdminsOnActivation \
+    .notifications.notifyApproversOnActivationRequest .notifications.notifyAssigneeOnActivation; do
+    value="$(jq -r "${bool_field}" "${template}")"
+    [[ "${value}" == "true" ]] || fail "${name} ${bool_field} must be true."
+  done
+
+  approver_count="$(jq '.activation.approvers | length' "${template}")"
+  [[ "${approver_count}" -ge 1 ]] || fail "${name} activation.approvers must not be empty."
+
+  # Each approver identifier follows the same mode-aware placeholder rules as
+  # emergencyAccessExclusion.placeholder: an unpopulated REPLACE_WITH_* input
+  # in template mode, a real object ID (GUID) in populated mode.
+  read_lines_into approvers < <(jq -r '.activation.approvers[]' "${template}")
+  for approver in "${approvers[@]}"; do
+    if [[ "${mode}" == "template" ]]; then
+      [[ "${approver}" =~ ^REPLACE_WITH_.+$ ]] || \
+        fail "${name} activation.approvers entry '${approver}' must be an unpopulated REPLACE_WITH_* input in template mode."
+    else
+      [[ "${approver}" =~ ^REPLACE_WITH_.+$ ]] && \
+        fail "${name} activation.approvers entry '${approver}' still contains an unpopulated REPLACE_WITH_* value; replace it with a real object ID before populated-mode validation."
+      is_guid "${approver}" || \
+        fail "${name} activation.approvers entry '${approver}' must be a valid object ID (GUID) in populated mode, found '${approver}'."
+    fi
+  done
+
+  duration="$(jq -r '.activation.maximumActivationDurationHours' "${template}")"
+  [[ "${duration}" =~ ^[0-9]+$ ]] && [[ "${duration}" -ge 1 ]] && [[ "${duration}" -le 8 ]] || \
+    fail "${name} activation.maximumActivationDurationHours must be an integer between 1 and 8, found '${duration}'."
+
+  auth_context="$(jq -r '.activation.authenticationContext' "${template}")"
+  [[ "${auth_context}" =~ ${auth_context_pattern} ]] || \
+    fail "${name} activation.authenticationContext must be a Graph authenticationContextClassReference id ('c1'..'c25'), found '${auth_context}'."
+  is_known_auth_context_id "${auth_context}" || \
+    fail "${name} activation.authenticationContext '${auth_context}' is not a known authenticationContextClassReference id from identity/schema/known-entra-ids.json."
+  pim_auth_context_values+=("${auth_context}")
+
+  check_emergency_placeholder "${template}" "${name}"
+
+  notes="$(jq -r '.notes' "${template}")"
+  [[ -n "${notes}" ]] || fail "${name} must document rollout/licensing notes."
+done
+printf 'PIM activation templates validated (mode=%s): %s\n' "${mode}" "${pim_count}"
+
+# Coherence check: every PIM activation.authenticationContext must have a
+# matching, declared Conditional Access policy (from the loop above) whose
+# conditions.applications.includeAuthenticationContextClassReferences
+# actually enforces that context. Otherwise a PIM policy could reference an
+# authentication context that no report-only Conditional Access policy in
+# this repository enforces, leaving the Graph workflow incoherent.
+for pim_context in "${pim_auth_context_values[@]}"; do
+  found=false
+  for ca_context in "${ca_auth_context_values[@]}"; do
+    [[ "${pim_context}" == "${ca_context}" ]] && found=true
+  done
+  [[ "${found}" == true ]] || \
+    fail "PIM activation.authenticationContext '${pim_context}' has no matching Conditional Access policy declaring it in conditions.applications.includeAuthenticationContextClassReferences; add one under ${ca_dir} so the PIM activation control is actually enforced."
+done
+
+if [[ "${mode}" == "template" ]]; then
+  # Confirm no tenant-specific identifiers (GUIDs) leak into any identity
+  # artifact, other than the well-known, publicly documented Microsoft
+  # constants in identity/schema/known-entra-ids.json.
+  read_lines_into allowed_guids < <(jq -r '[.directoryRoleTemplateIds[], .authenticationStrengthPolicyIds[], .wellKnownServicePrincipalAppIds[]] | .[]' "${known_ids_file}")
+  guid_pattern_global='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  allow_filter_args=()
+  for allowed in "${allowed_guids[@]}"; do
+    allow_filter_args+=(-e ":${allowed}\$")
+  done
+  if [[ "${#allow_filter_args[@]}" -eq 0 ]]; then
+    # No known-safe GUIDs loaded (e.g. an empty known-entra-ids.json): any
+    # GUID found anywhere under identity_dir is unexplained and must fail.
+    allow_filter_args=(-e '$^')
+  fi
+  if rg -no -e "${guid_pattern_global}" "${identity_dir}" -g '*.json' | \
+    rg -v "${allow_filter_args[@]}"; then
+    fail "A tenant-specific GUID was found in ${identity_dir}. Replace it with a REPLACE_WITH_* placeholder, or add it to identity/schema/known-entra-ids.json only if it is a public Microsoft constant."
+  fi
+fi
+
+printf 'Identity artifact validation passed (mode=%s): %s Conditional Access template(s), %s PIM template(s).\n' \
+  "${mode}" "${ca_count}" "${pim_count}"
