@@ -148,6 +148,7 @@ try {
             }
         }
     }
+    & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
     Write-Host '3/23 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'

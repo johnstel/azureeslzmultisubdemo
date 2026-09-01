@@ -70,6 +70,7 @@ jq -e '
   printf 'ERROR: Required resource-group tag initiative or evidence tags are invalid.\n' >&2
   exit 1
 }
+"${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
 printf '3/23 Validate the ARM parameter template...\n'
 jq -e '
