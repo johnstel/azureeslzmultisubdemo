@@ -117,6 +117,60 @@ private IP. It does not deploy or prove the firewall, VNet peering, private
 DNS, private endpoints, subnet associations, route propagation, or end-to-end
 traffic traversal. Those are customer-owned hub-routing architecture and
 operational-validation dependencies, separate from Azure Policy evidence.
+### Backup coverage and vault posture
+
+The `demo-backup-posture` initiative is assigned to the Landing Zones branch
+and is audit-first: it reports virtual machines without Azure Backup coverage
+(`vmBackupCoveragePolicyEffect`) and Recovery Services vault public network
+access (`vaultPublicNetworkPolicyEffect`), customer-managed-key encryption
+(`vaultEncryptionPolicyEffect` plus `vaultDoubleEncryptionRequired`), and
+immutability (`vaultImmutabilityPolicyEffect` plus
+`vaultCheckLockedImmutabilityOnly`). Auditing creates no vault, no backup
+policy, and no protection relationship. Vault soft delete remains a
+vault-level setting that Microsoft enables by default; the immutability
+control is the audited protection posture.
+
+Approved **existing** vaults and backup policies are the preferred integration
+path. Supply them through `approvedVaultRegions` and `approvedBackupVaults`,
+where each entry records `workload`, `region`, `vaultResourceId`,
+`backupPolicyResourceId`, and `inclusionTagValues`. Each entry is validated:
+the region must be an approved vault region, the backup policy must live in
+the referenced vault, and the vault must live in the workload or
+critical-infrastructure subscription. Azure Backup protects virtual machines
+from a vault in the same subscription and region, so a single centralized
+vault is never assumed; one vault record is expected per approved region.
+`backupRetentionStandardId` records which customer retention standard applies —
+no universal retention period is defined for every workload.
+
+`enableVmBackupRemediation` defaults to `false` and cannot be enabled without
+valid `approvedBackupVaults` entries, a `vmBackupInclusionTagName`, and a
+documented `backupRetentionStandardId`. When enabled, one remediating
+assignment per approved vault record is created with a system-assigned
+identity, the deployment region, and the built-in Virtual Machine Contributor
+and Backup Contributor roles. `vmBackupConfigurationEffect` stays
+`AuditIfNotExists` until `DeployIfNotExists` is selected deliberately. The
+template never starts a remediation task; the assignment IDs and identity
+principal IDs are exposed as outputs so a remediation can be started
+separately after review.
+
+`enableVaultDiagnostics` (default `false`) assigns the verified built-in
+resource-diagnostics initiative restricted to
+`microsoft.recoveryservices/vaults`, sending vault logs to the effective
+central monitoring workspace. It requires `deployCentralLogAnalytics=true` or
+an `existingLogAnalyticsWorkspaceResourceId`.
+
+`deployRecoveryServicesVault` (default `false`) is the only switch that creates
+a **metered, customer-owned** vault and backup policy, in a
+`rg-<namePrefix>-backup` resource group tagged `CostModel=Metered` and
+`Ownership=Customer-owned`. It is rejected when `approvedBackupVaults` records
+are supplied, and its region must be an approved vault region. Retention and
+protection posture are parameterized through `backupDailyRetentionInDays`,
+`backupWeeklyRetentionInWeeks`, `backupMonthlyRetentionInMonths`,
+`backupYearlyRetentionInYears`, `vaultSoftDeleteState`,
+`vaultSoftDeleteRetentionInDays`, and `vaultImmutabilityState` (`Locked` is
+irreversible; `Unlocked` is the default). No existing vault is ever deleted or
+replaced, and no live virtual machine is backed up by this template.
+
 ### Security benchmark and optional compliance overlays
 
 The demo root assigns the stable **Microsoft cloud security benchmark** (MCSB)
@@ -318,6 +372,17 @@ deletes it either. Teardown also parses `existingLogAnalyticsWorkspaceResourceId
 and skips deleting any resource group — including the generated
 `rg-<namePrefix>-connectivity` group — whose subscription and name match the
 supplied existing workspace, even if the names happen to collide.
+
+### Optional customer-owned backup vault
+
+With `deployRecoveryServicesVault=false` (the default), no Recovery Services
+vault, backup policy, or protected item is created, so backup governance stays
+audit-only and adds no cost. A Recovery Services vault itself has no hourly
+charge, but protected instances and backup storage are metered, which is why
+vault creation is explicit, tagged as metered and customer-owned, and never
+combined with approved existing vault records. Enabling backup remediation can
+start protecting eligible virtual machines only after a remediation task is
+started manually, which this project never does.
 
 ## Required permissions
 
@@ -596,6 +661,8 @@ modules/
   central-monitoring.bicep
   central-monitoring-workspace.bicep
   central-monitoring-sentinel.bicep
+  backup-vault.bicep
+  backup-vault-resources.bicep
 parameters/
 scripts/
   owner-eligibility-request.ps1

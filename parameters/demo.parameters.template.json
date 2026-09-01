@@ -155,6 +155,75 @@
     },
     "enableNistSp80053Rev5": {
       "value": false
+    },
+    "vmBackupCoveragePolicyEffect": {
+      "value": "AuditIfNotExists"
+    },
+    "vaultPublicNetworkPolicyEffect": {
+      "value": "Audit"
+    },
+    "vaultEncryptionPolicyEffect": {
+      "value": "Audit"
+    },
+    "vaultDoubleEncryptionRequired": {
+      "value": false
+    },
+    "vaultImmutabilityPolicyEffect": {
+      "value": "Audit"
+    },
+    "vaultCheckLockedImmutabilityOnly": {
+      "value": true
+    },
+    "approvedVaultRegions": {
+      "value": []
+    },
+    "backupRetentionStandardId": {
+      "value": ""
+    },
+    "approvedBackupVaults": {
+      "value": []
+    },
+    "enableVmBackupRemediation": {
+      "value": false
+    },
+    "vmBackupConfigurationEffect": {
+      "value": "AuditIfNotExists"
+    },
+    "vmBackupInclusionTagName": {
+      "value": ""
+    },
+    "enableVaultDiagnostics": {
+      "value": false
+    },
+    "vaultDiagnosticsEffect": {
+      "value": "AuditIfNotExists"
+    },
+    "deployRecoveryServicesVault": {
+      "value": false
+    },
+    "recoveryServicesVaultLocation": {
+      "value": "eastus2"
+    },
+    "vaultImmutabilityState": {
+      "value": "Unlocked"
+    },
+    "vaultSoftDeleteState": {
+      "value": "Enabled"
+    },
+    "vaultSoftDeleteRetentionInDays": {
+      "value": 14
+    },
+    "backupDailyRetentionInDays": {
+      "value": 30
+    },
+    "backupWeeklyRetentionInWeeks": {
+      "value": 0
+    },
+    "backupMonthlyRetentionInMonths": {
+      "value": 0
+    },
+    "backupYearlyRetentionInYears": {
+      "value": 0
     }
   }
 }
