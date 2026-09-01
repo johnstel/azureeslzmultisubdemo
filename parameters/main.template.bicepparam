@@ -71,3 +71,6 @@ param centralLogAnalyticsRetentionInDays = 30
 param centralLogAnalyticsDailyQuotaGb = -1
 param enableCriticalInfrastructure = false
 param criticalInfrastructureSubscriptionIds = []
+param enableMicrosoftCloudSecurityBenchmark = true
+param enableCisAzureFoundationsBenchmark = false
+param enableNistSp80053Rev5 = false
