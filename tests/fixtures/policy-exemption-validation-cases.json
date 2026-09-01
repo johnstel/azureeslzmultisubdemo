@@ -8,6 +8,7 @@
   "rfc3339UtcTimestamps": [
     { "value": "2026-12-31T23:59:59Z", "valid": true },
     { "value": "2024-02-29T00:00:00Z", "valid": true },
+    { "value": "2025-02-29T00:00:00Z", "valid": false },
     { "value": "2026-12-31TZ", "valid": false },
     { "value": "2026-02-30T23:59:59Z", "valid": false },
     { "value": "2026-12-31t23:59:59z", "valid": false },

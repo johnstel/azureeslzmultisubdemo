@@ -155,7 +155,7 @@ var validatedScopeType = exemptionScopeType == 'managementGroup'
       ? exemptionScopeType
       : fail('resourceGroup exemptions require valid subscriptionId and resourceGroupName and must not include managementGroupName.')
 
-var validatedPolicyAssignmentId = startsWith(policyAssignmentId, '/') && policyAssignmentId == trim(policyAssignmentId) && !endsWith(policyAssignmentId, '/') && hasValidResourceIdSegments(policyAssignmentId)
+var validatedPolicyAssignmentId = hasValidResourceIdSegments(policyAssignmentId)
   ? policyAssignmentId
   : fail('policyAssignmentId must be an exact Azure Policy assignment resource ID without trailing separators or whitespace.')
 
