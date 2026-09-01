@@ -175,8 +175,10 @@ finally {
     if (Test-Path -LiteralPath $TempDir) {
         Remove-Item -LiteralPath $TempDir -Recurse -Force
     }
-    if ((Test-Path -LiteralPath $ArtifactsParent) -and
-        @(Get-ChildItem -LiteralPath $ArtifactsParent -Force).Count -eq 0) {
-        Remove-Item -LiteralPath $ArtifactsParent -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $ArtifactsParent) {
+        $remainingArtifacts = @(Get-ChildItem -LiteralPath $ArtifactsParent -Force)
+        if ($remainingArtifacts.Count -eq 0) {
+            Remove-Item -LiteralPath $ArtifactsParent -Force
+        }
     }
 }

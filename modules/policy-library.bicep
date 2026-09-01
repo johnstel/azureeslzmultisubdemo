@@ -2,6 +2,28 @@ targetScope = 'managementGroup'
 
 param namePrefix string
 
+var managementPorts = [
+  '22'
+  '3389'
+]
+var nonPublicIpv4Ranges = [
+  '0.0.0.0/8'
+  '10.0.0.0/8'
+  '100.64.0.0/10'
+  '127.0.0.0/8'
+  '169.254.0.0/16'
+  '172.16.0.0/12'
+  '192.0.0.0/24'
+  '192.0.2.0/24'
+  '192.88.99.0/24'
+  '192.168.0.0/16'
+  '198.18.0.0/15'
+  '198.51.100.0/24'
+  '203.0.113.0/24'
+  '224.0.0.0/4'
+  '240.0.0.0/4'
+]
+
 resource allowedLocations 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   name: '${namePrefix}-allowed-us-locations'
   properties: {
@@ -62,6 +84,352 @@ resource auditPublicIp 'Microsoft.Authorization/policyDefinitions@2025-03-01' = 
       }
       then: {
         effect: 'audit'
+      }
+    }
+  }
+}
+
+resource publicManagementIngress 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-public-mgmt-ingress'
+  properties: {
+    displayName: 'Demo - block public RDP and SSH NSG rules'
+    description: 'Audits or denies inbound NSG rules that allow TCP RDP or SSH from any public IPv4 host, CIDR, Internet, or wildcard source.'
+    mode: 'All'
+    metadata: {
+      category: 'Network'
+      version: '1.0.0'
+    }
+    parameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Effect'
+          description: 'Audit is the safe default. Deny requires a reviewed assignment and enforcement-mode change.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+    }
+    policyRule: {
+      if: {
+        anyOf: [
+          {
+            allOf: [
+              {
+                field: 'type'
+                equals: 'Microsoft.Network/networkSecurityGroups/securityRules'
+              }
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/access'
+                equals: 'Allow'
+              }
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/direction'
+                equals: 'Inbound'
+              }
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/protocol'
+                in: [
+                  '*'
+                  'Tcp'
+                ]
+              }
+              {
+                anyOf: [
+                  {
+                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix'
+                    in: [
+                      '*'
+                      'Internet'
+                      '0.0.0.0/0'
+                    ]
+                  }
+                  {
+                    allOf: [
+                      {
+                        value: '[if(or(empty(field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\')), greaterOrEquals(first(field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\')))]'
+                        equals: true
+                      }
+                      {
+                        count: {
+                          value: nonPublicIpv4Ranges
+                          name: 'nonPublicIpv4Range'
+                          where: {
+                            value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\'))]'
+                            equals: false
+                          }
+                        }
+                        equals: length(nonPublicIpv4Ranges)
+                      }
+                    ]
+                  }
+                  {
+                    count: {
+                      field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                      where: {
+                        anyOf: [
+                          {
+                            field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                            in: [
+                              '*'
+                              'Internet'
+                              '0.0.0.0/0'
+                            ]
+                          }
+                          {
+                            allOf: [
+                              {
+                                value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\')))]'
+                                equals: true
+                              }
+                              {
+                                count: {
+                                  value: nonPublicIpv4Ranges
+                                  name: 'nonPublicIpv4Range'
+                                  where: {
+                                    value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\'))]'
+                                    equals: false
+                                  }
+                                }
+                                equals: length(nonPublicIpv4Ranges)
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                    greater: 0
+                  }
+                ]
+              }
+              {
+                count: {
+                  value: managementPorts
+                  name: 'managementPort'
+                  where: {
+                    anyOf: [
+                      {
+                        value: '[if(or(empty(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\')), greaterOrEquals(first(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\')), \'A\')), false, if(equals(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\'), \'*\'), true, and(lessOrEquals(int(first(split(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                        equals: true
+                      }
+                      {
+                        count: {
+                          field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
+                          where: {
+                            value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\')), \'A\')), false, if(equals(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\'), \'*\'), true, and(lessOrEquals(int(first(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                            equals: true
+                          }
+                        }
+                        greater: 0
+                      }
+                    ]
+                  }
+                }
+                greater: 0
+              }
+            ]
+          }
+          {
+            allOf: [
+              {
+                field: 'type'
+                equals: 'Microsoft.Network/networkSecurityGroups'
+              }
+              {
+                count: {
+                  field: 'Microsoft.Network/networkSecurityGroups/securityRules[*]'
+                  where: {
+                    allOf: [
+                      {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].access'
+                        equals: 'Allow'
+                      }
+                      {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].direction'
+                        equals: 'Inbound'
+                      }
+                      {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].protocol'
+                        in: [
+                          '*'
+                          'Tcp'
+                        ]
+                      }
+                      {
+                        anyOf: [
+                          {
+                            field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix'
+                            in: [
+                              '*'
+                              'Internet'
+                              '0.0.0.0/0'
+                            ]
+                          }
+                          {
+                            allOf: [
+                              {
+                                value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\')))]'
+                                equals: true
+                              }
+                              {
+                                count: {
+                                  value: nonPublicIpv4Ranges
+                                  name: 'nonPublicIpv4Range'
+                                  where: {
+                                    value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\'))]'
+                                    equals: false
+                                  }
+                                }
+                                equals: length(nonPublicIpv4Ranges)
+                              }
+                            ]
+                          }
+                          {
+                            count: {
+                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
+                              where: {
+                                anyOf: [
+                                  {
+                                    field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
+                                    in: [
+                                      '*'
+                                      'Internet'
+                                      '0.0.0.0/0'
+                                    ]
+                                  }
+                                  {
+                                    allOf: [
+                                      {
+                                        value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\')))]'
+                                        equals: true
+                                      }
+                                      {
+                                        count: {
+                                          value: nonPublicIpv4Ranges
+                                          name: 'nonPublicIpv4Range'
+                                          where: {
+                                            value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\'))]'
+                                            equals: false
+                                          }
+                                        }
+                                        equals: length(nonPublicIpv4Ranges)
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                            greater: 0
+                          }
+                        ]
+                      }
+                      {
+                        count: {
+                          value: managementPorts
+                          name: 'managementPort'
+                          where: {
+                            anyOf: [
+                              {
+                                value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\')), \'A\')), false, if(equals(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\'), \'*\'), true, and(lessOrEquals(int(first(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                                equals: true
+                              }
+                              {
+                                count: {
+                                  field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
+                                  where: {
+                                    value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\')), \'A\')), false, if(equals(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\'), \'*\'), true, and(lessOrEquals(int(first(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                                    equals: true
+                                  }
+                                }
+                                greater: 0
+                              }
+                            ]
+                          }
+                        }
+                        greater: 0
+                      }
+                    ]
+                  }
+                }
+                greater: 0
+              }
+            ]
+          }
+        ]
+      }
+      then: {
+        effect: '[parameters(\'effect\')]'
+      }
+    }
+  }
+}
+
+resource requireSubnetNsg 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-require-subnet-nsg'
+  properties: {
+    displayName: 'Demo - require NSGs on workload subnets'
+    description: 'Audits or denies workload subnets that do not have a network security group association.'
+    mode: 'All'
+    metadata: {
+      category: 'Network'
+      version: '1.0.0'
+    }
+    parameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Effect'
+          description: 'Audit is the safe default. Deny requires a reviewed assignment and enforcement-mode change.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+    }
+    policyRule: {
+      if: {
+        anyOf: [
+          {
+            allOf: [
+              {
+                field: 'type'
+                equals: 'Microsoft.Network/virtualNetworks/subnets'
+              }
+              {
+                field: 'Microsoft.Network/virtualNetworks/subnets/networkSecurityGroup.id'
+                exists: 'false'
+              }
+            ]
+          }
+          {
+            allOf: [
+              {
+                field: 'type'
+                equals: 'Microsoft.Network/virtualNetworks'
+              }
+              {
+                count: {
+                  field: 'Microsoft.Network/virtualNetworks/subnets[*]'
+                  where: {
+                    field: 'Microsoft.Network/virtualNetworks/subnets[*].networkSecurityGroup.id'
+                    exists: 'false'
+                  }
+                }
+                greater: 0
+              }
+            ]
+          }
+        ]
+      }
+      then: {
+        effect: '[parameters(\'effect\')]'
       }
     }
   }
@@ -152,5 +520,7 @@ resource platformTags 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
 
 output allowedLocationsPolicyDefinitionId string = allowedLocations.id
 output auditPublicIpPolicyDefinitionId string = auditPublicIp.id
+output publicManagementIngressPolicyDefinitionId string = publicManagementIngress.id
+output requireSubnetNsgPolicyDefinitionId string = requireSubnetNsg.id
 output expensiveResourcesPolicyDefinitionId string = expensiveResources.id
 output platformTagsPolicyDefinitionId string = platformTags.id
