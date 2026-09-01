@@ -31,6 +31,7 @@ $idPattern = '^REQ-[A-Z]+-[0-9]{2}$'
 Write-Host '1/10 Validate catalog JSON syntax...'
 $catalogText = Get-Content -LiteralPath $CatalogPath -Raw
 $catalog = $catalogText | ConvertFrom-Json
+$verificationMethods = @('raw-json', 'initiative-json-member', 'ms-learn-page', 'documentation-pattern', 'internal-design', 'in-repository-custom-definition', 'not-yet-selected', 'not-yet-created')
 
 if (-not $SchemaOnly) {
 Write-Host '2/10 Validate required top-level fields...'
@@ -61,7 +62,6 @@ $phases = @($catalog.enforcementPhaseValues)
 $controls = @($catalog.controls)
 
 Write-Host '3/10 Validate required per-control fields and enums...'
-$verificationMethods = @('raw-json', 'initiative-json-member', 'ms-learn-page', 'documentation-pattern', 'internal-design', 'in-repository-custom-definition', 'not-yet-selected', 'not-yet-created')
 foreach ($control in $controls) {
     foreach ($field in @('id', 'domain', 'customerRequirement', 'scope', 'classification', 'mechanism',
             'supportedEffects', 'requiredParameters', 'roleDefinitionIds', 'remediationIdentityRequired',
