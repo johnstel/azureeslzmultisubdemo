@@ -714,48 +714,6 @@ resource platformTags 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   }
 }
 
-resource workloadResourceGroupTags 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
-  name: '${namePrefix}-require-workload-rg-tags'
-  properties: {
-    displayName: 'Demo - require workload resource group tags'
-    description: 'Requires Application, Environment, and Owner tags on workload resource groups.'
-    mode: 'All'
-    metadata: {
-      category: 'Tags'
-      version: '1.0.0'
-    }
-    policyRule: {
-      if: {
-        allOf: [
-          {
-            field: 'type'
-            equals: 'Microsoft.Resources/subscriptions/resourceGroups'
-          }
-          {
-            anyOf: [
-              {
-                field: 'tags[Application]'
-                exists: 'false'
-              }
-              {
-                field: 'tags[Environment]'
-                exists: 'false'
-              }
-              {
-                field: 'tags[Owner]'
-                exists: 'false'
-              }
-            ]
-          }
-        ]
-      }
-      then: {
-        effect: 'deny'
-      }
-    }
-  }
-}
-
 output allowedLocationsPolicyDefinitionId string = allowedLocations.id
 output allowedResourceTypesAllPolicyDefinitionId string = allowedResourceTypesAll.id
 output auditPublicIpPolicyDefinitionId string = auditPublicIp.id
@@ -765,4 +723,3 @@ output privateAccessPublicNetworkPolicyDefinitionId string = privateAccessPublic
 output approvedFirewallRoutesPolicyDefinitionId string = approvedFirewallRoutes.id
 output expensiveResourcesPolicyDefinitionId string = expensiveResources.id
 output platformTagsPolicyDefinitionId string = platformTags.id
-output workloadResourceGroupTagsPolicyDefinitionId string = workloadResourceGroupTags.id

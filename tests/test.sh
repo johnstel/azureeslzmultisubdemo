@@ -43,6 +43,39 @@ az bicep build \
   --file "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.bicep" \
   --outfile "${TEMP_DIR}/owner-eligibility-request.json" >/dev/null
 COMPILED_MAIN_TEMPLATE="${TEMP_DIR}/main.json" "${SCRIPT_DIR}/validate-policy-assignment.sh"
+printf '    Confirm the exact six-tag initiative and compliant evidence resource groups...\n'
+jq -e '
+  def deployment($name):
+    first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
+  ["CostCenter", "ApplicationName", "Owner", "Environment", "DataClassification", "SSP-ID"] as $requiredTags |
+  deployment("resource-group-tags-initiative") as $initiative |
+  deployment("assign-resource-group-tags") as $assignment |
+  deployment("connectivity-evidence") as $connectivityEvidence |
+  deployment("workload-evidence") as $workloadEvidence |
+  ($initiative.properties.parameters.policyDefinitionReferences.value |
+    map({key: .policyDefinitionReferenceId, value: .parameters.tagName.value}) | from_entries) as $tagsByReference |
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.parameters.tagName.value) | sort) ==
+    ($requiredTags | sort) and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | length) == 6 and
+  ([$initiative.properties.parameters.policyDefinitionReferences.value[].policyDefinitionId] | unique) ==
+    ["[variables(\u0027requireResourceGroupTagPolicyDefinitionId\u0027)]"] and
+  all($initiative.properties.parameters.policyDefinitionReferences.value[]; .definitionVersion == "1.*.*") and
+  ($initiative.scope | contains("demoRootManagementGroupId")) and
+  ($assignment.scope | contains("landingZonesManagementGroupId")) and
+  ($assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]") and
+  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 6 and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
+    ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) and
+  all($assignment.properties.parameters.nonComplianceMessages.value[];
+    $tagsByReference[.policyDefinitionReferenceId] as $tag |
+    $tag != null and .message == "Resource groups must include the \($tag) tag.") and
+  (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
+  (first($workloadEvidence.properties.template.resources[] |
+    select(.type == "Microsoft.Resources/resourceGroups")).tags | keys | sort) == ($requiredTags | sort)
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Required resource-group tag initiative or evidence tags are invalid.\n' >&2
+  exit 1
+}
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
 printf '3/23 Validate the ARM parameter template...\n'
@@ -896,7 +929,7 @@ landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-
 }
 critical_sub_move_line_ps1="$(rg -n 'az account management-group subscription add --name \$tenantRoot --subscription \$criticalSubscription' "${PROJECT_DIR}/scripts/teardown.ps1" | head -1 | cut -d: -f1)"
 critical_mg_delete_line_ps1="$(rg -n '"\$prefix-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.ps1" | head -1 | cut -d: -f1)"
-landingzones_delete_line_ps1="$(rg -n '"\$prefix-landingzones"' "${PROJECT_DIR}/scripts/teardown.ps1" | head -1 | cut -d: -f1)"
+landingzones_delete_line_ps1="$(rg -n '\$managementGroups \+= "\$prefix-landingzones"' "${PROJECT_DIR}/scripts/teardown.ps1" | head -1 | cut -d: -f1)"
 [[ -n "${critical_sub_move_line_ps1}" && -n "${critical_mg_delete_line_ps1}" && -n "${landingzones_delete_line_ps1}" ]] || {
   printf 'ERROR: teardown.ps1 is missing the critical infrastructure subscription move or management group deletion.\n' >&2
   exit 1
@@ -1004,6 +1037,7 @@ if command -v pwsh >/dev/null 2>&1; then
 fi
 
 printf '18/23 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+"${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done

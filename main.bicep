@@ -230,6 +230,10 @@ var connectivityManagementGroupId = '${namePrefix}-connectivity'
 var landingZonesManagementGroupId = '${namePrefix}-landingzones'
 var workloadManagementGroupId = '${namePrefix}-${workloadArchetype}'
 var criticalInfrastructureManagementGroupId = '${namePrefix}-criticalinfra'
+var requireResourceGroupTagPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '96670d01-0a4d-4649-9c89-2d3abc0a5025'
+)
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -255,6 +259,89 @@ module policyLibrary 'modules/policy-library.bicep' = {
   scope: managementGroup(demoRootManagementGroupId)
   params: {
     namePrefix: namePrefix
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
+  name: 'resource-group-tags-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-required-rg-tags'
+    initiativeDisplayName: 'Demo - required resource group tags'
+    initiativeDescription: 'Requires the six customer governance tags on resource groups.'
+    initiativeCategory: 'Tags'
+    initiativeVersion: '2.0.0'
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-cost-center'
+        parameters: {
+          tagName: {
+            value: 'CostCenter'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-application-name'
+        parameters: {
+          tagName: {
+            value: 'ApplicationName'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-owner'
+        parameters: {
+          tagName: {
+            value: 'Owner'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-environment'
+        parameters: {
+          tagName: {
+            value: 'Environment'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-data-classification'
+        parameters: {
+          tagName: {
+            value: 'DataClassification'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-ssp-id'
+        parameters: {
+          tagName: {
+            value: 'SSP-ID'
+          }
+        }
+        groupNames: []
+      }
+    ]
   }
   dependsOn: [
     hierarchy
@@ -612,16 +699,42 @@ module platformTagsAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
-module workloadResourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
-  name: 'assign-workload-rg-tags'
-  scope: managementGroup(workloadManagementGroupId)
+module resourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-resource-group-tags'
+  scope: managementGroup(landingZonesManagementGroupId)
   params: {
     assignmentName: 'demo-require-rg-tags'
-    displayName: 'Demo - require workload resource group tags'
-    description: 'Requires Application, Environment, and Owner tags on workload resource groups.'
-    policyDefinitionId: policyLibrary.outputs.workloadResourceGroupTagsPolicyDefinitionId
+    displayName: 'Demo - require resource group tags'
+    description: 'Requires CostCenter, ApplicationName, Owner, Environment, DataClassification, and SSP-ID tags on landing-zone resource groups.'
+    policyDefinitionId: resourceGroupTagsInitiative.outputs.policySetDefinitionId
     enforcementMode: denyPolicyEnforcementMode
     parameters: {}
+    nonComplianceMessages: [
+      {
+        message: 'Resource groups must include the CostCenter tag.'
+        policyDefinitionReferenceId: 'require-cost-center'
+      }
+      {
+        message: 'Resource groups must include the ApplicationName tag.'
+        policyDefinitionReferenceId: 'require-application-name'
+      }
+      {
+        message: 'Resource groups must include the Owner tag.'
+        policyDefinitionReferenceId: 'require-owner'
+      }
+      {
+        message: 'Resource groups must include the Environment tag.'
+        policyDefinitionReferenceId: 'require-environment'
+      }
+      {
+        message: 'Resource groups must include the DataClassification tag.'
+        policyDefinitionReferenceId: 'require-data-classification'
+      }
+      {
+        message: 'Resource groups must include the SSP-ID tag.'
+        policyDefinitionReferenceId: 'require-ssp-id'
+      }
+    ]
   }
   dependsOn: [
     hierarchy
@@ -689,7 +802,7 @@ module workloadEvidence 'modules/evidence-workload.bicep' = if (deployEvidenceRe
   }
   dependsOn: [
     hierarchy
-    workloadResourceGroupTagsAssignment
+    resourceGroupTagsAssignment
   ]
 }
 

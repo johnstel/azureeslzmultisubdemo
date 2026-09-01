@@ -32,6 +32,7 @@ $verificationMethods = @('raw-json', 'initiative-json-member', 'ms-learn-page', 
 Write-Host '1/10 Validate catalog JSON syntax...'
 $catalogText = Get-Content -LiteralPath $CatalogPath -Raw
 $catalog = $catalogText | ConvertFrom-Json
+$verificationMethods = @('raw-json', 'initiative-json-member', 'ms-learn-page', 'documentation-pattern', 'internal-design', 'in-repository-custom-definition', 'not-yet-selected', 'not-yet-created')
 
 if (-not $SchemaOnly) {
 Write-Host '2/10 Validate required top-level fields...'

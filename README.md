@@ -59,7 +59,7 @@ root:
 | Demo root | Block common costly service types and VM SKUs outside an intentionally small allowlist | Deny assignment in `DoNotEnforce` |
 | Demo root | Customer deployment-restrictions initiative: `eastus`/`eastus2`, approved resource types and VM SKUs, managed disks, and public IP creation | Deny members in `DoNotEnforce`; audit members remain Audit |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
-| Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
+| Landing Zones | Require `CostCenter`, `ApplicationName`, `Owner`, `Environment`, `DataClassification`, and `SSP-ID` tags on resource groups | Initiative assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
 | Corp/Online and opt-in Critical Infrastructure | Audit selected PaaS public network access and private endpoint readiness | Audit |
 | Corp/Online and opt-in Critical Infrastructure | Audit supplied route-table expectations for an approved firewall | Explicit opt-in, Audit |
@@ -67,9 +67,12 @@ root:
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
 safe shape of Azure's built-in allowed-locations control. Resource groups are
-governed separately by workload tag policy. Change
+governed separately by a tagging initiative defined at the demo root and
+assigned at Landing Zones. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
-policy impact.
+policy impact. The resource-group tagging initiative composes six instances of
+Azure's built-in **Require a tag on resource groups** definition and provides a
+tag-specific noncompliance message for each requirement.
 
 The customer-control profile is separate from the broader safe demo location
 profile. Its `customerAllowedLocations`, `customerAllowedResourceTypes`, and
@@ -369,6 +372,46 @@ export ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"
 The script runs preflight and what-if again before asking for an interactive
 confirmation. It then creates a named tenant deployment. Do not use the script
 against production subscriptions.
+
+## Migrate the legacy resource-group tag policy
+
+Existing deployments may retain the former workload-scoped assignment and
+custom definition after the replacement demo-root initiative and Landing Zones
+assignment are deployed.
+First review what-if, deploy the replacement, and obtain approval. Then preview
+the migration; preview mode performs no Azure operation:
+
+```powershell
+.\scripts\migrate-legacy-rg-tags.ps1 -ParameterFile .\parameters\demo.parameters.json
+```
+
+```bash
+./scripts/migrate-legacy-rg-tags.sh parameters/demo.parameters.json
+```
+
+Only after the replacement is approved, execute with the separate migration
+confirmation. Execution first performs read-only checks of the active tenant
+and subscription, both supplied subscriptions, exact management-group ancestry,
+the legacy assignment-definition link, and the replacement initiative and
+Landing Zones assignment. It prompts for the validated
+`<tenantId>/<namePrefix>-<workloadArchetype>` only after those checks pass:
+
+```powershell
+$env:ESLZ_TAG_MIGRATION_CONFIRMATION = "REMOVE-LEGACY-RG-TAG-POLICY"
+.\scripts\migrate-legacy-rg-tags.ps1 -ParameterFile .\parameters\demo.parameters.json -Execute
+```
+
+```bash
+export ESLZ_TAG_MIGRATION_CONFIRMATION="REMOVE-LEGACY-RG-TAG-POLICY"
+./scripts/migrate-legacy-rg-tags.sh parameters/demo.parameters.json --execute
+```
+
+The scripts remove only `demo-require-rg-tags` at the legacy workload
+management-group scope and `<namePrefix>-require-workload-rg-tags` at the demo
+root. Each artifact is checked independently, so an already-absent assignment
+does not prevent definition cleanup; only verified not-found responses are
+treated as complete. All other read errors stop the migration. The scripts are
+never called automatically by preview, deployment, or teardown scripts.
 
 ## Teardown
 

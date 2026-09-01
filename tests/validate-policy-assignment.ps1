@@ -224,7 +224,7 @@ try {
         'assign-audit-public-ip'
         'assign-expensive-resources'
         'assign-platform-tags'
-        'assign-workload-rg-tags'
+        'assign-resource-group-tags'
     )
     $assignmentDeployments = @(
         Find-JsonObjects -Node $mainJson -Predicate {
@@ -257,13 +257,13 @@ try {
     if (-not $assignmentsByName['assign-platform-tags'].scope.Contains("variables('platformManagementGroupId')")) {
         Stop-Test 'assign-platform-tags scope changed.'
     }
-    if (-not $assignmentsByName['assign-workload-rg-tags'].scope.Contains("variables('workloadManagementGroupId')")) {
-        Stop-Test 'assign-workload-rg-tags scope changed.'
+    if (-not $assignmentsByName['assign-resource-group-tags'].scope.Contains("variables('landingZonesManagementGroupId')")) {
+        Stop-Test 'assign-resource-group-tags scope changed.'
     }
 
     if ($assignmentsByName['assign-allowed-locations'].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
         $assignmentsByName['assign-expensive-resources'].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
-        $assignmentsByName['assign-workload-rg-tags'].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]") {
+        $assignmentsByName['assign-resource-group-tags'].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]") {
         Stop-Test 'Existing deny assignment enforcement wiring changed.'
     }
     if ($assignmentsByName['assign-audit-public-ip'].properties.parameters.enforcementMode.value -ne 'Default' -or
@@ -275,7 +275,7 @@ try {
         'assign-audit-public-ip' = 'demo-audit-public-ip'
         'assign-expensive-resources' = 'demo-block-expensive'
         'assign-platform-tags' = 'demo-audit-platform-tags'
-        'assign-workload-rg-tags' = 'demo-require-rg-tags'
+        'assign-resource-group-tags' = 'demo-require-rg-tags'
     }
     $actualResourceNames = @()
     foreach ($assignmentDeployment in $assignmentDeployments) {
@@ -291,7 +291,7 @@ try {
     if ($assignmentsByName['assign-allowed-locations'].properties.parameters.parameters.value.allowedLocations.value -ne "[parameters('allowedLocations')]") {
         Stop-Test 'Allowed locations assignment parameters changed.'
     }
-    foreach ($name in @('assign-audit-public-ip', 'assign-expensive-resources', 'assign-platform-tags', 'assign-workload-rg-tags')) {
+    foreach ($name in @('assign-audit-public-ip', 'assign-expensive-resources', 'assign-platform-tags', 'assign-resource-group-tags')) {
         if (@($assignmentsByName[$name].properties.parameters.parameters.value.PSObject.Properties).Count -ne 0) {
             Stop-Test "$name no longer passes an empty parameter object."
         }

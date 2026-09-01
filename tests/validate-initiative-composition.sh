@@ -43,6 +43,8 @@ jq -e '
   .parameters.policyDefinitionReferences.items["$ref"] == "#/definitions/policyDefinitionReference" and
   .definitions.policyDefinitionReference.additionalProperties == false and
   .definitions.policyDefinitionReference.properties.policyDefinitionId.minLength == 1 and
+  .definitions.policyDefinitionReference.properties.definitionVersion.type == "string" and
+  .definitions.policyDefinitionReference.properties.definitionVersion.nullable == true and
   .definitions.policyDefinitionReference.properties.policyDefinitionReferenceId.minLength == 1 and
   .definitions.policyDefinitionReference.properties.parameters.type == "object" and
   .definitions.policyDefinitionReference.properties.groupNames.type == "array" and
@@ -66,9 +68,9 @@ jq -e '
   .resources.initiative.properties.metadata.managedBy == "Bicep" and
   .resources.initiative.properties.copy[0].name == "policyDefinitions" and
   (.resources.initiative.properties.copy[0].input | contains("validatedPolicyDefinitionReferences")) and
-  (.resources.initiative.properties.copy[0].input | contains("'definitionVersion'")) and
-  (.resources.initiative.properties.copy[0].input | contains("'parameters'")) and
-  (.resources.initiative.properties.copy[0].input | contains("'groupNames'"))
+  (.resources.initiative.properties.copy[0].input | contains("definitionVersion")) and
+  (.resources.initiative.properties.copy[0].input | contains(".parameters")) and
+  (.resources.initiative.properties.copy[0].input | contains(".groupNames"))
 ' "${MODULE_JSON}" >/dev/null
 
 printf '4/8 Validate empty and duplicate reference-ID guards...\n'
