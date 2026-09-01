@@ -348,7 +348,7 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
     if (-not (Test-IsArray $cautionsRaw)) { $schemaErrors.Add('top-level: missing/invalid cautions array') }
     $cautionItems = Get-ArrayItems $cautionsRaw
     foreach ($caution in $cautionItems) {
-        if ($caution -isnot [string]) { $schemaErrors.Add('top-level: a cautions entry is not a string') }
+        if (-not (Test-NonEmptyString $caution)) { $schemaErrors.Add('top-level: a cautions entry is not a non-empty string') }
     }
     $overlapNotesRaw = Get-Prop $catalog 'overlapNotes'
     if (-not (Test-IsArray $overlapNotesRaw)) { $schemaErrors.Add('top-level: missing/invalid overlapNotes array') }
@@ -409,7 +409,7 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         $requiredParametersRaw = Get-Prop $control 'requiredParameters'
         if (-not (Test-Prop $control 'requiredParameters') -or -not (Test-IsArray $requiredParametersRaw)) { $schemaErrors.Add("${cid}: requiredParameters must be an array") }
         $requiredParameterItems = Get-ArrayItems $requiredParametersRaw
-        foreach ($param in $requiredParameterItems) { if ($param -isnot [string]) { $schemaErrors.Add("${cid}: a requiredParameters entry is not a string") } }
+        foreach ($param in $requiredParameterItems) { if (-not (Test-NonEmptyString $param)) { $schemaErrors.Add("${cid}: a requiredParameters entry is not a non-empty string") } }
         $roleDefinitionIdsRaw = Get-Prop $control 'roleDefinitionIds'
         if (-not (Test-Prop $control 'roleDefinitionIds') -or -not (Test-IsArray $roleDefinitionIdsRaw)) { $schemaErrors.Add("${cid}: roleDefinitionIds must be an array") }
         $roleDefinitionIds = Get-ArrayItems $roleDefinitionIdsRaw

@@ -137,40 +137,68 @@ for value in good_values:
     add_case("sourceIssue", value, 1, i); i += 1
     add_case("mechanism.sourceUrl", value, 1, i); i += 1
 
-# Representative non-URI schema mutations. These specifically exercise
-# non-empty metadata/list entries plus optional-property and array-container
-# typing in every explicitly selected backend.
-schema_mutations = []
+# Non-URI schema-equivalence mutations exercise non-empty metadata and list
+# entries plus optional-property and array-container typing in every explicitly
+# selected backend.
 
-catalog = json.loads(json.dumps(real_catalog))
-catalog["$schema"] = ""
-schema_mutations.append(("empty $schema is rejected", catalog))
 
-catalog = json.loads(json.dumps(real_catalog))
-catalog["catalogVersion"] = ""
-schema_mutations.append(("empty catalogVersion is rejected", catalog))
-
-catalog = json.loads(json.dumps(real_catalog))
-catalog["classificationValues"][0] = ""
-schema_mutations.append(("empty classificationValues entry is rejected", catalog))
-
-catalog = json.loads(json.dumps(real_catalog))
-catalog["enforcementPhaseValues"][0] = ""
-schema_mutations.append(("empty enforcementPhaseValues entry is rejected", catalog))
-
-catalog = json.loads(json.dumps(real_catalog))
-catalog["controls"][0]["mechanism"]["category"] = []
-schema_mutations.append(("optional mechanism.category array is rejected", catalog))
-
-catalog = json.loads(json.dumps(real_catalog))
-catalog["controls"][0]["requiredParameters"] = {}
-schema_mutations.append(("requiredParameters object container is rejected", catalog))
-
-for label, catalog in schema_mutations:
-    path = f"{tmp_root}/case-{i:04d}.json"
+def add_metadata_case(kind, expect_success, index):
+    catalog = json.loads(json.dumps(real_catalog))
+    if kind == "schema-empty":
+        catalog["$schema"] = ""
+        label = "top-level $schema rejected: empty string"
+    elif kind == "catalogVersion-empty":
+        catalog["catalogVersion"] = ""
+        label = "top-level catalogVersion rejected: empty string"
+    elif kind == "classificationValues-item-empty":
+        catalog["classificationValues"] = catalog["classificationValues"] + [""]
+        label = "classificationValues rejected: appended empty-string entry"
+    elif kind == "enforcementPhaseValues-item-empty":
+        catalog["enforcementPhaseValues"] = catalog["enforcementPhaseValues"] + [""]
+        label = "enforcementPhaseValues rejected: appended empty-string entry"
+    elif kind == "cautions-item-empty":
+        catalog["cautions"] = catalog["cautions"] + [""]
+        label = "cautions rejected: appended empty-string entry"
+    elif kind == "requiredParameters-item-empty":
+        found = False
+        for control in catalog["controls"]:
+            control.setdefault("requiredParameters", [])
+            control["requiredParameters"] = control["requiredParameters"] + [""]
+            found = True
+            break
+        assert found, "no control found to mutate requiredParameters"
+        label = "requiredParameters rejected: appended empty-string entry"
+    elif kind == "mechanism-category-array":
+        catalog["controls"][0]["mechanism"]["category"] = []
+        label = "optional mechanism.category rejected: array value"
+    elif kind == "requiredParameters-object":
+        catalog["controls"][0]["requiredParameters"] = {}
+        label = "requiredParameters rejected: object container"
+    elif kind == "valid-baseline":
+        label = "unmodified real catalog metadata accepted"
+    else:
+        raise AssertionError(f"unknown metadata mutation kind: {kind}")
+    path = f"{tmp_root}/meta-case-{index:04d}.json"
     write_catalog(catalog, path)
-    manifest.append({"path": path, "label": label, "expectSuccess": 0})
-    i += 1
+    manifest.append({
+        "path": path,
+        "label": label,
+        "expectSuccess": expect_success,
+    })
+
+
+for kind in [
+    "schema-empty",
+    "catalogVersion-empty",
+    "classificationValues-item-empty",
+    "enforcementPhaseValues-item-empty",
+    "cautions-item-empty",
+    "requiredParameters-item-empty",
+    "mechanism-category-array",
+    "requiredParameters-object",
+]:
+    add_metadata_case(kind, 0, i); i += 1
+add_metadata_case("valid-baseline", 1, i); i += 1
 
 with open(manifest_path, "w", encoding="utf-8") as f:
     json.dump(manifest, f)
