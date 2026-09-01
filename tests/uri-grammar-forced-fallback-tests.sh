@@ -135,6 +135,63 @@ for value in good_values:
     add_case("sourceIssue", value, 1, i); i += 1
     add_case("mechanism.sourceUrl", value, 1, i); i += 1
 
+# Non-URI schema-equivalence mutations requested during review: empty
+# top-level metadata strings and empty entries in required-string-item
+# arrays must be rejected by every backend the same way a type mismatch is,
+# not silently accepted because a naive check only tested `type == "string"`
+# without also requiring non-empty content.
+
+
+def add_metadata_case(kind, expect_success, index):
+    catalog = json.loads(json.dumps(real_catalog))
+    if kind == "schema-empty":
+        catalog["$schema"] = ""
+        label = "top-level $schema rejected: empty string"
+    elif kind == "catalogVersion-empty":
+        catalog["catalogVersion"] = ""
+        label = "top-level catalogVersion rejected: empty string"
+    elif kind == "classificationValues-item-empty":
+        catalog["classificationValues"] = catalog["classificationValues"] + [""]
+        label = "classificationValues rejected: appended empty-string entry"
+    elif kind == "enforcementPhaseValues-item-empty":
+        catalog["enforcementPhaseValues"] = catalog["enforcementPhaseValues"] + [""]
+        label = "enforcementPhaseValues rejected: appended empty-string entry"
+    elif kind == "cautions-item-empty":
+        catalog["cautions"] = catalog["cautions"] + [""]
+        label = "cautions rejected: appended empty-string entry"
+    elif kind == "requiredParameters-item-empty":
+        found = False
+        for control in catalog["controls"]:
+            control.setdefault("requiredParameters", [])
+            control["requiredParameters"] = control["requiredParameters"] + [""]
+            found = True
+            break
+        assert found, "no control found to mutate requiredParameters"
+        label = "requiredParameters rejected: appended empty-string entry"
+    elif kind == "valid-baseline":
+        label = "unmodified real catalog metadata accepted"
+    else:
+        raise AssertionError(f"unknown metadata mutation kind: {kind}")
+    path = f"{tmp_root}/meta-case-{index:04d}.json"
+    write_catalog(catalog, path)
+    manifest.append({
+        "path": path,
+        "label": label,
+        "expectSuccess": expect_success,
+    })
+
+
+for kind in [
+    "schema-empty",
+    "catalogVersion-empty",
+    "classificationValues-item-empty",
+    "enforcementPhaseValues-item-empty",
+    "cautions-item-empty",
+    "requiredParameters-item-empty",
+]:
+    add_metadata_case(kind, 0, i); i += 1
+add_metadata_case("valid-baseline", 1, i); i += 1
+
 with open(manifest_path, "w", encoding="utf-8") as f:
     json.dump(manifest, f)
 PYEOF

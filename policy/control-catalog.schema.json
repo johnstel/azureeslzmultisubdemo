@@ -17,26 +17,26 @@
     "overlapNotes"
   ],
   "properties": {
-    "$schema": { "type": "string" },
-    "catalogVersion": { "type": "string" },
+    "$schema": { "type": "string", "minLength": 1 },
+    "catalogVersion": { "type": "string", "minLength": 1 },
     "generatedOn": { "type": "string", "format": "date" },
     "purpose": { "type": "string", "minLength": 1 },
     "sourceIssue": { "type": "string", "format": "uri", "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}(?:/(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/])*)?(?:\\?(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?:#(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?![\\s\\S])" },
     "classificationValues": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true,
       "minItems": 1
     },
     "enforcementPhaseValues": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true,
       "minItems": 1
     },
     "cautions": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string", "minLength": 1 }
     },
     "overlapNotes": {
       "type": "array",
@@ -163,7 +163,7 @@
         },
         "requiredParameters": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "type": "string", "minLength": 1 }
         },
         "roleDefinitionIds": {
           "type": "array",

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "catalogVersion": "1.0.0",
-  "generatedOn": "2026-08-31",
+  "catalogVersion": "1.1.0",
+  "generatedOn": "2026-09-01",
   "purpose": "Authoritative v2 mapping from each customer requirement to its implementation mechanism (Azure Policy built-in/custom definition or initiative, Entra/PIM artifact, Defender CSPM/CIEM feature, shared-service architecture pattern, or manual evidence process) before v2 policy code is expanded. Sourced from public Microsoft Learn and the Azure/azure-policy GitHub repository; no tenant credentials were used.",
   "sourceIssue": "https://github.com/johnstel/azureeslzmultisubdemo/issues/3",
   "classificationValues": [
@@ -966,12 +966,17 @@
         "AuditIfNotExists",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": [
+        "approvedFirewallResourceId",
+        "approvedFirewallPrivateIp",
+        "approvedRouteTablePrefixes"
+      ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Compiled ARM template (opt-in only) + policy compliance state; route-table architecture inputs documented separately from policy evidence (issue #17)."
+      "evidenceSource": "Compiled ARM template (opt-in only) + policy compliance state; route-table architecture inputs documented separately from policy evidence (issue #17).",
+      "notes": "The built-in policy above only audits whether an Azure Firewall exists in an AzureFirewallSubnet in the same VNet; it has no parameter for a specific firewall resource ID, private IP, or approved route prefixes. Issue #17's route-table/firewall guardrail therefore requires the customer to explicitly supply approvedFirewallResourceId (the approved Azure Firewall's ARM resource ID), approvedFirewallPrivateIp (its private IP used as the expected next-hop), and approvedRouteTablePrefixes (the CIDR prefixes the approved route table is expected to cover) as catalog-level required inputs; no placeholder values are supplied here, and none are inferred from this record's built-in policy."
     },
     {
       "id": "REQ-LOG-01",
@@ -1331,6 +1336,39 @@
       "notes": "No single built-in initiative covers CMK across every Azure service (confirmed: no policySetDefinition matching 'customer-managed key' exists in the public Azure/azure-policy repository), so this record is intentionally honest that builtIn is false and no GUID is claimed until each service's built-in is individually verified in issue #14. Do not treat this record as azure-policy-backed until it is next decomposed per service."
     },
     {
+      "id": "REQ-DATA-10",
+      "domain": "data-protection",
+      "customerRequirement": "Require Storage accounts to reject Shared Key authorization requests, requiring Azure AD (Entra ID) authorization instead (issue #14 unsecured-storage-posture requirement).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Storage accounts should prevent shared key access",
+        "definitionId": "8c6a50c6-9ffd-4ae7-986f-5fa6111f9a54",
+        "majorVersion": "2",
+        "verifiedVersion": "2.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/StorageAccountAllowSharedKeyAccess_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Storage"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. No remediation identity is needed \u2014 the policy only audits/denies the account setting, it does not deploy or modify resources."
+    },
+    {
       "id": "REQ-BASE-01",
       "domain": "security-baseline",
       "customerRequirement": "Assign the current stable Microsoft Cloud Security Benchmark (MCSB) as the default security baseline.",
@@ -1641,6 +1679,36 @@
       "notes": "Current replacement: 'Enable Azure Monitor for VMs with Azure Monitoring Agent (AMA)' initiative, GUID 924bfe3a-762f-40e7-86dd-5c8b95eb09e6 (verified via public secondary source; re-confirm raw JSON before use), plus the resource-diagnostics initiative in REQ-LOG-02."
     },
     {
+      "id": "REQ-DEF-06",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Audit that virtual machines have a supported vulnerability assessment solution enabled (issue #20), independent of enabling any paid Defender plan.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "A vulnerability assessment solution should be enabled on your virtual machines",
+        "definitionId": "501541f7-f7e7-4cd6-868c-4190fdad3ac9",
+        "majorVersion": "3",
+        "verifiedVersion": "3.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_ServerVulnerabilityAssessment_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Security Center"
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier (always on), not by a paid Defender plan.",
+      "notes": "Deliberately independent of REQ-DEF-02..04 (paid Defender plans): this policy only audits Microsoft.Security/assessments for a vulnerability-assessment finding \u2014 it neither deploys a scanner nor requires a paid plan to be assigned, so it stays no-cost-safe and does not duplicate the paid-plan controls (issue #20). Defaults AuditIfNotExists, which is already safe, so no explicit effect override is required by requiredParameters."
+    },
+    {
       "id": "REQ-BKP-01",
       "domain": "backup",
       "customerRequirement": "Audit that virtual machines have Azure Backup coverage.",
@@ -1709,6 +1777,184 @@
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
       "notes": "Requires a customer-supplied, existing vault and backup policy resource ID; safe defaults create no vault and configure no backup (issue #19). The built-in JSON's then.details.roleDefinitionIds array (Virtual Machine Contributor, Backup Contributor) is reproduced verbatim above."
+    },
+    {
+      "id": "REQ-BKP-03",
+      "domain": "backup",
+      "customerRequirement": "Document the customer-approved Recovery Services vault(s), backup-policy retention standard, approved vault region(s), and workload-to-vault mapping used as the integration target for REQ-BKP-02 (issue #19).",
+      "scope": "landingzones",
+      "classification": "shared-service-architecture",
+      "mechanism": {
+        "kind": "architecture-input-catalog",
+        "builtIn": false,
+        "displayName": "Customer-approved Recovery Services vault/backup-policy inputs and region/workload placement mapping (documentation, not a policy assignment)",
+        "definitionId": null,
+        "sourceUrl": null,
+        "verifiedOn": "2026-09-01",
+        "verificationMethod": "internal-design"
+      },
+      "supportedEffects": [
+        "n/a"
+      ],
+      "requiredParameters": [
+        "recoveryServicesVaultResourceId",
+        "backupRetentionStandardId",
+        "approvedVaultRegions",
+        "workloadToVaultMapping"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-BKP-02"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Documented vault/backup-policy resource IDs, approved region list, and workload-to-vault mapping supplied by the customer and consumed as REQ-BKP-02's assignment parameters; no default value or placeholder is invented here.",
+      "notes": "REQ-BKP-02's built-in enforces vault/policy selection at assignment time via vaultLocation and backupPolicyId, but does not itself document which vault(s), region(s), or retention standard are customer-approved, nor which workloads map to which vault; those decisions are architecture inputs owned by the customer and tracked explicitly here per issue #19's 'existing vault/policy IDs are the preferred integration path' guidance. No single Azure Policy built-in enforces retention-standard or region/workload-placement correctness, so this record is classified shared-service-architecture rather than azure-policy."
+    },
+    {
+      "id": "REQ-BKP-04",
+      "domain": "backup",
+      "customerRequirement": "Disable public network access on Recovery Services vaults, requiring private access (issue #19 vault posture).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Azure Recovery Services vaults should disable public network access",
+        "definitionId": "9ebbbba3-4d65-4da9-bb67-b22cfaaff090",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/RecoveryServices_PublicNetworkAccess_AuditDeny.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-BKP-02"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. Private connectivity itself (private endpoints) is a customer-supplied networking input, not created by this audit-only policy."
+    },
+    {
+      "id": "REQ-BKP-05",
+      "domain": "backup",
+      "customerRequirement": "Require Recovery Services vaults to use customer-managed keys (CMK) for encrypting backup data (issue #19 vault posture).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Azure Recovery Services vaults should use customer-managed keys for encrypting backup data",
+        "definitionId": "2e94d99a-8a36-4563-bc77-810d8893b671",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/AzBackupRSVault_CMKEnabled_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect",
+        "enableDoubleEncryption"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-BKP-02"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Defaults Audit with enableDoubleEncryption=false; Deny and double encryption are supported for a stricter profile but are not enabled by safe defaults. A customer-supplied Key Vault key is required to satisfy the underlying vault configuration; this policy only audits/denies, it does not create the key or the vault."
+    },
+    {
+      "id": "REQ-BKP-06",
+      "domain": "backup",
+      "customerRequirement": "Require Recovery Services vault immutability to protect backup data from early deletion (issue #19 vault posture, soft-delete/immutability).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Immutability must be enabled for Recovery Services vaults",
+        "definitionId": "d6f6f560-14b7-49a4-9fc8-d2c3a9807868",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.2",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/RecoveryServices_Immutability_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect",
+        "checkLockedImmutabilityOnly"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-BKP-02"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Defaults Audit with checkLockedImmutabilityOnly=true (locked immutability only). Vault soft delete is a separate vault-level setting that Microsoft enables by default for Recovery Services vaults and is not currently exposed as its own dedicated Azure Policy built-in in the public Azure/azure-policy repository (confirmed by search); its default-on status is tracked here as a manual-evidence note rather than claimed as an audited policy control."
+    },
+    {
+      "id": "REQ-BKP-07",
+      "domain": "backup",
+      "customerRequirement": "Export Recovery Services vault diagnostic logs to the effective central Log Analytics workspace (issue #19 vault posture, diagnostics).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policySetDefinition",
+        "builtIn": true,
+        "displayName": "Enable allLogs category group resource logging for supported resources to Log Analytics",
+        "definitionId": "0884adba-2312-4468-abeb-5422caed1038",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policySetDefinitions/Monitoring/AzureMonitor_DiagSettings_logAnalytics_allLogs.json",
+        "verificationMethod": "raw-json",
+        "category": "Monitoring",
+        "notes": "Same initiative as REQ-LOG-02; this record documents that Microsoft.RecoveryServices/vaults is a directly verified supported member resource type (member policy files DS_LA_recoveryservices-vaults_DINE.json, DS_ST_recoveryservices-vaults_DINE.json, DS_EH_recoveryservices-vaults_DINE.json were each fetched and confirmed present in the public Azure/azure-policy repository), rather than assuming coverage."
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "DeployIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "logAnalytics"
+      ],
+      "roleDefinitionIds": [
+        "92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+      ],
+      "remediationIdentityRequired": true,
+      "dependencies": [
+        "REQ-LOG-02",
+        "REQ-BKP-02"
+      ],
+      "enforcementPhase": "deployifnotexists-opt-in",
+      "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
+      "notes": "Re-declared under the backup domain (rather than only relying on REQ-LOG-02's generic ~140-member coverage claim) specifically because issue #19 requires vault diagnostics to be an explicit, individually verified requirement, not an assumption riding on the initiative's broad scope."
     },
     {
       "id": "REQ-CIP-01",
@@ -1803,6 +2049,14 @@
     {
       "topic": "Tag requirement vs. tag inheritance",
       "note": "REQ-TAG-01..06 (require tag on resource group) and REQ-TAG-07..12 (inherit tag to child resources) are complementary, not duplicative: the first establishes the source of truth at the resource-group scope, and the second propagates it without overwriting existing values."
+    },
+    {
+      "topic": "Vulnerability assessment audit independence",
+      "note": "REQ-DEF-06 audits Microsoft.Security/assessments directly and does not depend on, or duplicate, any paid Defender plan (REQ-DEF-02..04) or the unsafe, all-or-nothing REQ-DEF-01 initiative; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier, so this control stays no-cost-safe and independently opt-in per issue #20."
+    },
+    {
+      "topic": "Recovery Services vault diagnostics",
+      "note": "REQ-BKP-07 reuses REQ-LOG-02's existing ~140-member resource-diagnostics initiative (Microsoft.RecoveryServices/vaults confirmed as a member resource type) rather than creating a duplicate, backup-specific diagnostic-settings policy definition."
     }
   ]
 }

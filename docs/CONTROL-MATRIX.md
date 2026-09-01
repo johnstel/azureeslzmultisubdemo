@@ -2,10 +2,10 @@
 
 This document is the human-readable companion to the machine-readable [`policy/control-catalog.json`](../policy/control-catalog.json). It maps every customer requirement identified for v2.0 to its implementation mechanism, before any new policy code is written. Regenerate this document whenever the JSON catalog changes so the two stay consistent.
 
-- **Catalog version:** `1.0.0`
-- **Generated on:** `2026-08-31`
+- **Catalog version:** `1.1.0`
+- **Generated on:** `2026-09-01`
 - **Source issue:** https://github.com/johnstel/azureeslzmultisubdemo/issues/3
-- **Total control records:** 54
+- **Total control records:** 61
 
 ## Scope and safety
 
@@ -100,6 +100,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | REQ-DATA-07 | Require Key Vault to use Azure RBAC for data-plane authorization instead of access policies. | landingzones | azure-policy | Azure Key Vault should use RBAC permission model (built-in: Yes) | `12d4fa5e-1f9f-4c21-97a9-b99b3c6611b5` | 1.0.1 | Audit, Deny, Disabled | audit-only |
 | REQ-DATA-08 | Use customer-managed keys (CMK) for encryption at rest on Storage accounts, where the customer supplies a Key Vault and key. | landingzones | azure-policy | Storage accounts should use customer-managed key for encryption (built-in: Yes) | `6fac406b-40ca-413b-bf8e-0bf964659c25` | 1.0.3 | Audit, Disabled | audit-only |
 | REQ-DATA-09 | Use customer-managed keys (CMK) for encryption at rest on other eligible services beyond Storage (for example SQL, Cosmos DB), where the customer supplies a Key Vault and key. | landingzones | manual-evidence | Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) — not yet selected (built-in: No) | `—` | — | Audit, Disabled | manual-evidence |
+| REQ-DATA-10 | Require Storage accounts to reject Shared Key authorization requests, requiring Azure AD (Entra ID) authorization instead (issue #14 unsecured-storage-posture requirement). | landingzones | azure-policy | Storage accounts should prevent shared key access (built-in: Yes) | `8c6a50c6-9ffd-4ae7-986f-5fa6111f9a54` | 2.0.0 | Audit, Deny, Disabled | audit-only |
 
 ## MCSB / CIS / NIST / service baselines
 
@@ -119,6 +120,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | REQ-DEF-03 | Optionally enable Microsoft Defender for Servers. | landingzones | defender-cspm-ciem | Configure Microsoft Defender for Servers plan (built-in: Yes) | `5eb6d64a-4086-4d7a-92da-ec51aed0332d` | 1.0.0 | DeployIfNotExists, Disabled | manual-evidence |
 | REQ-DEF-04 | Optionally enable Microsoft Defender for Storage. | landingzones | defender-cspm-ciem | Configure Microsoft Defender for Storage to be enabled (built-in: Yes) | `cfdc5972-75b3-4418-8ae1-7f5c36839390` | 1.5.0 | DeployIfNotExists, Disabled | manual-evidence |
 | REQ-DEF-05 | Do not depend on the deprecated Log Analytics (MMA) monitoring agent for auto-provisioning. | demo-root | azure-policy | [Deprecated]: Auto provisioning of the Log Analytics agent should be enabled on your subscription (built-in: Yes) | `475aae12-b88a-4572-8b36-9b712b2b3a17` | 1.1.0-deprecated | AuditIfNotExists, Disabled | manual-evidence |
+| REQ-DEF-06 | Audit that virtual machines have a supported vulnerability assessment solution enabled (issue #20), independent of enabling any paid Defender plan. | landingzones | azure-policy | A vulnerability assessment solution should be enabled on your virtual machines (built-in: Yes) | `501541f7-f7e7-4cd6-868c-4190fdad3ac9` | 3.0.0 | AuditIfNotExists, Disabled | audit-only |
 
 ## Backup
 
@@ -126,6 +128,11 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 |---|---|---|---|---|---|---|---|---|
 | REQ-BKP-01 | Audit that virtual machines have Azure Backup coverage. | landingzones | azure-policy | Azure Backup should be enabled for Virtual Machines (built-in: Yes) | `013e242c-8828-4970-87b3-ab247555486d` | 3.0.0 | AuditIfNotExists, Disabled | audit-only |
 | REQ-BKP-02 | Configure backup on tagged virtual machines to an approved, existing Recovery Services vault and backup policy. | landingzones | azure-policy | Configure backup on virtual machines with a given tag to an existing recovery services vault in the same location (built-in: Yes) | `345fa903-145c-4fe1-8bcd-93ec2adccde8` | 9.6.1 | AuditIfNotExists, DeployIfNotExists, Disabled | deployifnotexists-opt-in |
+| REQ-BKP-03 | Document the customer-approved Recovery Services vault(s), backup-policy retention standard, approved vault region(s), and workload-to-vault mapping used as the integration target for REQ-BKP-02 (issue #19). | landingzones | shared-service-architecture | Customer-approved Recovery Services vault/backup-policy inputs and region/workload placement mapping (documentation, not a policy assignment) (built-in: No) | `—` | — | n/a | manual-evidence |
+| REQ-BKP-04 | Disable public network access on Recovery Services vaults, requiring private access (issue #19 vault posture). | landingzones | azure-policy | Azure Recovery Services vaults should disable public network access (built-in: Yes) | `9ebbbba3-4d65-4da9-bb67-b22cfaaff090` | 1.0.1 | Audit, Deny, Disabled | audit-only |
+| REQ-BKP-05 | Require Recovery Services vaults to use customer-managed keys (CMK) for encrypting backup data (issue #19 vault posture). | landingzones | azure-policy | Azure Recovery Services vaults should use customer-managed keys for encrypting backup data (built-in: Yes) | `2e94d99a-8a36-4563-bc77-810d8893b671` | 1.0.1 | Audit, Deny, Disabled | audit-only |
+| REQ-BKP-06 | Require Recovery Services vault immutability to protect backup data from early deletion (issue #19 vault posture, soft-delete/immutability). | landingzones | azure-policy | Immutability must be enabled for Recovery Services vaults (built-in: Yes) | `d6f6f560-14b7-49a4-9fc8-d2c3a9807868` | 1.0.2 | Audit, Disabled | audit-only |
+| REQ-BKP-07 | Export Recovery Services vault diagnostic logs to the effective central Log Analytics workspace (issue #19 vault posture, diagnostics). | landingzones | azure-policy | Enable allLogs category group resource logging for supported resources to Log Analytics (built-in: Yes) | `0884adba-2312-4468-abeb-5422caed1038` | 1.0.0 | AuditIfNotExists, DeployIfNotExists, Disabled | deployifnotexists-opt-in |
 
 ## NERC CIP
 
@@ -139,6 +146,8 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 - **Storage and Key Vault data-protection controls:** REQ-DATA-01 through REQ-DATA-07 are already member policies of the Microsoft cloud security benchmark (REQ-BASE-01) and, where selected, the CIS (REQ-BASE-02) and NIST (REQ-BASE-03) overlays. Assign them once as the authoritative source of truth and do not create duplicate custom definitions for the same control intent.
 - **Management-port and NSG audits:** REQ-NET-01 and REQ-NET-03 are populated by the free, default-on Foundational CSPM tier of Microsoft Defender for Cloud (confirmed via Microsoft Learn's compute security recommendations), not the paid Defender CSPM plan (REQ-DEF-02) or the unsafe, all-or-nothing REQ-DEF-01 initiative; they have no assignment-time dependency on either. They rely purely on the built-in policy's own Defender for Cloud security-assessment integration.
 - **Tag requirement vs. tag inheritance:** REQ-TAG-01..06 (require tag on resource group) and REQ-TAG-07..12 (inherit tag to child resources) are complementary, not duplicative: the first establishes the source of truth at the resource-group scope, and the second propagates it without overwriting existing values.
+- **Vulnerability assessment audit independence:** REQ-DEF-06 audits Microsoft.Security/assessments directly and does not depend on, or duplicate, any paid Defender plan (REQ-DEF-02..04) or the unsafe, all-or-nothing REQ-DEF-01 initiative; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier, so this control stays no-cost-safe and independently opt-in per issue #20.
+- **Recovery Services vault diagnostics:** REQ-BKP-07 reuses REQ-LOG-02's existing ~140-member resource-diagnostics initiative (Microsoft.RecoveryServices/vaults confirmed as a member resource type) rather than creating a duplicate, backup-specific diagnostic-settings policy definition.
 
 ## Verification methodology
 

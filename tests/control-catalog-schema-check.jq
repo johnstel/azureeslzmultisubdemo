@@ -75,8 +75,8 @@ def bad_pattern_items(arr; re; msg):
   if (arr | type) == "array" then (arr[] | select(matches_safely(re) | not) | msg) else empty end;
 
 [
-  (if (.["$schema"]? // null | type) != "string" then "top-level: missing/invalid $schema" else empty end),
-  (if (.catalogVersion? // null | type) != "string" then "top-level: missing/invalid catalogVersion" else empty end),
+  (if (.["$schema"]? // null | is_nonempty_string | not) then "top-level: missing/invalid $schema" else empty end),
+  (if (.catalogVersion? // null | is_nonempty_string | not) then "top-level: missing/invalid catalogVersion" else empty end),
   (if (.generatedOn? // null | is_valid_calendar_date | not) then "top-level: missing/invalid generatedOn date" else empty end),
   (if (.purpose? // null | is_nonempty_string | not) then "top-level: missing/invalid purpose" else empty end),
   (if (url_pattern != mechanism_url_pattern) then "top-level: schema sourceIssue and mechanism.sourceUrl patterns have diverged" else empty end),
@@ -88,7 +88,7 @@ def bad_pattern_items(arr; re; msg):
   (if (.enforcementPhaseValues? // null | type) == "array" and ((.enforcementPhaseValues | unique | length) != (.enforcementPhaseValues | length)) then "top-level: enforcementPhaseValues entries are not unique" else empty end),
   bad_string_items(.enforcementPhaseValues?; "top-level: an enforcementPhaseValues entry is not a non-empty string"),
   (if (.cautions? // null | type) != "array" then "top-level: missing/invalid cautions array" else empty end),
-  (if (.cautions? // null | type) == "array" then (.cautions[] | select(type != "string") | "top-level: a cautions entry is not a string") else empty end),
+  (if (.cautions? // null | type) == "array" then (.cautions[] | select(is_nonempty_string | not) | "top-level: a cautions entry is not a non-empty string") else empty end),
   (if (.overlapNotes? // null | type) != "array" then "top-level: missing/invalid overlapNotes array" else empty end),
   (if (.overlapNotes? // null | type) == "array" then
     (.overlapNotes[] | select(((.topic? // "") | is_nonempty_string | not) or ((.note? // "") | is_nonempty_string | not)) | "overlapNotes: an entry is missing a non-empty topic/note")
@@ -121,7 +121,7 @@ def bad_pattern_items(arr; re; msg):
     (if ($c.supportedEffects? // null | type) != "array" or (($c.supportedEffects // []) | length) < 1 then "\($id): supportedEffects missing/empty" else empty end),
     bad_string_items($c.supportedEffects?; "\($id): a supportedEffects entry is not a non-empty string"),
     (if ($c.requiredParameters? // null | type) != "array" then "\($id): requiredParameters must be an array" else empty end),
-    (if ($c.requiredParameters? // null | type) == "array" then ($c.requiredParameters[] | select(type != "string") | "\($id): a requiredParameters entry is not a string") else empty end),
+    (if ($c.requiredParameters? // null | type) == "array" then ($c.requiredParameters[] | select(is_nonempty_string | not) | "\($id): a requiredParameters entry is not a non-empty string") else empty end),
     (if ($c.roleDefinitionIds? // null | type) != "array" then "\($id): roleDefinitionIds must be an array" else empty end),
     bad_pattern_items($c.roleDefinitionIds?; guid_re; "\($id): a roleDefinitionIds entry is not a well-formed bare GUID"),
     (if ($c.remediationIdentityRequired | type) != "boolean" then "\($id): remediationIdentityRequired missing/invalid" else empty end),
