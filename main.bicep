@@ -162,7 +162,7 @@ module allowedLocationsAssignment 'modules/policy-assignment.bicep' = {
   name: 'assign-allowed-locations'
   scope: managementGroup(demoRootManagementGroupId)
   params: {
-    assignmentName: 'demo-allowed-us-locations'
+    assignmentName: 'demo-allowed-us-locs'
     displayName: 'Demo - allowed continental-US locations'
     description: 'Restricts regional resources to the approved continental-US list while safely allowing global resources.'
     policyDefinitionId: policyLibrary.outputs.allowedLocationsPolicyDefinitionId
@@ -221,7 +221,7 @@ module workloadResourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
   name: 'assign-workload-rg-tags'
   scope: managementGroup(workloadManagementGroupId)
   params: {
-    assignmentName: 'demo-require-workload-rg-tags'
+    assignmentName: 'demo-require-rg-tags'
     displayName: 'Demo - require workload resource group tags'
     description: 'Requires Application, Environment, and Owner tags on workload resource groups.'
     policyDefinitionId: policyLibrary.outputs.workloadResourceGroupTagsPolicyDefinitionId
@@ -337,4 +337,3 @@ output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
 output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
-

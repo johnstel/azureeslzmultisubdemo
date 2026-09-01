@@ -66,13 +66,14 @@ try {
         }
     }
 
-    Write-Host '2/23 Build the complete tenant template...'
+    Write-Host '2/23 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
     if ($buildOutput -match 'BCP318') {
         Stop-Test 'main.bicep build must not emit a BCP318 nullable-module-output warning.'
     }
+    & (Join-Path $ScriptDir 'validate-policy-assignment.ps1') -CompiledMainTemplate $compiledTemplate
 
     Write-Host '3/23 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
