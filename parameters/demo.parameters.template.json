@@ -41,6 +41,55 @@
     "denyPolicyEnforcementMode": {
       "value": "DoNotEnforce"
     },
+    "customerAllowedLocations": {
+      "value": [
+        "eastus",
+        "eastus2"
+      ]
+    },
+    "customerAllowedResourceTypes": {
+      "value": [
+        "Microsoft.Authorization/policyDefinitions",
+        "Microsoft.Authorization/policyExemptions",
+        "Microsoft.Authorization/policyAssignments",
+        "Microsoft.Authorization/policySetDefinitions",
+        "Microsoft.Authorization/roleAssignments",
+        "Microsoft.Compute/disks",
+        "Microsoft.Compute/virtualMachines",
+        "Microsoft.Compute/virtualMachines/extensions",
+        "Microsoft.Insights/diagnosticSettings",
+        "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "Microsoft.Network/networkInterfaces",
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/privateDnsZones",
+        "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+        "Microsoft.Network/privateEndpoints",
+        "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+        "Microsoft.Network/publicIPAddresses",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.OperationalInsights/workspaces",
+        "Microsoft.OperationsManagement/solutions",
+        "Microsoft.PolicyInsights/remediations",
+        "Microsoft.RecoveryServices/vaults",
+        "Microsoft.RecoveryServices/vaults/backupFabrics",
+        "Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers",
+        "Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems",
+        "Microsoft.RecoveryServices/vaults/backupPolicies",
+        "Microsoft.Resources/deployments",
+        "Microsoft.Resources/resourceGroups",
+        "Microsoft.SecurityInsights/onboardingStates"
+      ]
+    },
+    "customerAllowedVmSkus": {
+      "value": [
+        "Standard_B1ls",
+        "Standard_B1s",
+        "Standard_B1ms",
+        "Standard_B2s",
+        "Standard_B2ms"
+      ]
+    },
     "networkIngressPolicyEffect": {
       "value": "Audit"
     },

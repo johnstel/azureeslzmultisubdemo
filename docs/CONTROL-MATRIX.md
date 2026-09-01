@@ -48,7 +48,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
 | REQ-DEPLOY-01 | Restrict resource deployment to an approved set of Azure regions. | demo-root | azure-policy | Allowed locations (built-in: Yes) | `e56962a6-4747-49cd-b67b-bf8b01975c4c` | 1.1.0 | Audit, Deny, Disabled | deny-do-not-enforce |
-| REQ-DEPLOY-02 | Restrict deployment to an approved allowlist of Azure resource types. | demo-root | azure-policy | Allowed resource types (built-in: Yes) | `a08ec900-254a-4555-9bf5-e42af04b5c5c` | 1.1.0 | Audit, Deny, Disabled | deny-do-not-enforce |
+| REQ-DEPLOY-02 | Restrict deployment to an approved allowlist of Azure resource types. | demo-root | azure-policy | Demo - allowed resource types (all resources) (built-in: No) | `${namePrefix}-allowed-resource-types-all` | 1.0.0 | deny | deny-do-not-enforce |
 | REQ-DEPLOY-03 | Block deployment of an explicit denylist of Azure resource types. | demo-root | azure-policy | Not allowed resource types (built-in: Yes) | `6c112d4e-5bc7-47ae-a041-ea2d9dccd749` | 2.0.0 | Audit, Deny, Disabled | deny-do-not-enforce |
 | REQ-DEPLOY-04 | Restrict virtual machine deployment to an approved allowlist of VM size SKUs. | landingzones | azure-policy | Allowed virtual machine size SKUs (built-in: Yes) | `cccc23c7-8427-4f53-ad12-b6a63eb452b3` | 1.0.1 | Deny | deny-do-not-enforce |
 | REQ-DEPLOY-05 | Require managed disks for virtual machines. | landingzones | azure-policy | Audit VMs that do not use managed disks (built-in: Yes) | `06a78e20-9358-41c9-923c-fb736d382a4d` | 1.0.0 | Audit | audit-only |

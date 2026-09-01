@@ -57,6 +57,7 @@ root:
 | Demo root | Allow only `centralus`, `eastus`, `eastus2`, `northcentralus`, `southcentralus`, `westcentralus`, `westus`, `westus2`, and `westus3` | Deny assignment in `DoNotEnforce` |
 | Demo root | Audit creation of public IP address resources | Audit |
 | Demo root | Block common costly service types and VM SKUs outside an intentionally small allowlist | Deny assignment in `DoNotEnforce` |
+| Demo root | Customer deployment-restrictions initiative: `eastus`/`eastus2`, approved resource types and VM SKUs, managed disks, and public IP creation | Deny members in `DoNotEnforce`; audit members remain Audit |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
@@ -67,6 +68,14 @@ safe shape of Azure's built-in allowed-locations control. Resource groups are
 governed separately by workload tag policy. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
 policy impact.
+
+The customer-control profile is separate from the broader safe demo location
+profile. Its `customerAllowedLocations`, `customerAllowedResourceTypes`, and
+`customerAllowedVmSkus` parameters are change-controlled allowlists. The
+resource-type default includes this project's evidence resources and child
+types needed for diagnostics, VM extensions, private endpoints, backup, and
+Azure Policy remediation. Keep `denyPolicyEnforcementMode` set to
+`DoNotEnforce` until those lists and a what-if/policy impact report are approved.
 
 The workload network-ingress initiative recognizes `*`, `Internet`,
 `0.0.0.0/0`, and arbitrary public IPv4 host/CIDR source values in singular and

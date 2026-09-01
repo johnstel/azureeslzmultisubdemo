@@ -249,30 +249,28 @@
       "classification": "azure-policy",
       "mechanism": {
         "kind": "policyDefinition",
-        "builtIn": true,
-        "displayName": "Allowed resource types",
-        "definitionId": "a08ec900-254a-4555-9bf5-e42af04b5c5c",
+        "builtIn": false,
+        "displayName": "Demo - allowed resource types (all resources)",
+        "definitionId": "${namePrefix}-allowed-resource-types-all",
         "majorVersion": "1",
-        "verifiedVersion": "1.1.0",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/General/AllowedResourceTypes_Deny.json",
-        "verificationMethod": "raw-json",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
         "category": "General"
       },
       "supportedEffects": [
-        "Audit",
-        "Deny",
-        "Disabled"
+        "deny"
       ],
       "requiredParameters": [
-        "listOfResourceTypesAllowed"
+        "allowedResourceTypes"
       ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "deny-do-not-enforce",
       "evidenceSource": "Compiled ARM template + policy assignment enforcementMode.",
-      "notes": "Allowlist must include diagnostics, extensions, private endpoint, backup, and policy-remediation child resource types before enabling Deny (issue #11 acceptance criteria)."
+      "notes": "The built-in Allowed resource types definition uses Indexed mode and does not evaluate all child or locationless resources. The in-repository custom definition deliberately uses mode All. Its allowlist must include diagnostics, extensions, private endpoint, backup, policy-remediation, and governance resource types before enabling Deny (issue #11 acceptance criteria)."
     },
     {
       "id": "REQ-DEPLOY-03",

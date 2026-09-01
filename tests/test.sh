@@ -47,6 +47,9 @@ jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
   .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
+  .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
+  (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
+  (.parameters.customerAllowedVmSkus.value | length) > 0 and
   .parameters.networkIngressPolicyEffect.value == "Audit"
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
@@ -62,13 +65,38 @@ association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/
 }
 
 printf '5/23 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
-if rg -n \
-  "Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)" \
-  "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" \
-  -g '*.bicep' | rg -v 'policy-library\.bicep|central-monitoring(-workspace|-sentinel)?\.bicep'; then
+find_prohibited_paid_declarations() {
+  jq -r '
+    def prohibited:
+      test("^Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$"; "i");
+    def declarations:
+      if type == "object" then
+        . as $resource
+        | if $resource.type? == "Microsoft.Resources/deployments"
+            and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel"))
+          then empty
+          elif (($resource.type? | type) == "string") and $resource.apiVersion? and ($resource.type | prohibited)
+          then $resource.type
+          else .[] | declarations
+          end
+      elif type == "array" then .[] | declarations
+      else empty
+      end;
+    declarations
+  ' "$1"
+}
+
+if [[ -n "$(find_prohibited_paid_declarations "${TEMP_DIR}/main.json")" ]]; then
   printf 'ERROR: A prohibited evidence resource type is declared.\n' >&2
   exit 1
 fi
+az bicep build \
+  --file "${SCRIPT_DIR}/fixtures/paid-resource-declaration.bicep" \
+  --outfile "${TEMP_DIR}/paid-resource-declaration.json"
+[[ -n "$(find_prohibited_paid_declarations "${TEMP_DIR}/paid-resource-declaration.json")" ]] || {
+  printf 'ERROR: The paid-resource declaration safety check did not reject its negative fixture.\n' >&2
+  exit 1
+}
 
 printf '6/23 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then

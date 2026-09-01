@@ -72,6 +72,55 @@ param allowedLocations array = [
   'westus3'
 ]
 
+@description('Change-controlled customer-control region allowlist. This does not replace the broader safe demo allowedLocations profile.')
+param customerAllowedLocations array = [
+  'eastus'
+  'eastus2'
+]
+
+@description('Change-controlled customer-control resource-type allowlist. Keep required diagnostics, extensions, private endpoint, backup, and policy-remediation child types before enforcement.')
+param customerAllowedResourceTypes array = [
+  'Microsoft.Authorization/policyDefinitions'
+  'Microsoft.Authorization/policyExemptions'
+  'Microsoft.Authorization/policyAssignments'
+  'Microsoft.Authorization/policySetDefinitions'
+  'Microsoft.Authorization/roleAssignments'
+  'Microsoft.Compute/disks'
+  'Microsoft.Compute/virtualMachines'
+  'Microsoft.Compute/virtualMachines/extensions'
+  'Microsoft.Insights/diagnosticSettings'
+  'Microsoft.ManagedIdentity/userAssignedIdentities'
+  'Microsoft.Network/networkInterfaces'
+  'Microsoft.Network/networkSecurityGroups'
+  'Microsoft.Network/privateDnsZones'
+  'Microsoft.Network/privateDnsZones/virtualNetworkLinks'
+  'Microsoft.Network/privateEndpoints'
+  'Microsoft.Network/privateEndpoints/privateDnsZoneGroups'
+  'Microsoft.Network/publicIPAddresses'
+  'Microsoft.Network/virtualNetworks'
+  'Microsoft.Network/virtualNetworks/subnets'
+  'Microsoft.OperationalInsights/workspaces'
+  'Microsoft.OperationsManagement/solutions'
+  'Microsoft.PolicyInsights/remediations'
+  'Microsoft.RecoveryServices/vaults'
+  'Microsoft.RecoveryServices/vaults/backupFabrics'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems'
+  'Microsoft.RecoveryServices/vaults/backupPolicies'
+  'Microsoft.Resources/deployments'
+  'Microsoft.Resources/resourceGroups'
+  'Microsoft.SecurityInsights/onboardingStates'
+]
+
+@description('Change-controlled customer-control virtual machine size SKU allowlist.')
+param customerAllowedVmSkus array = [
+  'Standard_B1ls'
+  'Standard_B1s'
+  'Standard_B1ms'
+  'Standard_B2s'
+  'Standard_B2ms'
+]
+
 @description('Set true only after reviewing the RBAC matrix and what-if.')
 param deployRoleAssignments bool = false
 
@@ -193,6 +242,20 @@ module auditPublicIpAssignment 'modules/policy-assignment.bicep' = {
     policyDefinitionId: policyLibrary.outputs.auditPublicIpPolicyDefinitionId
     enforcementMode: 'Default'
     parameters: {}
+  }
+}
+
+module rootDeploymentRestrictions 'modules/root-deployment-restrictions.bicep' = {
+  name: 'root-deployment-restrictions'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    namePrefix: namePrefix
+    auditPublicIpPolicyDefinitionId: policyLibrary.outputs.auditPublicIpPolicyDefinitionId
+    allowedResourceTypesPolicyDefinitionId: policyLibrary.outputs.allowedResourceTypesAllPolicyDefinitionId
+    allowedLocations: customerAllowedLocations
+    allowedResourceTypes: customerAllowedResourceTypes
+    allowedVmSkus: customerAllowedVmSkus
+    enforcementMode: denyPolicyEnforcementMode
   }
 }
 
