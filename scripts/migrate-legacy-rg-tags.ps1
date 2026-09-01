@@ -143,6 +143,34 @@ $replacementInitiative = Read-AzureRequired 'the replacement tagging initiative'
 if ([string]$replacementInitiative.id -ine $replacementInitiativeId) {
     Stop-Migration 'The replacement tagging initiative has an unexpected resource ID.'
 }
+$requireResourceGroupTagDefinitionId = '/providers/Microsoft.Authorization/policyDefinitions/96670d01-0a4d-4649-9c89-2d3abc0a5025'
+$expectedTagReferences = [ordered]@{
+    'require-cost-center' = 'CostCenter'
+    'require-application-name' = 'ApplicationName'
+    'require-owner' = 'Owner'
+    'require-environment' = 'Environment'
+    'require-data-classification' = 'DataClassification'
+    'require-ssp-id' = 'SSP-ID'
+}
+$replacementReferences = if ($replacementInitiative.PSObject.Properties['policyDefinitions']) {
+    @($replacementInitiative.policyDefinitions)
+} else {
+    @($replacementInitiative.properties.policyDefinitions)
+}
+if ($replacementReferences.Count -ne $expectedTagReferences.Count) {
+    Stop-Migration 'The replacement tagging initiative must contain exactly six policy references.'
+}
+foreach ($expectedReference in $expectedTagReferences.GetEnumerator()) {
+    $matchingReferences = @($replacementReferences | Where-Object {
+        [string]$_.policyDefinitionReferenceId -ceq $expectedReference.Key
+    })
+    if ($matchingReferences.Count -ne 1 -or
+        [string]$matchingReferences[0].parameters.tagName.value -cne $expectedReference.Value -or
+        [string]$matchingReferences[0].policyDefinitionId -ine $requireResourceGroupTagDefinitionId -or
+        [string]$matchingReferences[0].definitionVersion -cne '1.*.*') {
+        Stop-Migration 'The replacement tagging initiative does not contain the exact six pinned governance tag references.'
+    }
+}
 $replacementAssignment = Read-AzureRequired 'the replacement Landing Zones assignment' @(
     'policy', 'assignment', 'show', '--name', $legacyAssignmentName, '--scope', $landingZonesScope
 )
@@ -156,6 +184,19 @@ $replacementPolicyDefinitionId = if ($replacementAssignment.PSObject.Properties[
 }
 if ($replacementPolicyDefinitionId -ine $replacementInitiativeId) {
     Stop-Migration 'The replacement Landing Zones assignment does not reference the replacement tagging initiative.'
+}
+$replacementNotScopes = @(if ($replacementAssignment.PSObject.Properties['notScopes']) {
+    $replacementAssignment.notScopes
+} elseif ($replacementAssignment.properties.PSObject.Properties['notScopes']) {
+    $replacementAssignment.properties.notScopes
+})
+$replacementResourceSelectors = @(if ($replacementAssignment.PSObject.Properties['resourceSelectors']) {
+    $replacementAssignment.resourceSelectors
+} elseif ($replacementAssignment.properties.PSObject.Properties['resourceSelectors']) {
+    $replacementAssignment.properties.resourceSelectors
+})
+if ($replacementNotScopes.Count -ne 0 -or $replacementResourceSelectors.Count -ne 0) {
+    Stop-Migration 'The replacement Landing Zones assignment must not contain notScopes or resourceSelectors.'
 }
 
 $legacyAssignment = Read-AzureOptional 'legacy workload assignment' 'PolicyAssignmentNotFound|ResourceNotFound' @(

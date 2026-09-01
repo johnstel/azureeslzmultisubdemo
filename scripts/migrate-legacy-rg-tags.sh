@@ -129,12 +129,34 @@ replacement_initiative="$(read_required 'the replacement tagging initiative' pol
   --name "${replacement_initiative_name}" --management-group "${prefix}")"
 [[ "$(printf '%s' "${replacement_initiative}" | jq -er '.id | ascii_downcase')" == "$(lower "${replacement_initiative_id}")" ]] \
   || fail 'The replacement tagging initiative has an unexpected resource ID.'
+require_resource_group_tag_definition_id='/providers/Microsoft.Authorization/policyDefinitions/96670d01-0a4d-4649-9c89-2d3abc0a5025'
+printf '%s' "${replacement_initiative}" | jq -e --arg definition_id "$(lower "${require_resource_group_tag_definition_id}")" '
+  [
+    { id: "require-cost-center", tag: "CostCenter" },
+    { id: "require-application-name", tag: "ApplicationName" },
+    { id: "require-owner", tag: "Owner" },
+    { id: "require-environment", tag: "Environment" },
+    { id: "require-data-classification", tag: "DataClassification" },
+    { id: "require-ssp-id", tag: "SSP-ID" }
+  ] as $expected |
+  (.policyDefinitions // .properties.policyDefinitions // []) as $references |
+  ($references | length) == 6 and
+  ([$references[] | { id: .policyDefinitionReferenceId, tag: .parameters.tagName.value }] | sort_by(.id)) ==
+    ($expected | sort_by(.id)) and
+  all($references[];
+    (.policyDefinitionId | ascii_downcase) == $definition_id and
+    .definitionVersion == "1.*.*")
+' >/dev/null || fail 'The replacement tagging initiative does not contain the exact six pinned governance tag references.'
 replacement_assignment="$(read_required 'the replacement Landing Zones assignment' policy assignment show \
   --name "${legacy_assignment_name}" --scope "${landing_zones_scope}")"
 [[ "$(printf '%s' "${replacement_assignment}" | jq -er '.id | ascii_downcase')" == "$(lower "${replacement_assignment_id}")" ]] \
   || fail 'The replacement Landing Zones assignment has an unexpected resource ID.'
 [[ "$(printf '%s' "${replacement_assignment}" | jq -er '(.policyDefinitionId // .properties.policyDefinitionId) | ascii_downcase')" == "$(lower "${replacement_initiative_id}")" ]] \
   || fail 'The replacement Landing Zones assignment does not reference the replacement tagging initiative.'
+printf '%s' "${replacement_assignment}" | jq -e '
+  ((.notScopes // .properties.notScopes // []) | length) == 0 and
+  ((.resourceSelectors // .properties.resourceSelectors // []) | length) == 0
+' >/dev/null || fail 'The replacement Landing Zones assignment must not contain notScopes or resourceSelectors.'
 
 read_optional 'legacy workload assignment' 'PolicyAssignmentNotFound|ResourceNotFound' \
   policy assignment show --name "${legacy_assignment_name}" --scope "${workload_scope}"

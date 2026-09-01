@@ -52,6 +52,15 @@ landing = demo + "-landingzones"
 workload = demo + "-corp"
 legacy_definition = demo + "/providers/Microsoft.Authorization/policyDefinitions/eslz-demo-require-workload-rg-tags"
 initiative = demo + "/providers/Microsoft.Authorization/policySetDefinitions/eslz-demo-required-rg-tags"
+built_in = "/providers/Microsoft.Authorization/policyDefinitions/96670d01-0a4d-4649-9c89-2d3abc0a5025"
+references = [
+    ("require-cost-center", "CostCenter"),
+    ("require-application-name", "ApplicationName"),
+    ("require-owner", "Owner"),
+    ("require-environment", "Environment"),
+    ("require-data-classification", "DataClassification"),
+    ("require-ssp-id", "SSP-ID"),
+]
 
 def emit(value):
     print(json.dumps(value))
@@ -77,13 +86,36 @@ elif command == "policy set-definition show --name eslz-demo-required-rg-tags --
     if scenario == "replacement-missing":
         print("ERROR: (ResourceNotFound) replacement missing", file=sys.stderr)
         sys.exit(3)
-    emit({"id": initiative})
+    policy_references = [
+        {
+            "policyDefinitionId": demo + "/providers/Microsoft.Authorization/policyDefinitions/unrelated"
+                if scenario == "replacement-definition-wrong" and reference_id == "require-owner" else built_in,
+            "definitionVersion": (
+                None if scenario == "replacement-version-missing" and reference_id == "require-owner"
+                else "2.*.*" if scenario == "replacement-version-wrong" and reference_id == "require-owner"
+                else "1.*.*"
+            ),
+            "policyDefinitionReferenceId": reference_id,
+            "parameters": {"tagName": {"value": (
+                "Application" if scenario == "replacement-tag-renamed" and reference_id == "require-application-name"
+                else tag_name
+            )}},
+        }
+        for reference_id, tag_name in references
+        if not (scenario == "replacement-reference-missing" and reference_id == "require-ssp-id")
+    ]
+    emit({"id": initiative, "properties": {"policyDefinitions": policy_references}})
 elif command == "policy assignment show --name demo-require-rg-tags --scope " + landing:
     if scenario == "replacement-assignment-missing":
         print("ERROR: (PolicyAssignmentNotFound) replacement assignment missing", file=sys.stderr)
         sys.exit(3)
     replacement_link = demo + "/providers/Microsoft.Authorization/policySetDefinitions/unrelated" if scenario == "replacement-link-wrong" else initiative
-    emit({"id": landing + "/providers/Microsoft.Authorization/policyAssignments/demo-require-rg-tags", "properties": {"policyDefinitionId": replacement_link}})
+    properties = {"policyDefinitionId": replacement_link}
+    if scenario == "replacement-assignment-excluded":
+        properties["notScopes"] = [workload]
+    if scenario == "replacement-assignment-selected":
+        properties["resourceSelectors"] = [{"name": "limited", "selectors": [{"kind": "resourceLocation", "in": ["eastus"]}]}]
+    emit({"id": landing + "/providers/Microsoft.Authorization/policyAssignments/demo-require-rg-tags", "properties": properties})
 elif command == "policy assignment show --name demo-require-rg-tags --scope " + workload:
     if scenario in ("assignment-absent", "both-absent"):
         print("ERROR: (PolicyAssignmentNotFound) legacy assignment absent", file=sys.stderr)
@@ -223,6 +255,9 @@ if (-not $?) { exit 1 }
     foreach ($scenario in @(
         'wrong-active-subscription', 'wrong-subscription-tenant', 'disabled-subscription', 'wrong-ancestry',
         'replacement-missing', 'replacement-assignment-missing', 'replacement-link-wrong',
+        'replacement-reference-missing', 'replacement-tag-renamed',
+        'replacement-version-missing', 'replacement-version-wrong', 'replacement-definition-wrong',
+        'replacement-assignment-excluded', 'replacement-assignment-selected',
         'wrong-link', 'assignment-read-error', 'definition-read-error'
     )) {
         Invoke-MigrationCase -Scenario $scenario -TypedConfirmation 'tenant-a/eslz-demo-corp' -Approval 'REMOVE-LEGACY-RG-TAG-POLICY' -Execute
