@@ -164,7 +164,8 @@ jq -e '
         | ($value[11:13] | tonumber) as $hour
         | ($value[14:16] | tonumber) as $minute
         | ($value[17:19] | tonumber) as $second
-        | ($month >= 1 and $month <= 12)
+        | ($year >= 1)
+          and ($month >= 1 and $month <= 12)
           and ($day >= 1 and $day <= (if $month == 2 then (if (($year % 4 == 0 and $year % 100 != 0) or ($year % 400 == 0)) then 29 else 28 end) elif ($month == 4 or $month == 6 or $month == 9 or $month == 11) then 30 else 31 end))
           and ($hour >= 0 and $hour <= 23)
           and ($minute >= 0 and $minute <= 59)
@@ -253,7 +254,7 @@ jq -e '
           "assign-audit-public-ip",
           "assign-expensive-resources",
           "assign-platform-tags",
-          "assign-workload-rg-tags"
+          "assign-resource-group-tags"
         ] | index($name)))
     ) as $assignments
   | ($assignments | length) == 5
@@ -262,30 +263,30 @@ jq -e '
       "assign-audit-public-ip",
       "assign-expensive-resources",
       "assign-platform-tags",
-      "assign-workload-rg-tags"
+      "assign-resource-group-tags"
     ])
     and (assignment("assign-allowed-locations").scope | contains("variables(\u0027demoRootManagementGroupId\u0027)"))
     and (assignment("assign-audit-public-ip").scope | contains("variables(\u0027demoRootManagementGroupId\u0027)"))
     and (assignment("assign-expensive-resources").scope | contains("variables(\u0027demoRootManagementGroupId\u0027)"))
     and (assignment("assign-platform-tags").scope | contains("variables(\u0027platformManagementGroupId\u0027)"))
-    and (assignment("assign-workload-rg-tags").scope | contains("variables(\u0027workloadManagementGroupId\u0027)"))
+    and (assignment("assign-resource-group-tags").scope | contains("variables(\u0027landingZonesManagementGroupId\u0027)"))
     and assignment("assign-allowed-locations").properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]"
     and assignment("assign-audit-public-ip").properties.parameters.enforcementMode.value == "Default"
     and assignment("assign-expensive-resources").properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]"
     and assignment("assign-platform-tags").properties.parameters.enforcementMode.value == "Default"
-    and assignment("assign-workload-rg-tags").properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]"
+    and assignment("assign-resource-group-tags").properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]"
     and assignment("assign-allowed-locations").properties.parameters.assignmentName.value == "demo-allowed-us-locs"
     and assignment("assign-audit-public-ip").properties.parameters.assignmentName.value == "demo-audit-public-ip"
     and assignment("assign-expensive-resources").properties.parameters.assignmentName.value == "demo-block-expensive"
     and assignment("assign-platform-tags").properties.parameters.assignmentName.value == "demo-audit-platform-tags"
-    and assignment("assign-workload-rg-tags").properties.parameters.assignmentName.value == "demo-require-rg-tags"
+    and assignment("assign-resource-group-tags").properties.parameters.assignmentName.value == "demo-require-rg-tags"
     and (($assignments | map(.properties.parameters.assignmentName.value) | unique | length) == 5)
     and all($assignments[]; (.properties.parameters.assignmentName.value | length) <= 24)
     and assignment("assign-allowed-locations").properties.parameters.parameters.value.allowedLocations.value == "[parameters(\u0027allowedLocations\u0027)]"
     and assignment("assign-audit-public-ip").properties.parameters.parameters.value == {}
     and assignment("assign-expensive-resources").properties.parameters.parameters.value == {}
     and assignment("assign-platform-tags").properties.parameters.parameters.value == {}
-    and assignment("assign-workload-rg-tags").properties.parameters.parameters.value == {}
+    and assignment("assign-resource-group-tags").properties.parameters.parameters.value == {}
     and all($assignments[];
       (.properties.template.resources.assignment | has("identity") | not)
       and (.properties.template.resources.assignment | has("location") | not)

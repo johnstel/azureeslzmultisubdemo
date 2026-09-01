@@ -32,9 +32,6 @@ param workloadSubscriptionId string
 @description('Object ID of an existing Entra security group for governance administrators.')
 param governanceAdminsGroupObjectId string
 
-@description('Object ID of an existing Entra security group for subscription owners.')
-param subscriptionOwnersGroupObjectId string
-
 @description('Object ID of an existing Entra security group for network operators.')
 param networkOperatorsGroupObjectId string
 
@@ -178,12 +175,38 @@ param enableCriticalInfrastructure bool = false
 @description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch. Only used when enableCriticalInfrastructure is true.')
 param criticalInfrastructureSubscriptionIds array = []
 
+@description('Assign the stable Microsoft cloud security benchmark (MCSB) initiative at the demo root. Enabled by default for the customer-control profile. The separate Microsoft cloud security benchmark v2 preview initiative is never assigned by this template.')
+param enableMicrosoftCloudSecurityBenchmark bool = true
+
+@description('Set true to add the optional CIS Microsoft Azure Foundations Benchmark v2.0.0 overlay at the demo root. Independent of the MCSB and NIST switches; assignment alone does not establish CIS compliance.')
+param enableCisAzureFoundationsBenchmark bool = false
+
+@description('Set true to add the optional NIST SP 800-53 Rev. 5 overlay at the demo root. This initiative contains four fixed Guest Configuration DeployIfNotExists/Modify members, so the assignment needs a system-assigned identity with the Contributor role; assignment alone does not establish NIST compliance.')
+param enableNistSp80053Rev5 bool = false
+
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
 var landingZonesManagementGroupId = '${namePrefix}-landingzones'
 var workloadManagementGroupId = '${namePrefix}-${workloadArchetype}'
 var criticalInfrastructureManagementGroupId = '${namePrefix}-criticalinfra'
+var requireResourceGroupTagPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '96670d01-0a4d-4649-9c89-2d3abc0a5025'
+)
+var microsoftCloudSecurityBenchmarkPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '1f3afdf9-d0c9-4c3d-847f-89da613e70a8'
+)
+var cisAzureFoundationsPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '06f19060-9e68-4070-92ca-f15cc126059e'
+)
+var nistSp80053Rev5PolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '179d1daa-458f-4e47-8086-2a68d0d6c38f'
+)
+var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -209,6 +232,89 @@ module policyLibrary 'modules/policy-library.bicep' = {
   scope: managementGroup(demoRootManagementGroupId)
   params: {
     namePrefix: namePrefix
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
+  name: 'resource-group-tags-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-required-rg-tags'
+    initiativeDisplayName: 'Demo - required resource group tags'
+    initiativeDescription: 'Requires the six customer governance tags on resource groups.'
+    initiativeCategory: 'Tags'
+    initiativeVersion: '2.0.0'
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-cost-center'
+        parameters: {
+          tagName: {
+            value: 'CostCenter'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-application-name'
+        parameters: {
+          tagName: {
+            value: 'ApplicationName'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-owner'
+        parameters: {
+          tagName: {
+            value: 'Owner'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-environment'
+        parameters: {
+          tagName: {
+            value: 'Environment'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-data-classification'
+        parameters: {
+          tagName: {
+            value: 'DataClassification'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'require-ssp-id'
+        parameters: {
+          tagName: {
+            value: 'SSP-ID'
+          }
+        }
+        groupNames: []
+      }
+    ]
   }
   dependsOn: [
     hierarchy
@@ -379,14 +485,98 @@ module platformTagsAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
-module workloadResourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
-  name: 'assign-workload-rg-tags'
-  scope: managementGroup(workloadManagementGroupId)
+module resourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-resource-group-tags'
+  scope: managementGroup(landingZonesManagementGroupId)
   params: {
     assignmentName: 'demo-require-rg-tags'
-    displayName: 'Demo - require workload resource group tags'
-    description: 'Requires Application, Environment, and Owner tags on workload resource groups.'
-    policyDefinitionId: policyLibrary.outputs.workloadResourceGroupTagsPolicyDefinitionId
+    displayName: 'Demo - require resource group tags'
+    description: 'Requires CostCenter, ApplicationName, Owner, Environment, DataClassification, and SSP-ID tags on landing-zone resource groups.'
+    policyDefinitionId: resourceGroupTagsInitiative.outputs.policySetDefinitionId
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+    nonComplianceMessages: [
+      {
+        message: 'Resource groups must include the CostCenter tag.'
+        policyDefinitionReferenceId: 'require-cost-center'
+      }
+      {
+        message: 'Resource groups must include the ApplicationName tag.'
+        policyDefinitionReferenceId: 'require-application-name'
+      }
+      {
+        message: 'Resource groups must include the Owner tag.'
+        policyDefinitionReferenceId: 'require-owner'
+      }
+      {
+        message: 'Resource groups must include the Environment tag.'
+        policyDefinitionReferenceId: 'require-environment'
+      }
+      {
+        message: 'Resource groups must include the DataClassification tag.'
+        policyDefinitionReferenceId: 'require-data-classification'
+      }
+      {
+        message: 'Resource groups must include the SSP-ID tag.'
+        policyDefinitionReferenceId: 'require-ssp-id'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module microsoftCloudSecurityBenchmarkAssignment 'modules/policy-assignment.bicep' = if (enableMicrosoftCloudSecurityBenchmark) {
+  name: 'assign-mcsb-baseline'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-mcsb-baseline'
+    displayName: 'Demo - Microsoft cloud security benchmark'
+    description: 'Assigns the stable Microsoft cloud security benchmark initiative as the default security baseline for the demo hierarchy. Assignment alone does not establish regulatory compliance.'
+    policyDefinitionId: microsoftCloudSecurityBenchmarkPolicySetDefinitionId
+    definitionVersion: '57.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module cisAzureFoundationsAssignment 'modules/policy-assignment.bicep' = if (enableCisAzureFoundationsBenchmark) {
+  name: 'assign-cis-foundations'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-cis-foundations'
+    displayName: 'Demo - CIS Microsoft Azure Foundations Benchmark v2.0.0'
+    description: 'Optional CIS Azure Foundations overlay. Overlaps heavily with the Microsoft cloud security benchmark; assignment alone does not establish CIS compliance.'
+    policyDefinitionId: cisAzureFoundationsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module nistSp80053Rev5Assignment 'modules/remediating-policy-assignment.bicep' = if (enableNistSp80053Rev5) {
+  name: 'assign-nist-sp-800-53-r5'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-nist-800-53-r5'
+    displayName: 'Demo - NIST SP 800-53 Rev. 5'
+    description: 'Optional NIST SP 800-53 Rev. 5 overlay. Four fixed Guest Configuration members are remediation-capable, so a system-assigned identity with the Contributor role is required. Assignment alone does not establish NIST or NERC CIP compliance.'
+    policyDefinitionId: nistSp80053Rev5PolicySetDefinitionId
+    definitionVersion: '14.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      contributorRoleDefinitionId
+    ]
     enforcementMode: denyPolicyEnforcementMode
     parameters: {}
   }
@@ -411,7 +601,7 @@ module connectivityRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssign
   name: 'connectivity-subscription-rbac'
   scope: subscription(connectivitySubscriptionId)
   params: {
-    subscriptionOwnersGroupObjectId: subscriptionOwnersGroupObjectId
+    deployOperatorRoleAssignment: deployRoleAssignments
     operatorGroupObjectId: networkOperatorsGroupObjectId
     operatorRoleDefinitionId: '4d97b98b-1d4f-4787-a291-c67834d212e7'
   }
@@ -424,7 +614,7 @@ module workloadRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssignment
   name: 'workload-subscription-rbac'
   scope: subscription(workloadSubscriptionId)
   params: {
-    subscriptionOwnersGroupObjectId: subscriptionOwnersGroupObjectId
+    deployOperatorRoleAssignment: deployRoleAssignments
     operatorGroupObjectId: workloadContributorsGroupObjectId
     operatorRoleDefinitionId: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
   }
@@ -456,7 +646,7 @@ module workloadEvidence 'modules/evidence-workload.bicep' = if (deployEvidenceRe
   }
   dependsOn: [
     hierarchy
-    workloadResourceGroupTagsAssignment
+    resourceGroupTagsAssignment
   ]
 }
 
@@ -495,6 +685,11 @@ output denyPolicyEnforcementMode string = denyPolicyEnforcementMode
 output roleAssignmentsEnabled bool = deployRoleAssignments
 output evidenceResourcesEnabled bool = deployEvidenceResources
 output criticalInfrastructureEnabled bool = enableCriticalInfrastructure
+output securityBenchmarkAssignments object = {
+  microsoftCloudSecurityBenchmark: enableMicrosoftCloudSecurityBenchmark
+  cisAzureFoundationsBenchmark: enableCisAzureFoundationsBenchmark
+  nistSp80053Rev5: enableNistSp80053Rev5
+}
 output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs

@@ -59,15 +59,21 @@ root:
 | Demo root | Block common costly service types and VM SKUs outside an intentionally small allowlist | Deny assignment in `DoNotEnforce` |
 | Demo root | Customer deployment-restrictions initiative: `eastus`/`eastus2`, approved resource types and VM SKUs, managed disks, and public IP creation | Deny members in `DoNotEnforce`; audit members remain Audit |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
-| Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
+| Landing Zones | Require `CostCenter`, `ApplicationName`, `Owner`, `Environment`, `DataClassification`, and `SSP-ID` tags on resource groups | Initiative assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
+| Demo root | Microsoft cloud security benchmark (built-in initiative, enabled by default) | Assignment in `DoNotEnforce` |
+| Demo root | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
+| Demo root | NIST SP 800-53 Rev. 5 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
 safe shape of Azure's built-in allowed-locations control. Resource groups are
-governed separately by workload tag policy. Change
+governed separately by a tagging initiative defined at the demo root and
+assigned at Landing Zones. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
-policy impact.
+policy impact. The resource-group tagging initiative composes six instances of
+Azure's built-in **Require a tag on resource groups** definition and provides a
+tag-specific noncompliance message for each requirement.
 
 The customer-control profile is separate from the broader safe demo location
 profile. Its `customerAllowedLocations`, `customerAllowedResourceTypes`, and
@@ -90,6 +96,57 @@ public-IP audit remains the only public-IP resource control.
 For rollout phasing, prefer resource selectors or `DoNotEnforce` assignment
 mode. Use an exemption only when a specific deployed scope needs a reviewed,
 ticketed exception with a mandatory owner and expiry.
+### Security benchmark and optional compliance overlays
+
+The demo root assigns the stable **Microsoft cloud security benchmark** (MCSB)
+built-in initiative (`1f3afdf9-d0c9-4c3d-847f-89da613e70a8`) by default through
+`enableMicrosoftCloudSecurityBenchmark`. Two overlays are independently opt-in
+and disabled by default:
+
+| Parameter | Built-in initiative | Pinned version | Default |
+|---|---|---|---|
+| `enableMicrosoftCloudSecurityBenchmark` | Microsoft cloud security benchmark | `57.*.*` | `true` |
+| `enableCisAzureFoundationsBenchmark` | CIS Microsoft Azure Foundations Benchmark v2.0.0 | `1.*.*` | `false` |
+| `enableNistSp80053Rev5` | NIST SP 800-53 Rev. 5 | `14.*.*` | `false` |
+
+Every initiative ID and pinned major version traces to
+[`policy/control-catalog.json`](policy/control-catalog.json) (REQ-BASE-01
+through REQ-BASE-03) and the generated
+[control matrix](docs/CONTROL-MATRIX.md). Assignments are made only at the
+dedicated demo root — never at the tenant root — and reuse
+`denyPolicyEnforcementMode`, so the safe default remains a non-enforcing
+`DoNotEnforce` audit posture.
+
+Version behavior and previews:
+
+- Each assignment pins the supported major version (for example `57.*.*`), so
+  Azure picks up minor and patch updates of the same major version without
+  silently adopting a new major revision. MCSB's built-in definition is updated
+  in place very frequently; re-verify its current version before promoting the
+  assignment to `Default`.
+- Preview or superseded initiatives are never selected automatically. The
+  separate *Microsoft cloud security benchmark v2*
+  (`e3ec7e09-768c-4b64-882c-fcada3772047`), *NIST SP 800-53 R5.1.1*
+  (`60205a79-6280-4e20-a147-e2011e09dc78`), and *CIS v1.4.0*
+  (`c3f5c4d9-9a1d-4a99-85c0-7f93e384d5c5`) initiatives are documented in the
+  catalog only and must be independently re-verified before any future switch.
+- MCSB and CIS are audit-only, so their assignments request no managed identity.
+  NIST SP 800-53 Rev. 5 contains four fixed Guest Configuration
+  `DeployIfNotExists`/`Modify` members, so enabling it creates a system-assigned
+  identity granted only the verified Contributor role
+  (`b24988ac-6180-42a0-ab88-20f7382dd24c`) at the demo root.
+
+Overlap with the organizational controls above is intentional: the data
+protection, network, and logging controls in these benchmarks are the
+authoritative source of truth, so this repository does not create duplicate
+custom definitions for the same intent. There is also **no** single assignable
+"Azure Security Baseline" initiative — Azure service security baselines (for
+example Storage, Key Vault, and Compute) are Microsoft Learn guidance that maps
+into individual service controls (REQ-BASE-04), not one initiative.
+
+Assigning any of these initiatives produces compliance signal only. It does not
+by itself establish, claim, or certify regulatory compliance, and no Defender
+for Cloud plan is enabled by these assignments.
 
 ### Reusable initiative composition
 
@@ -130,32 +187,48 @@ an untracked replacement for remediation, selector-based rollout, or
 
 ## Least-privilege RBAC model
 
-Bicep does not create Microsoft Entra identities. Supply the object IDs of five
-existing **security groups**:
+Bicep does not create Microsoft Entra identities. The repeatable main deployment
+accepts the object IDs of four baseline **security groups**:
 
 | Group parameter | Assignment |
 |---|---|
 | `governanceAdminsGroupObjectId` | Management Group Contributor and Resource Policy Contributor at the demo root |
-| `subscriptionOwnersGroupObjectId` | Owner on each of the two sandbox subscriptions |
 | `networkOperatorsGroupObjectId` | Network Contributor on the connectivity subscription |
 | `workloadContributorsGroupObjectId` | Contributor on the workload subscription |
 | `readOnlyAuditorsGroupObjectId` | Reader at the demo root |
 
-RBAC is disabled by default with `deployRoleAssignments=false`. The deployment
-principal needs enough access to create these assignments when it is enabled;
-the governance group assignments do not bootstrap the deployment principal.
+Ordinary RBAC is disabled by default with `deployRoleAssignments=false`.
+Enabling ordinary RBAC does not grant Owner. `main.bicep` contains no Owner
+eligibility request, so normal redeployment cannot replay a one-time PIM
+request. The deployment principal needs enough existing access to create the
+ordinary assignments; the template never bootstraps its own authority.
+
+PIM-ready Owner is handled separately by the one-shot Bash and PowerShell
+operator workflows in `scripts/owner-eligibility-request.*`. They require a
+fresh caller-supplied request GUID and finite schedule, verify the exact object
+is an existing security-enabled group, check current eligibility and pending
+requests, and run what-if before stopping by default. Direct use of the backing
+Bicep artifact is unsupported. Approval, MFA, activation justification,
+four-hour activation duration, and notification expectations remain a static
+report-only contract in
+`identity/azure-rbac/owner-activation-requirements.template.json`; configure
+and verify those PIM role settings separately at both subscriptions before
+opting in. See [PIM-ready Azure RBAC](docs/AZURE-RBAC-PIM.md).
 
 ## Entra Conditional Access and PIM (identity governance, not Azure Policy)
 
 Azure Policy cannot require MFA, block legacy authentication, or govern
-privileged-role activation — those are Microsoft Entra ID/Microsoft Graph
-concepts. `identity/` contains report-only Conditional Access policy inputs
-and eligible-only Privileged Identity Management (PIM) activation-policy
-inputs for later, separately reviewed use. This repository never calls
-Microsoft Graph, never modifies Entra ID, and never enables Conditional
-Access; every artifact defaults to report-only/eligible and requires a
-real emergency-access (break-glass) exclusion before it could ever be
-applied. See the [Entra Conditional Access and PIM runbook](docs/ENTRA-CONDITIONAL-ACCESS-PIM.md)
+privileged-role activation. `identity/` contains report-only Conditional Access
+and PIM activation requirements for later, separately reviewed use. The
+directory-role artifacts use Microsoft Graph concepts; the Azure RBAC Owner
+requirements govern the separately opt-in ARM eligibility schedule. This
+repository never modifies Entra ID or enables Conditional Access. The isolated
+Owner operator workflow performs one read-only Entra group lookup; normal
+deployment and offline validators do not. Every artifact defaults to
+report-only/eligible; directory controls require a real emergency-access
+exclusion, while the Azure RBAC contract keeps emergency access entirely
+customer-managed and outside the repository. See the
+[Entra Conditional Access and PIM runbook](docs/ENTRA-CONDITIONAL-ACCESS-PIM.md)
 for licensing, required directory roles, workload-identity guidance, rollout
 order, monitoring, and rollback. Validate these artifacts locally with:
 
@@ -294,6 +367,15 @@ For a first review, retain:
 "deployEvidenceResources": { "value": false }
 ```
 
+Benchmark defaults keep only the stable MCSB baseline enabled; add the CIS or
+NIST overlays independently after reviewing their impact:
+
+```json
+"enableMicrosoftCloudSecurityBenchmark": { "value": true },
+"enableCisAzureFoundationsBenchmark": { "value": false },
+"enableNistSp80053Rev5": { "value": false }
+```
+
 An equivalent Bicep parameter template is provided at
 `parameters/main.template.bicepparam`.
 
@@ -357,6 +439,46 @@ The script runs preflight and what-if again before asking for an interactive
 confirmation. It then creates a named tenant deployment. Do not use the script
 against production subscriptions.
 
+## Migrate the legacy resource-group tag policy
+
+Existing deployments may retain the former workload-scoped assignment and
+custom definition after the replacement demo-root initiative and Landing Zones
+assignment are deployed.
+First review what-if, deploy the replacement, and obtain approval. Then preview
+the migration; preview mode performs no Azure operation:
+
+```powershell
+.\scripts\migrate-legacy-rg-tags.ps1 -ParameterFile .\parameters\demo.parameters.json
+```
+
+```bash
+./scripts/migrate-legacy-rg-tags.sh parameters/demo.parameters.json
+```
+
+Only after the replacement is approved, execute with the separate migration
+confirmation. Execution first performs read-only checks of the active tenant
+and subscription, both supplied subscriptions, exact management-group ancestry,
+the legacy assignment-definition link, and the replacement initiative and
+Landing Zones assignment. It prompts for the validated
+`<tenantId>/<namePrefix>-<workloadArchetype>` only after those checks pass:
+
+```powershell
+$env:ESLZ_TAG_MIGRATION_CONFIRMATION = "REMOVE-LEGACY-RG-TAG-POLICY"
+.\scripts\migrate-legacy-rg-tags.ps1 -ParameterFile .\parameters\demo.parameters.json -Execute
+```
+
+```bash
+export ESLZ_TAG_MIGRATION_CONFIRMATION="REMOVE-LEGACY-RG-TAG-POLICY"
+./scripts/migrate-legacy-rg-tags.sh parameters/demo.parameters.json --execute
+```
+
+The scripts remove only `demo-require-rg-tags` at the legacy workload
+management-group scope and `<namePrefix>-require-workload-rg-tags` at the demo
+root. Each artifact is checked independently, so an already-absent assignment
+does not prevent definition cleanup; only verified not-found responses are
+treated as complete. All other read errors stop the migration. The scripts are
+never called automatically by preview, deployment, or teardown scripts.
+
 ## Teardown
 
 Teardown is not automatic because subscription movement, RBAC, policy, and
@@ -399,7 +521,7 @@ The script:
 2. deletes the demo-created monitoring resource group (`rg-<namePrefix>-monitoring`)
    and waits for completion, but only when `deployCentralLogAnalytics=true`
    **and** no existing workspace ID was supplied;
-3. deletes the seven demo role assignments for the five groups by principal and scope;
+3. deletes the five ordinary demo role assignments for the four baseline groups by principal and scope; eligible Owner schedules require separate one-shot PIM `AdminRemove` requests and are not automatically removed;
 4. removes policy assignments, then policy definitions;
 5. moves both subscriptions back to the supplied tenant-root management group;
 6. deletes leaf management groups and then the dedicated demo root.
@@ -418,7 +540,12 @@ docs/
   BEGINNERS-GUIDE.md
   FIRST-RUN-CHECKLIST.md
   ENTRA-CONDITIONAL-ACCESS-PIM.md
+  AZURE-RBAC-PIM.md
 identity/
+  azure-rbac/
+    owner-eligibility-request.bicep
+    owner-eligibility-request.parameters.template.json
+    owner-activation-requirements.template.json
   conditional-access/
     ca-privileged-role-mfa.template.json
     ca-azure-mgmt-mfa.template.json
@@ -450,16 +577,20 @@ modules/
   central-monitoring-sentinel.bicep
 parameters/
 scripts/
+  owner-eligibility-request.ps1
   preflight.ps1
   what-if.ps1
   deploy.ps1
   teardown.ps1
   validate-identity-artifacts.ps1
+  validate-rbac-artifacts.ps1
+  owner-eligibility-request.sh
   preflight.sh
   what-if.sh
   deploy.sh
   teardown.sh
   validate-identity-artifacts.sh
+  validate-rbac-artifacts.sh
 tests/
   test.ps1
   test.sh
@@ -469,10 +600,17 @@ tests/
 
 - No policy is assigned at the tenant root.
 - No subscription or Entra identity is created.
-- No live command runs from tests or preflight.
+- Tests and static validators are offline; normal preflight performs read-only
+  Azure checks and never changes Azure or Entra. The separate Owner workflow
+  performs read-only Azure/Entra checks and what-if by default, and requires
+  layered explicit confirmation before its one-time submission mode.
 - Deny assignments are non-enforcing by default.
-- RBAC and evidence resources are opt-in.
+- Ordinary RBAC and evidence resources are independently opt-in; eligible Owner
+  uses a separate one-shot artifact that is never called by `main.bicep`.
 - Deployment and teardown require exact environment confirmations.
-- No Conditional Access policy or PIM role setting is applied to any
-  tenant; `identity/` templates are static, report-only/eligible-only
-  inputs and always require replacing an emergency-access placeholder.
+- No Conditional Access policy or PIM role setting is applied to any tenant;
+  identity-governance templates remain report-only, while the separately
+  invoked Owner eligibility request is disabled by default and requires
+  explicit placeholders to be replaced.
+- No permanent Owner assignment is created; emergency access remains an
+  explicitly documented, customer-managed external responsibility.

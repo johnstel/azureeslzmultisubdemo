@@ -1,0 +1,32 @@
+{
+  "artifactType": "azureRbacPimActivationRequirements",
+  "state": "reportOnly",
+  "roleName": "Owner",
+  "scopeType": "subscription",
+  "principalType": "Group",
+  "assignmentType": "eligible",
+  "eligibility": {
+    "requireTimeBoundSchedule": true,
+    "maximumEligibilityDuration": "P365D"
+  },
+  "activation": {
+    "requireApproval": true,
+    "approvers": [
+      "REPLACE_WITH_PIM_APPROVER_GROUP_OBJECT_ID"
+    ],
+    "requireMultiFactorAuthentication": true,
+    "requireJustification": true,
+    "maximumActivationDurationHours": 4
+  },
+  "notifications": {
+    "notifyAdminsOnActivation": true,
+    "notifyApproversOnActivationRequest": true,
+    "notifyAssigneeOnActivation": true
+  },
+  "emergencyAccess": {
+    "handledOutsideRepository": true,
+    "permanentOwnerAssignmentCreatedByRepository": false,
+    "description": "Customer emergency-access accounts and any standing Azure access are established, monitored, tested, and reviewed outside this repository. This artifact neither assumes those accounts exist nor contains their object IDs."
+  },
+  "notes": "Static, tenant-independent requirements for Owner activation at each demo subscription. This file is never sent to Microsoft Graph, Microsoft Entra ID, or Azure Resource Manager. Configure and verify the equivalent PIM role settings separately before enabling the Bicep eligibility schedule requests."
+}
