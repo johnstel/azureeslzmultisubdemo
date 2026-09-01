@@ -160,7 +160,7 @@ if ($pythonCmd) {
 switch ($SchemaBackend) {
     'python' {
         if (-not $jsonschemaAvailable) {
-            Write-Host "  SKIPPED: -SchemaBackend python requested but python3 and/or the jsonschema module is not available."
+            [Console]::Error.WriteLine("  SKIPPED: -SchemaBackend python requested but python3 and/or the jsonschema module is not available.")
             exit 2
         }
         $usePython = $true

@@ -213,14 +213,9 @@ run_case() {
   fi
 }
 
-case_count="$(jq 'length' "${MANIFEST}")"
-for ((idx = 0; idx < case_count; idx++)); do
-  entry="$(jq -c ".[${idx}]" "${MANIFEST}")"
-  path="$(printf '%s' "${entry}" | jq -r '.path')"
-  label="$(printf '%s' "${entry}" | jq -r '.label')"
-  expect="$(printf '%s' "${entry}" | jq -r '.expectSuccess')"
+while IFS=$'\t' read -r path label expect; do
   run_case "${label}" "${path}" "${expect}"
-done
+done < <(jq -r '.[] | [.path, .label, (.expectSuccess | tostring)] | @tsv' "${MANIFEST}")
 
 if [[ "${fail_count}" -gt 0 ]]; then
   printf '\n%d forced-fallback URI grammar regression case(s) failed.\n' "${fail_count}" >&2
