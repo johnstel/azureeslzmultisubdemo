@@ -77,6 +77,8 @@ try {
     Assert-Test ($moduleTemplate.parameters.policyDefinitionReferences.items.'$ref' -eq '#/definitions/policyDefinitionReference') 'policyDefinitionReferences must use the policyDefinitionReference type.'
     Assert-Test ($moduleTemplate.definitions.policyDefinitionReference.additionalProperties -eq $false) 'policyDefinitionReference must reject undeclared fields.'
     Assert-Test ($moduleTemplate.definitions.policyDefinitionReference.properties.policyDefinitionId.minLength -eq 1) 'policyDefinitionId must reject empty values.'
+    Assert-Test ($moduleTemplate.definitions.policyDefinitionReference.properties.definitionVersion.type -eq 'string') 'definitionVersion must be a string.'
+    Assert-Test ($moduleTemplate.definitions.policyDefinitionReference.properties.definitionVersion.nullable -eq $true) 'definitionVersion must remain optional for custom definitions.'
     Assert-Test ($moduleTemplate.definitions.policyDefinitionReference.properties.policyDefinitionReferenceId.minLength -eq 1) 'policyDefinitionReferenceId must reject empty values.'
     Assert-Test ($moduleTemplate.definitions.policyDefinitionReference.properties.parameters.type -eq 'object') 'Reference parameters must be typed as an object.'
     Assert-Test ($moduleTemplate.definitions.policyDefinitionReference.properties.groupNames.type -eq 'array') 'Reference groupNames must be typed as an array.'
@@ -98,8 +100,9 @@ try {
     Assert-Test ($initiative.properties.metadata.governanceVersion -eq '2.0') 'Initiative metadata must identify v2 governance.'
     Assert-Test ($initiative.properties.metadata.managedBy -eq 'Bicep') 'Initiative metadata must identify Bicep management.'
     Assert-Test ($initiative.properties.copy[0].name -eq 'policyDefinitions') 'Module must compose policy definitions with a property loop.'
-    Assert-Test ($initiative.properties.copy[0].input.parameters -eq "[variables('validatedPolicyDefinitionReferences')[copyIndex('policyDefinitions')].parameters]") 'Per-reference parameters must pass through.'
-    Assert-Test ($initiative.properties.copy[0].input.groupNames -eq "[variables('validatedPolicyDefinitionReferences')[copyIndex('policyDefinitions')].groupNames]") 'Per-reference group names must pass through.'
+    Assert-Test ($initiative.properties.copy[0].input.Contains('definitionVersion')) 'Per-reference definition versions must pass through.'
+    Assert-Test ($initiative.properties.copy[0].input.Contains('.parameters')) 'Per-reference parameters must pass through.'
+    Assert-Test ($initiative.properties.copy[0].input.Contains('.groupNames')) 'Per-reference group names must pass through.'
 
     Write-Host '4/8 Validate empty and duplicate reference-ID guards...'
     Assert-Test ($moduleTemplate.variables.copy[0].name -eq 'normalizedPolicyDefinitionReferenceIds') 'Reference IDs must be normalized before duplicate detection.'
@@ -121,7 +124,7 @@ try {
     $groups = @($exampleDeployment.properties.parameters.policyDefinitionGroups.value)
     Assert-Test ($references.Count -eq 2) 'Example must combine exactly one built-in and one custom definition.'
     $referenceIds = @($references | ForEach-Object { [string]$_.policyDefinitionReferenceId })
-    Assert-Test (($referenceIds | Where-Object { $_.Length -eq 0 }).Count -eq 0) 'Example reference IDs must be non-empty.'
+    Assert-Test (@($referenceIds | Where-Object { $_.Length -eq 0 }).Count -eq 0) 'Example reference IDs must be non-empty.'
     $uniqueReferenceIds = @($referenceIds | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique)
     Assert-Test ($uniqueReferenceIds.Count -eq $referenceIds.Count) 'Example reference IDs must be case-insensitively unique.'
     Assert-Test (@($groups | Where-Object { $_.name -eq 'deployment-visibility' }).Count -eq 1) 'Example must define its reference group.'
@@ -172,7 +175,8 @@ finally {
     if (Test-Path -LiteralPath $TempDir) {
         Remove-Item -LiteralPath $TempDir -Recurse -Force
     }
-    if (Test-Path -LiteralPath $ArtifactsParent) {
+    if ((Test-Path -LiteralPath $ArtifactsParent) -and
+        @(Get-ChildItem -LiteralPath $ArtifactsParent -Force).Count -eq 0) {
         Remove-Item -LiteralPath $ArtifactsParent -ErrorAction SilentlyContinue
     }
 }

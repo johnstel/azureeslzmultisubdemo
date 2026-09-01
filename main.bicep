@@ -164,7 +164,7 @@ module policyLibrary 'modules/policy-library.bicep' = {
 
 module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
   name: 'resource-group-tags-initiative'
-  scope: managementGroup(landingZonesManagementGroupId)
+  scope: managementGroup(demoRootManagementGroupId)
   params: {
     initiativeName: '${namePrefix}-required-rg-tags'
     initiativeDisplayName: 'Demo - required resource group tags'
@@ -174,6 +174,7 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
     policyDefinitionReferences: [
       {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-cost-center'
         parameters: {
           tagName: {
@@ -184,6 +185,7 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
       }
       {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-application-name'
         parameters: {
           tagName: {
@@ -194,6 +196,7 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
       }
       {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-owner'
         parameters: {
           tagName: {
@@ -204,6 +207,7 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
       }
       {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-environment'
         parameters: {
           tagName: {
@@ -214,6 +218,7 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
       }
       {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-data-classification'
         parameters: {
           tagName: {
@@ -224,6 +229,7 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
       }
       {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-ssp-id'
         parameters: {
           tagName: {

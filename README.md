@@ -63,7 +63,8 @@ root:
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
 safe shape of Azure's built-in allowed-locations control. Resource groups are
-governed separately by the Landing Zones tagging initiative. Change
+governed separately by a tagging initiative defined at the demo root and
+assigned at Landing Zones. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
 policy impact. The resource-group tagging initiative composes six instances of
 Azure's built-in **Require a tag on resource groups** definition and provides a
@@ -317,7 +318,8 @@ against production subscriptions.
 ## Migrate the legacy resource-group tag policy
 
 Existing deployments may retain the former workload-scoped assignment and
-custom definition after the replacement Landing Zones initiative is deployed.
+custom definition after the replacement demo-root initiative and Landing Zones
+assignment are deployed.
 First review what-if, deploy the replacement, and obtain approval. Then preview
 the migration; preview mode performs no Azure operation:
 

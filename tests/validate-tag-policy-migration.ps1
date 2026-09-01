@@ -51,7 +51,7 @@ demo = "/providers/Microsoft.Management/managementGroups/eslz-demo"
 landing = demo + "-landingzones"
 workload = demo + "-corp"
 legacy_definition = demo + "/providers/Microsoft.Authorization/policyDefinitions/eslz-demo-require-workload-rg-tags"
-initiative = landing + "/providers/Microsoft.Authorization/policySetDefinitions/eslz-demo-required-rg-tags"
+initiative = demo + "/providers/Microsoft.Authorization/policySetDefinitions/eslz-demo-required-rg-tags"
 
 def emit(value):
     print(json.dumps(value))
@@ -73,7 +73,7 @@ elif command == "account management-group show --name eslz-demo-landingzones":
 elif command == "account management-group show --name eslz-demo-corp":
     parent = demo if scenario == "wrong-ancestry" else landing
     emit({"id": workload, "details": {"parent": {"id": parent}}})
-elif command == "policy set-definition show --name eslz-demo-required-rg-tags --management-group eslz-demo-landingzones":
+elif command == "policy set-definition show --name eslz-demo-required-rg-tags --management-group eslz-demo":
     if scenario == "replacement-missing":
         print("ERROR: (ResourceNotFound) replacement missing", file=sys.stderr)
         sys.exit(3)

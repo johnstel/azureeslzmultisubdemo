@@ -677,8 +677,9 @@ Scope: Landing Zones branch.
 
 Resource groups must have the exact `CostCenter`, `ApplicationName`, `Owner`,
 `Environment`, `DataClassification`, and `SSP-ID` tags. The tagging initiative
-provides a tag-specific noncompliance message for each requirement. Its
-assignment starts in `DoNotEnforce`.
+is defined at the dedicated demo root and assigned at Landing Zones. It provides
+a tag-specific noncompliance message for each requirement, and its assignment
+starts in `DoNotEnforce`.
 
 Azure Policy is inherited from parent scopes and evaluates resources beneath
 management groups. See

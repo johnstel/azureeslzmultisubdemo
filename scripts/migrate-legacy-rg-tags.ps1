@@ -51,7 +51,7 @@ $landingZonesScope = "/providers/Microsoft.Management/managementGroups/$prefix-l
 $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$archetype"
 $legacyDefinitionId = "$demoRootScope/providers/Microsoft.Authorization/policyDefinitions/$legacyDefinitionName"
 $legacyAssignmentId = "$workloadScope/providers/Microsoft.Authorization/policyAssignments/$legacyAssignmentName"
-$replacementInitiativeId = "$landingZonesScope/providers/Microsoft.Authorization/policySetDefinitions/$replacementInitiativeName"
+$replacementInitiativeId = "$demoRootScope/providers/Microsoft.Authorization/policySetDefinitions/$replacementInitiativeName"
 $replacementAssignmentId = "$landingZonesScope/providers/Microsoft.Authorization/policyAssignments/$legacyAssignmentName"
 
 Write-Host 'LEGACY RESOURCE-GROUP TAG POLICY MIGRATION PLAN'
@@ -138,7 +138,7 @@ if ([string]$landingZones.details.parent.id -ine $demoRootScope) { Stop-Migratio
 if ([string]$workloadGroup.details.parent.id -ine $landingZonesScope) { Stop-Migration 'The workload management group is not an exact child of Landing Zones.' }
 
 $replacementInitiative = Read-AzureRequired 'the replacement tagging initiative' @(
-    'policy', 'set-definition', 'show', '--name', $replacementInitiativeName, '--management-group', "$prefix-landingzones"
+    'policy', 'set-definition', 'show', '--name', $replacementInitiativeName, '--management-group', $prefix
 )
 if ([string]$replacementInitiative.id -ine $replacementInitiativeId) {
     Stop-Migration 'The replacement tagging initiative has an unexpected resource ID.'

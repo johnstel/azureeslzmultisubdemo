@@ -280,7 +280,7 @@ $policyNames = @(
 foreach ($policyName in $policyNames) {
     & az policy definition delete --name $policyName --management-group $prefix 2>$null
 }
-& az policy set-definition delete --name "$prefix-required-rg-tags" --management-group "$prefix-landingzones" 2>$null
+& az policy set-definition delete --name "$prefix-required-rg-tags" --management-group $prefix 2>$null
 
 & az account management-group subscription add --name $tenantRoot --subscription $connectivitySubscription
 if ($LASTEXITCODE -ne 0) { Stop-Teardown 'Failed to move the connectivity subscription.' }

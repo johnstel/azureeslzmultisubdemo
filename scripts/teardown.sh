@@ -219,7 +219,7 @@ for policy_name in \
   "${prefix}-allowed-us-locations"; do
   az policy definition delete --name "${policy_name}" --management-group "${prefix}" 2>/dev/null || true
 done
-az policy set-definition delete --name "${prefix}-required-rg-tags" --management-group "${prefix}-landingzones" 2>/dev/null || true
+az policy set-definition delete --name "${prefix}-required-rg-tags" --management-group "${prefix}" 2>/dev/null || true
 
 az account management-group subscription add --name "${tenant_root}" --subscription "${connectivity_subscription}"
 az account management-group subscription add --name "${tenant_root}" --subscription "${workload_subscription}"

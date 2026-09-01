@@ -102,6 +102,15 @@ try {
         if ($tagReference.policyDefinitionId -cne "[variables('requireResourceGroupTagPolicyDefinitionId')]") {
             Stop-Test 'Every required tag must use the verified built-in resource-group tag policy.'
         }
+        if ($tagReference.definitionVersion -cne '1.*.*') {
+            Stop-Test 'Every required tag policy reference must pin the catalog-supported 1.*.* major version.'
+        }
+    }
+    if (-not $initiativeDeployment.scope.Contains('demoRootManagementGroupId')) {
+        Stop-Test 'Required resource-group tag initiative definition must be stored at the demo root.'
+    }
+    if (-not $assignmentDeployment.scope.Contains('landingZonesManagementGroupId')) {
+        Stop-Test 'Required resource-group tag assignment must remain scoped to Landing Zones.'
     }
     if ($assignmentDeployment.properties.parameters.enforcementMode.value -cne "[parameters('denyPolicyEnforcementMode')]") {
         Stop-Test 'Required resource-group tag assignment must use the safe deny enforcement parameter.'

@@ -38,7 +38,7 @@ landing_zones_scope="/providers/Microsoft.Management/managementGroups/${prefix}-
 workload_scope="/providers/Microsoft.Management/managementGroups/${prefix}-${archetype}"
 legacy_definition_id="${demo_root_scope}/providers/Microsoft.Authorization/policyDefinitions/${legacy_definition_name}"
 legacy_assignment_id="${workload_scope}/providers/Microsoft.Authorization/policyAssignments/${legacy_assignment_name}"
-replacement_initiative_id="${landing_zones_scope}/providers/Microsoft.Authorization/policySetDefinitions/${replacement_initiative_name}"
+replacement_initiative_id="${demo_root_scope}/providers/Microsoft.Authorization/policySetDefinitions/${replacement_initiative_name}"
 replacement_assignment_id="${landing_zones_scope}/providers/Microsoft.Authorization/policyAssignments/${legacy_assignment_name}"
 
 printf 'LEGACY RESOURCE-GROUP TAG POLICY MIGRATION PLAN\n'
@@ -126,7 +126,7 @@ workload_group="$(read_required 'the workload management group' account manageme
   || fail 'The workload management group is not an exact child of Landing Zones.'
 
 replacement_initiative="$(read_required 'the replacement tagging initiative' policy set-definition show \
-  --name "${replacement_initiative_name}" --management-group "${prefix}-landingzones")"
+  --name "${replacement_initiative_name}" --management-group "${prefix}")"
 [[ "$(printf '%s' "${replacement_initiative}" | jq -er '.id | ascii_downcase')" == "$(lower "${replacement_initiative_id}")" ]] \
   || fail 'The replacement tagging initiative has an unexpected resource ID.'
 replacement_assignment="$(read_required 'the replacement Landing Zones assignment' policy assignment show \

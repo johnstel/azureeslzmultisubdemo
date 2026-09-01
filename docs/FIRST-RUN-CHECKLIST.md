@@ -165,7 +165,8 @@ deployment.
 
 Skip this section for a first deployment. For an upgraded deployment:
 
-- [ ] What-if showed the replacement six-tag initiative at Landing Zones.
+- [ ] What-if showed the replacement six-tag initiative at the demo root and
+      its assignment at Landing Zones.
 - [ ] The replacement deployment completed and was approved.
 - [ ] The migration preview lists only `demo-require-rg-tags` at the workload
       scope and `<namePrefix>-require-workload-rg-tags` at the demo root.

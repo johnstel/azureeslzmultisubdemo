@@ -134,7 +134,7 @@ function Test-ResourceWithoutLocation {
     if ($Selector.kind -ne 'resourceWithoutLocation' -or [bool]$inProperty -eq [bool]$notInProperty) {
         return $false
     }
-    $values = if ($inProperty) { @($inProperty.Value) } else { @($notInProperty.Value) }
+    $values = @(if ($inProperty) { $inProperty.Value } else { $notInProperty.Value })
     return $values.Count -eq 1 -and $values[0] -eq 'subscriptionLevelResources'
 }
 
@@ -423,7 +423,8 @@ finally {
     if (Test-Path -LiteralPath $TempDir) {
         Remove-Item -LiteralPath $TempDir -Recurse -Force
     }
-    if (Test-Path -LiteralPath $ArtifactsParent) {
+    if ((Test-Path -LiteralPath $ArtifactsParent) -and
+        @(Get-ChildItem -LiteralPath $ArtifactsParent -Force).Count -eq 0) {
         Remove-Item -LiteralPath $ArtifactsParent -ErrorAction SilentlyContinue
     }
 }

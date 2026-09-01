@@ -56,6 +56,9 @@ jq -e '
   ($initiative.properties.parameters.policyDefinitionReferences.value | length) == 6 and
   ([$initiative.properties.parameters.policyDefinitionReferences.value[].policyDefinitionId] | unique) ==
     ["[variables(\u0027requireResourceGroupTagPolicyDefinitionId\u0027)]"] and
+  all($initiative.properties.parameters.policyDefinitionReferences.value[]; .definitionVersion == "1.*.*") and
+  ($initiative.scope | contains("demoRootManagementGroupId")) and
+  ($assignment.scope | contains("landingZonesManagementGroupId")) and
   ($assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]") and
   ($assignment.properties.parameters.nonComplianceMessages.value | length) == 6 and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
