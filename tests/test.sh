@@ -49,15 +49,19 @@ jq -e '
   deployment("assign-resource-group-tags") as $assignment |
   deployment("connectivity-evidence") as $connectivityEvidence |
   deployment("workload-evidence") as $workloadEvidence |
+  ($initiative.properties.parameters.policyDefinitionReferences.value |
+    map({key: .policyDefinitionReferenceId, value: .parameters.tagName.value}) | from_entries) as $tagsByReference |
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.parameters.tagName.value)) == $requiredTags and
   ($initiative.properties.parameters.policyDefinitionReferences.value | length) == 6 and
   ([$initiative.properties.parameters.policyDefinitionReferences.value[].policyDefinitionId] | unique) ==
     ["[variables(\u0027requireResourceGroupTagPolicyDefinitionId\u0027)]"] and
   ($assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]") and
-  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId)) ==
-    ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId)) and
-  ($assignment.properties.parameters.nonComplianceMessages.value | map(.message)) ==
-    ($requiredTags | map("Resource groups must include the \(.) tag.")) and
+  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 6 and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
+    ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) and
+  all($assignment.properties.parameters.nonComplianceMessages.value[];
+    $tagsByReference[.policyDefinitionReferenceId] as $tag |
+    $tag != null and .message == "Resource groups must include the \($tag) tag.") and
   (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
   (first($workloadEvidence.properties.template.resources[] |
     select(.type == "Microsoft.Resources/resourceGroups")).tags | keys | sort) == ($requiredTags | sort)

@@ -106,10 +106,24 @@ try {
         Stop-Test 'Required resource-group tag assignment must use the safe deny enforcement parameter.'
     }
     $nonComplianceMessages = @($assignmentDeployment.properties.parameters.nonComplianceMessages.value)
-    for ($index = 0; $index -lt $requiredTags.Count; $index++) {
-        if ($nonComplianceMessages[$index].policyDefinitionReferenceId -cne $tagReferences[$index].policyDefinitionReferenceId -or
-            $nonComplianceMessages[$index].message -cne "Resource groups must include the $($requiredTags[$index]) tag.") {
-            Stop-Test "Required resource-group tag $($requiredTags[$index]) must have a matching noncompliance message."
+    if ($nonComplianceMessages.Count -ne 6) {
+        Stop-Test 'Required resource-group tag assignment must contain exactly six noncompliance messages.'
+    }
+    $tagsByReference = @{}
+    foreach ($tagReference in $tagReferences) {
+        $tagsByReference[$tagReference.policyDefinitionReferenceId] = $tagReference.parameters.tagName.value
+    }
+    $messageReferences = @($nonComplianceMessages.policyDefinitionReferenceId)
+    foreach ($tagReference in $tagReferences) {
+        if (@($messageReferences | Where-Object { $_ -ceq $tagReference.policyDefinitionReferenceId }).Count -ne 1) {
+            Stop-Test "Required tag reference $($tagReference.policyDefinitionReferenceId) must have exactly one noncompliance message."
+        }
+    }
+    foreach ($nonComplianceMessage in $nonComplianceMessages) {
+        $tagName = $tagsByReference[$nonComplianceMessage.policyDefinitionReferenceId]
+        if ($null -eq $tagName -or
+            $nonComplianceMessage.message -cne "Resource groups must include the $tagName tag.") {
+            Stop-Test "Noncompliance message for $($nonComplianceMessage.policyDefinitionReferenceId) does not match its required tag."
         }
     }
     foreach ($evidenceDeploymentName in @('connectivity-evidence', 'workload-evidence')) {
