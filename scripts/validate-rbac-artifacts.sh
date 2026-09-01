@@ -237,7 +237,10 @@ for required_guidance in \
   'AdminUpdate' \
   'AdminRemove' \
   'fresh request GUID' \
-  'never reuse'; do
+  'never reuse' \
+  'immutable compiled template snapshot' \
+  'ancestor management-group scope' \
+  'immediately before submission'; do
   rg -qi "${required_guidance}" "${pim_guidance}" \
     || fail "PIM runbook is missing one-shot lifecycle guidance: ${required_guidance}"
 done
@@ -255,6 +258,11 @@ for required_pattern in \
   'atScope()' \
   'deployment sub what-if' \
   'deployment sub create' \
+  'az bicep build' \
+  'template_snapshot' \
+  'verify_live_state' \
+  'management/managementgroups' \
+  '.nextLink | type == "string"' \
   'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION' \
   'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'; do
   rg -q -F "${required_pattern}" "${owner_operator_bash}" \
@@ -269,6 +277,11 @@ for required_pattern in \
   'atScope()' \
   'deployment sub what-if' \
   'deployment sub create' \
+  'bicep build' \
+  'TemplateSnapshot' \
+  'Test-LiveEligibilityState' \
+  'management/managementgroups' \
+  'nextLinkProperty.Value -isnot [string]' \
   'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION' \
   'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'; do
   rg -q -F "${required_pattern}" "${owner_operator_powershell}" \
@@ -286,6 +299,36 @@ powershell_inventory_line="$(rg -n -F '$schedulesUrl =' "${owner_operator_powers
 powershell_what_if_line="$(rg -n -F '& az deployment sub what-if' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
 [[ "${powershell_group_check_line}" -lt "${powershell_inventory_line}" && "${powershell_group_check_line}" -lt "${powershell_what_if_line}" ]] \
   || fail 'PowerShell Owner eligibility workflow must verify the security-enabled group before state inventory or what-if.'
+
+bash_compile_line="$(rg -n -F 'az bicep build' "${owner_operator_bash}" | head -n 1 | cut -d: -f1)"
+bash_first_verify_line="$(rg -n '^verify_live_state$' "${owner_operator_bash}" | head -n 1 | cut -d: -f1)"
+bash_second_verify_line="$(rg -n '^verify_live_state$' "${owner_operator_bash}" | tail -n 1 | cut -d: -f1)"
+bash_confirmation_line="$(rg -n -F 'IFS= read -r typed_request_id' "${owner_operator_bash}" | head -n 1 | cut -d: -f1)"
+bash_create_line="$(rg -n -F 'az deployment sub create' "${owner_operator_bash}" | head -n 1 | cut -d: -f1)"
+[[ "$(rg -c -F -- '--template-file "${template_snapshot}"' "${owner_operator_bash}")" -eq 2 ]] \
+  || fail 'Bash Owner eligibility workflow must use the same compiled template snapshot for what-if and create.'
+[[ "$(rg -c '^verify_live_state$' "${owner_operator_bash}")" -eq 2 ]] \
+  || fail 'Bash Owner eligibility workflow must perform live verification before what-if and again before create.'
+[[ "${bash_compile_line}" -lt "${bash_first_verify_line}" \
+  && "${bash_first_verify_line}" -lt "${bash_what_if_line}" \
+  && "${bash_confirmation_line}" -lt "${bash_second_verify_line}" \
+  && "${bash_second_verify_line}" -lt "${bash_create_line}" ]] \
+  || fail 'Bash Owner eligibility workflow must compile once, preview, confirm, revalidate live state, then create.'
+
+powershell_compile_line="$(rg -n -F '& az bicep build' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
+powershell_first_verify_line="$(rg -n '^Test-LiveEligibilityState$' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
+powershell_second_verify_line="$(rg -n '^Test-LiveEligibilityState$' "${owner_operator_powershell}" | tail -n 1 | cut -d: -f1)"
+powershell_confirmation_line="$(rg -n -F '$typedRequestId = Read-Host' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
+powershell_create_line="$(rg -n -F '& az deployment sub create' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
+[[ "$(rg -c -F -- '--template-file $script:TemplateSnapshot' "${owner_operator_powershell}")" -eq 2 ]] \
+  || fail 'PowerShell Owner eligibility workflow must use the same compiled template snapshot for what-if and create.'
+[[ "$(rg -c '^Test-LiveEligibilityState$' "${owner_operator_powershell}")" -eq 2 ]] \
+  || fail 'PowerShell Owner eligibility workflow must perform live verification before what-if and again before create.'
+[[ "${powershell_compile_line}" -lt "${powershell_first_verify_line}" \
+  && "${powershell_first_verify_line}" -lt "${powershell_what_if_line}" \
+  && "${powershell_confirmation_line}" -lt "${powershell_second_verify_line}" \
+  && "${powershell_second_verify_line}" -lt "${powershell_create_line}" ]] \
+  || fail 'PowerShell Owner eligibility workflow must compile once, preview, confirm, revalidate live state, then create.'
 
 requirements_file="${PROJECT_DIR}/identity/azure-rbac/owner-activation-requirements.template.json"
 [[ -f "${requirements_file}" ]] || fail "Missing static Owner activation requirements: ${requirements_file}"

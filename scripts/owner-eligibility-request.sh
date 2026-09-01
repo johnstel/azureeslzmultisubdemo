@@ -92,9 +92,14 @@ collect_arm_pages() {
     [[ "${page_count}" -le 100 ]] || return 1
     page="$(az rest --method get --url "${next_url}" --subscription "${subscription_id}" --output json 2>/dev/null)" || return 1
     printf '%s' "${page}" | jq -e '.value | type == "array"' >/dev/null 2>&1 || return 1
+    printf '%s' "${page}" | jq -e '
+      (has("nextLink") | not)
+      or .nextLink == null
+      or (.nextLink | type == "string")
+    ' >/dev/null 2>&1 || return 1
     values="$(printf '%s' "${page}" | jq -c '.value')" || return 1
     collected="$(jq -cn --argjson current "${collected}" --argjson next "${values}" '$current + $next')" || return 1
-    next_url="$(printf '%s' "${page}" | jq -er '.nextLink // ""' 2>/dev/null)" || return 1
+    next_url="$(printf '%s' "${page}" | jq -er 'if has("nextLink") and .nextLink != null then .nextLink else "" end' 2>/dev/null)" || return 1
   done
 
   printf '%s\n' "${collected}"
@@ -145,8 +150,14 @@ command -v jq >/dev/null 2>&1 || fail 'jq is required.'
 
 operator_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/eslz-owner-eligibility.XXXXXX")" ||
   fail 'Unable to create a private parameter snapshot.'
-trap 'rm -rf "${operator_temp_dir}"' EXIT
+chmod 700 "${operator_temp_dir}"
 parameter_snapshot="${operator_temp_dir}/parameters.json"
+template_snapshot="${operator_temp_dir}/owner-eligibility-request.json"
+cleanup() {
+  rm -f "${parameter_snapshot}" "${template_snapshot}"
+  rmdir "${operator_temp_dir}" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
 cp "${parameter_file}" "${parameter_snapshot}" || fail 'Unable to create a private parameter snapshot.'
 chmod 600 "${parameter_snapshot}"
 parameter_file="${parameter_snapshot}"
@@ -199,6 +210,13 @@ if [[ "${execute}" == 'true' && "${ESLZ_OWNER_ELIGIBILITY_CONFIRMATION:-}" != "$
   fail "--execute requires ESLZ_OWNER_ELIGIBILITY_CONFIRMATION=${EXECUTION_CONFIRMATION}."
 fi
 
+if ! az bicep build --file "${BICEP_FILE}" --outfile "${template_snapshot}"; then
+  fail 'Unable to compile the one-shot Bicep artifact.'
+fi
+jq -e 'type == "object"' "${template_snapshot}" >/dev/null 2>&1 ||
+  fail 'The compiled one-shot template snapshot is not valid JSON.'
+chmod 400 "${parameter_file}" "${template_snapshot}"
+
 workflow_request_id="${request_id}"
 workflow_group_id="${group_id}"
 subscription_id="$(printf '%s' "${subscription_id}" | tr '[:upper:]' '[:lower:]')"
@@ -206,9 +224,9 @@ request_id="$(printf '%s' "${request_id}" | tr '[:upper:]' '[:lower:]')"
 group_id="$(printf '%s' "${group_id}" | tr '[:upper:]' '[:lower:]')"
 target_schedule_id="$(printf '%s' "${target_schedule_id}" | tr '[:upper:]' '[:lower:]')"
 scope="/subscriptions/${subscription_id}"
-owner_role_definition_resource_id="${scope}/providers/microsoft.authorization/roledefinitions/${OWNER_ROLE_DEFINITION_ID}"
 workflow_token="verified:${workflow_request_id}:${workflow_group_id}:${request_type}:${subscription_id}"
 
+verify_live_state() {
 subscription_json="$(az account show --subscription "${subscription_id}" --output json 2>/dev/null)" ||
   fail 'Unable to read the target subscription context.'
 printf '%s' "${subscription_json}" | jq -e --arg id "${subscription_id}" '
@@ -265,28 +283,51 @@ printf '%s' "${requests}" | jq -e 'all(.[];
 
 matching_schedules="$(printf '%s' "${schedules}" | jq -c \
   --arg principal "${group_id}" \
-  --arg role "${owner_role_definition_resource_id}" \
+  --arg owner_role_definition_id "${OWNER_ROLE_DEFINITION_ID}" \
   --arg scope "${scope}" '
   [.[] | select(
     ((.properties.principalId // "") | ascii_downcase) == $principal
-    and ((.properties.roleDefinitionId // "") | ascii_downcase) == $role
+    and (
+      ((.properties.roleDefinitionId // "") | ascii_downcase)
+      | endswith("/roledefinitions/" + $owner_role_definition_id)
+    )
     and (
       ((.properties.scope // "") | ascii_downcase) == $scope
-      or (((.id // "") | ascii_downcase) | startswith($scope + "/providers/microsoft.authorization/roleeligibilityschedules/"))
+      or (
+        ((.properties.scope // "") | ascii_downcase)
+        | test("^/providers/microsoft\\.management/managementgroups/[^/]+$")
+      )
     )
   )]
 ')" || fail 'Unable to evaluate existing eligibility schedules.'
 
+exact_matching_schedules="$(printf '%s' "${matching_schedules}" | jq -c \
+  --arg scope "${scope}" '
+  [.[] | select(
+    ((.properties.scope // "") | ascii_downcase) == $scope
+  )]
+')" || fail 'Unable to evaluate subscription-scoped eligibility schedules.'
+
 matching_requests="$(printf '%s' "${requests}" | jq -c \
   --arg principal "${group_id}" \
-  --arg role "${owner_role_definition_resource_id}" \
+  --arg owner_role_definition_id "${OWNER_ROLE_DEFINITION_ID}" \
+  --arg request_type "${request_type}" \
   --arg scope "${scope}" '
   [.[] | select(
     ((.properties.principalId // "") | ascii_downcase) == $principal
-    and ((.properties.roleDefinitionId // "") | ascii_downcase) == $role
+    and (
+      ((.properties.roleDefinitionId // "") | ascii_downcase)
+      | endswith("/roledefinitions/" + $owner_role_definition_id)
+    )
     and (
       ((.properties.scope // "") | ascii_downcase) == $scope
-      or (((.id // "") | ascii_downcase) | startswith($scope + "/providers/microsoft.authorization/roleeligibilityschedulerequests/"))
+      or (
+        $request_type == "AdminAssign"
+        and (
+          ((.properties.scope // "") | ascii_downcase)
+          | test("^/providers/microsoft\\.management/managementgroups/[^/]+$")
+        )
+      )
     )
   )]
 ')" || fail 'Unable to evaluate existing eligibility requests.'
@@ -313,18 +354,23 @@ unresolved_request_count="$(printf '%s' "${matching_requests}" | jq '
 
 schedule_count="$(printf '%s' "${matching_schedules}" | jq 'length')"
 if [[ "${request_type}" == 'AdminAssign' ]]; then
-  [[ "${schedule_count}" -eq 0 ]] || fail 'AdminAssign is blocked because matching Owner eligibility already exists.'
+  [[ "${schedule_count}" -eq 0 ]] ||
+    fail 'AdminAssign is blocked because matching Owner eligibility already exists at the subscription or an ancestor management-group scope.'
 else
-  target_schedule_count="$(printf '%s' "${matching_schedules}" | jq \
+  target_schedule_count="$(printf '%s' "${exact_matching_schedules}" | jq \
     --arg target "${target_schedule_id}" '
     [.[] | select(
       ((.name // "") | ascii_downcase) == $target
       or (((.id // "") | ascii_downcase) | endswith("/" + $target))
     )] | length
   ')"
-  [[ "${schedule_count}" -eq 1 && "${target_schedule_count}" -eq 1 ]] ||
-    fail "${request_type} requires exactly one matching existing Owner eligibility schedule with the supplied target schedule ID."
+  exact_schedule_count="$(printf '%s' "${exact_matching_schedules}" | jq 'length')"
+  [[ "${exact_schedule_count}" -eq 1 && "${target_schedule_count}" -eq 1 ]] ||
+    fail "${request_type} requires exactly one matching existing Owner eligibility schedule at the target subscription scope with the supplied target schedule ID."
 fi
+}
+
+verify_live_state
 
 printf 'Preflight passed for %s at %s.\n' "${request_type}" "${scope}"
 printf 'Verified principal: security-enabled group %s\n' "${group_id}"
@@ -333,7 +379,7 @@ az deployment sub what-if \
   --name "owner-eligibility-${request_id}" \
   --location "${location}" \
   --subscription "${subscription_id}" \
-  --template-file "${BICEP_FILE}" \
+  --template-file "${template_snapshot}" \
   --parameters "@${parameter_file}" \
   "operatorWorkflowVerificationToken=${workflow_token}"
 
@@ -346,11 +392,14 @@ printf 'Type the one-time request ID %s to submit the unchanged preview: ' "${re
 IFS= read -r typed_request_id
 [[ "${typed_request_id}" == "${request_id}" ]] || fail 'Typed request ID did not match; no eligibility request was submitted.'
 
+printf 'Revalidating tenant, group, schedule, and request state immediately before submission.\n'
+verify_live_state
+
 if ! az deployment sub create \
   --name "owner-eligibility-${request_id}" \
   --location "${location}" \
   --subscription "${subscription_id}" \
-  --template-file "${BICEP_FILE}" \
+  --template-file "${template_snapshot}" \
   --parameters "@${parameter_file}" \
   "operatorWorkflowVerificationToken=${workflow_token}"; then
   fail 'Owner eligibility submission failed or returned an ambiguous result. Do not retry with the same request ID; repeat the preflight with a fresh request ID.'

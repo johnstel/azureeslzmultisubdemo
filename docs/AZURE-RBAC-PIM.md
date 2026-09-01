@@ -148,16 +148,25 @@ request GUID for redeployment, retry, another action, or another subscription.
    The process fails closed unless the subscription is enabled, the exact
    object is a security-enabled group, the request ID is unused, no matching
    request is pending or in an unknown state, and the lifecycle state is
-   unambiguous. `AdminAssign` requires no existing matching eligibility;
-   `AdminUpdate` and `AdminRemove` require exactly one matching supplied target
-   schedule. It follows ARM pagination before deciding. If all checks pass, it
-   runs what-if and stops without submitting.
+   unambiguous. `AdminAssign` treats matching effective Owner eligibility and
+   pending or unknown requests at the subscription or any returned ancestor
+   scope as blockers. This ancestor management-group scope check is required
+   before assignment. `AdminUpdate` and `AdminRemove` require exactly one
+   matching supplied target schedule at the subscription itself; inherited
+   eligibility cannot be updated or removed there. It follows ARM pagination
+   before deciding and rejects a `nextLink` that is not absent, null, or a
+   string. If all checks pass, it runs what-if and stops without submitting.
 6. Confirm the preview contains one eligible Owner request and no active or
    permanent Owner assignment. Obtain independent approval for that exact file,
    request ID, group, subscription, and preview.
 7. To submit, run the same workflow with its separate execute controls. It
-   repeats the read-only preflight and what-if in the same process, then
-   requires the request ID to be typed exactly:
+   compiles one private, immutable compiled template snapshot and uses that exact
+   JSON snapshot for both what-if and create, so a source-template change after
+   preview cannot alter submission. It repeats the read-only preflight and
+   what-if in the same process, requires the request ID to be typed exactly, and
+   then repeats the subscription, tenant, group, schedule, pending-request, and
+   request-ID checks immediately before submission. Any state change during
+   approval fails closed:
 
    ```powershell
    $env:ESLZ_OWNER_ELIGIBILITY_CONFIRMATION = 'SUBMIT-OWNER-ELIGIBILITY'

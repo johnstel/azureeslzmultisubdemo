@@ -18,14 +18,24 @@ $BicepFile = Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-reques
 $OwnerRoleDefinitionId = '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
 $ApiVersion = '2020-10-01'
 $ExecutionConfirmation = 'SUBMIT-OWNER-ELIGIBILITY'
+$script:OperatorTempDirectory = ''
 $script:ParameterSnapshot = ''
+$script:TemplateSnapshot = ''
 $script:ParameterJsonDocument = $null
 
 function Clear-WorkflowState {
-    if (-not [string]::IsNullOrEmpty($script:ParameterSnapshot) -and (Test-Path -LiteralPath $script:ParameterSnapshot)) {
-        Remove-Item -LiteralPath $script:ParameterSnapshot -Force -ErrorAction SilentlyContinue
+    foreach ($snapshot in @($script:ParameterSnapshot, $script:TemplateSnapshot)) {
+        if (-not [string]::IsNullOrEmpty($snapshot) -and (Test-Path -LiteralPath $snapshot)) {
+            [System.IO.File]::SetAttributes($snapshot, [System.IO.FileAttributes]::Normal)
+            Remove-Item -LiteralPath $snapshot -Force -ErrorAction SilentlyContinue
+        }
     }
+    if (-not [string]::IsNullOrEmpty($script:OperatorTempDirectory) -and (Test-Path -LiteralPath $script:OperatorTempDirectory)) {
+        Remove-Item -LiteralPath $script:OperatorTempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $script:OperatorTempDirectory = ''
     $script:ParameterSnapshot = ''
+    $script:TemplateSnapshot = ''
     if ($null -ne $script:ParameterJsonDocument) {
         $script:ParameterJsonDocument.Dispose()
         $script:ParameterJsonDocument = $null
@@ -178,11 +188,15 @@ function Get-ArmCollection {
         }
         $items += @($page.value)
 
-        if ($null -ne $page.PSObject.Properties['nextLink'] -and $null -ne $page.nextLink) {
-            $nextUrl = [string]$page.nextLink
+        $nextLinkProperty = $page.PSObject.Properties['nextLink']
+        if ($null -eq $nextLinkProperty -or $null -eq $nextLinkProperty.Value) {
+            $nextUrl = ''
+        }
+        elseif ($nextLinkProperty.Value -isnot [string]) {
+            Stop-Workflow $FailureMessage
         }
         else {
-            $nextUrl = ''
+            $nextUrl = $nextLinkProperty.Value
         }
     }
 
@@ -213,9 +227,24 @@ catch {
 if ($parameterElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
     Stop-Workflow 'ParameterFile is not a valid ARM deployment parameter document.'
 }
-$script:ParameterSnapshot = Join-Path ([System.IO.Path]::GetTempPath()) "eslz-owner-eligibility-$([guid]::NewGuid().ToString('N')).json"
+$script:OperatorTempDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "eslz-owner-eligibility-$([guid]::NewGuid().ToString('N'))"
+[System.IO.Directory]::CreateDirectory($script:OperatorTempDirectory) | Out-Null
+if ($env:OS -cne 'Windows_NT') {
+    & chmod 700 $script:OperatorTempDirectory
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Workflow 'Unable to secure the private workflow directory.'
+    }
+}
+$script:ParameterSnapshot = Join-Path $script:OperatorTempDirectory 'parameters.json'
+$script:TemplateSnapshot = Join-Path $script:OperatorTempDirectory 'owner-eligibility-request.json'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($script:ParameterSnapshot, $parameterText, $utf8NoBom)
+if ($env:OS -cne 'Windows_NT') {
+    & chmod 600 $script:ParameterSnapshot
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Workflow 'Unable to secure the private parameter snapshot.'
+    }
+}
 $ParameterFile = $script:ParameterSnapshot
 
 try {
@@ -293,6 +322,30 @@ if ($Execute -and $env:ESLZ_OWNER_ELIGIBILITY_CONFIRMATION -cne $ExecutionConfir
     Stop-Workflow "--Execute requires ESLZ_OWNER_ELIGIBILITY_CONFIRMATION=$ExecutionConfirmation."
 }
 
+& az bicep build --file $BicepFile --outfile $script:TemplateSnapshot
+if ($LASTEXITCODE -ne 0) {
+    Stop-Workflow 'Unable to compile the one-shot Bicep artifact.'
+}
+try {
+    $compiledTemplate = Get-Content -LiteralPath $script:TemplateSnapshot -Raw | ConvertFrom-Json
+}
+catch {
+    Stop-Workflow 'The compiled one-shot template snapshot is not valid JSON.'
+}
+if ($compiledTemplate -isnot [System.Management.Automation.PSCustomObject]) {
+    Stop-Workflow 'The compiled one-shot template snapshot has an unexpected shape.'
+}
+if ($env:OS -cne 'Windows_NT') {
+    & chmod 400 $script:ParameterSnapshot $script:TemplateSnapshot
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Workflow 'Unable to make the reviewed workflow snapshots read-only.'
+    }
+}
+else {
+    [System.IO.File]::SetAttributes($script:ParameterSnapshot, [System.IO.FileAttributes]::ReadOnly)
+    [System.IO.File]::SetAttributes($script:TemplateSnapshot, [System.IO.FileAttributes]::ReadOnly)
+}
+
 $workflowRequestId = $requestId
 $workflowGroupId = $groupId
 $script:NormalizedSubscriptionId = $SubscriptionId.ToLowerInvariant()
@@ -300,9 +353,9 @@ $requestId = $requestId.ToLowerInvariant()
 $groupId = $groupId.ToLowerInvariant()
 $targetScheduleId = $targetScheduleId.ToLowerInvariant()
 $scope = "/subscriptions/$script:NormalizedSubscriptionId"
-$ownerRoleDefinitionResourceId = "$scope/providers/microsoft.authorization/roledefinitions/$OwnerRoleDefinitionId"
 $workflowToken = "verified:$workflowRequestId`:$workflowGroupId`:$requestType`:$script:NormalizedSubscriptionId"
 
+function Test-LiveEligibilityState {
 $subscription = Invoke-AzJson -Arguments @(
     'account', 'show',
     '--subscription', $script:NormalizedSubscriptionId,
@@ -375,24 +428,33 @@ if (@($requests | Where-Object { -not (Test-ArmInventoryItem -Item $_ -RequireSt
 
 $matchingSchedules = @($schedules | Where-Object {
     $principalMatches = ([string]$_.properties.principalId).ToLowerInvariant() -ceq $groupId
-    $roleMatches = ([string]$_.properties.roleDefinitionId).ToLowerInvariant() -ceq $ownerRoleDefinitionResourceId
+    $roleMatches = ([string]$_.properties.roleDefinitionId).ToLowerInvariant().EndsWith(
+        "/roledefinitions/$OwnerRoleDefinitionId",
+        [System.StringComparison]::Ordinal
+    )
+    $scheduleScope = ([string]$_.properties.scope).ToLowerInvariant()
     $scopeMatches =
-        ([string]$_.properties.scope).ToLowerInvariant() -ceq $scope -or
-        ([string]$_.id).ToLowerInvariant().StartsWith(
-            "$scope/providers/microsoft.authorization/roleeligibilityschedules/",
-            [System.StringComparison]::Ordinal
-        )
+        $scheduleScope -ceq $scope -or
+        $scheduleScope -cmatch '^/providers/microsoft\.management/managementgroups/[^/]+\z'
     $principalMatches -and $roleMatches -and $scopeMatches
+})
+
+$exactMatchingSchedules = @($matchingSchedules | Where-Object {
+    ([string]$_.properties.scope).ToLowerInvariant() -ceq $scope
 })
 
 $matchingRequests = @($requests | Where-Object {
     $principalMatches = ([string]$_.properties.principalId).ToLowerInvariant() -ceq $groupId
-    $roleMatches = ([string]$_.properties.roleDefinitionId).ToLowerInvariant() -ceq $ownerRoleDefinitionResourceId
+    $roleMatches = ([string]$_.properties.roleDefinitionId).ToLowerInvariant().EndsWith(
+        "/roledefinitions/$OwnerRoleDefinitionId",
+        [System.StringComparison]::Ordinal
+    )
+    $requestScope = ([string]$_.properties.scope).ToLowerInvariant()
     $scopeMatches =
-        ([string]$_.properties.scope).ToLowerInvariant() -ceq $scope -or
-        ([string]$_.id).ToLowerInvariant().StartsWith(
-            "$scope/providers/microsoft.authorization/roleeligibilityschedulerequests/",
-            [System.StringComparison]::Ordinal
+        $requestScope -ceq $scope -or
+        (
+            $requestType -ceq 'AdminAssign' -and
+            $requestScope -cmatch '^/providers/microsoft\.management/managementgroups/[^/]+\z'
         )
     $principalMatches -and $roleMatches -and $scopeMatches
 })
@@ -426,18 +488,21 @@ if ($unresolvedRequests.Count -ne 0) {
 
 if ($requestType -ceq 'AdminAssign') {
     if ($matchingSchedules.Count -ne 0) {
-        Stop-Workflow 'AdminAssign is blocked because matching Owner eligibility already exists.'
+        Stop-Workflow 'AdminAssign is blocked because matching Owner eligibility already exists at the subscription or an ancestor management-group scope.'
     }
 }
 else {
-    $targetSchedules = @($matchingSchedules | Where-Object {
+    $targetSchedules = @($exactMatchingSchedules | Where-Object {
         ([string]$_.name).ToLowerInvariant() -ceq $targetScheduleId -or
         ([string]$_.id).ToLowerInvariant().EndsWith("/$targetScheduleId", [System.StringComparison]::Ordinal)
     })
-    if ($matchingSchedules.Count -ne 1 -or $targetSchedules.Count -ne 1) {
-        Stop-Workflow "$requestType requires exactly one matching existing Owner eligibility schedule with the supplied target schedule ID."
+    if ($exactMatchingSchedules.Count -ne 1 -or $targetSchedules.Count -ne 1) {
+        Stop-Workflow "$requestType requires exactly one matching existing Owner eligibility schedule at the target subscription scope with the supplied target schedule ID."
     }
 }
+}
+
+Test-LiveEligibilityState
 
 Write-Host "Preflight passed for $requestType at $scope."
 Write-Host "Verified principal: security-enabled group $groupId"
@@ -446,7 +511,7 @@ Write-Host 'Running subscription what-if; no eligibility request is submitted by
     --name "owner-eligibility-$requestId" `
     --location $Location `
     --subscription $script:NormalizedSubscriptionId `
-    --template-file $BicepFile `
+    --template-file $script:TemplateSnapshot `
     --parameters "@$ParameterFile" `
     "operatorWorkflowVerificationToken=$workflowToken"
 if ($LASTEXITCODE -ne 0) {
@@ -464,11 +529,14 @@ if ($typedRequestId -cne $requestId) {
     Stop-Workflow 'Typed request ID did not match; no eligibility request was submitted.'
 }
 
+Write-Host 'Revalidating tenant, group, schedule, and request state immediately before submission.'
+Test-LiveEligibilityState
+
 & az deployment sub create `
     --name "owner-eligibility-$requestId" `
     --location $Location `
     --subscription $script:NormalizedSubscriptionId `
-    --template-file $BicepFile `
+    --template-file $script:TemplateSnapshot `
     --parameters "@$ParameterFile" `
     "operatorWorkflowVerificationToken=$workflowToken"
 if ($LASTEXITCODE -ne 0) {

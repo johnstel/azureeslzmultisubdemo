@@ -263,7 +263,17 @@ try {
     }
 
     $pimGuidance = Get-Content -LiteralPath (Join-Path $ProjectDir 'docs/AZURE-RBAC-PIM.md') -Raw
-    foreach ($requiredGuidance in @('existing eligibility', 'AdminAssign', 'AdminUpdate', 'AdminRemove', 'fresh request GUID', 'never reuse')) {
+    foreach ($requiredGuidance in @(
+        'existing eligibility',
+        'AdminAssign',
+        'AdminUpdate',
+        'AdminRemove',
+        'fresh request GUID',
+        'never reuse',
+        'immutable compiled template snapshot',
+        'ancestor management-group scope',
+        'immediately before submission'
+    )) {
         if ($pimGuidance -notmatch [regex]::Escape($requiredGuidance)) {
             Stop-Validation "PIM runbook is missing one-shot lifecycle guidance: $requiredGuidance"
         }
@@ -279,6 +289,11 @@ try {
         'atScope()',
         'deployment sub what-if',
         'deployment sub create',
+        'az bicep build',
+        'template_snapshot',
+        'verify_live_state',
+        'management/managementgroups',
+        '.nextLink | type == "string"',
         'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION',
         'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'
     )) {
@@ -294,6 +309,11 @@ try {
         'atScope()',
         'deployment sub what-if',
         'deployment sub create',
+        'bicep build',
+        'TemplateSnapshot',
+        'Test-LiveEligibilityState',
+        'management/managementgroups',
+        'nextLinkProperty.Value -isnot [string]',
         'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION',
         'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'
     )) {
@@ -312,6 +332,44 @@ try {
     $powerShellWhatIfIndex = $ownerOperatorPowerShell.IndexOf('& az deployment sub what-if', [System.StringComparison]::Ordinal)
     if ($powerShellGroupCheckIndex -lt 0 -or $powerShellGroupCheckIndex -gt $powerShellInventoryIndex -or $powerShellGroupCheckIndex -gt $powerShellWhatIfIndex) {
         Stop-Validation 'PowerShell Owner eligibility workflow must verify the security-enabled group before state inventory or what-if.'
+    }
+
+    $bashVerifyMatches = [regex]::Matches($ownerOperatorBash, '(?m)^verify_live_state\r?$')
+    $bashSnapshotUses = [regex]::Matches($ownerOperatorBash, [regex]::Escape('--template-file "${template_snapshot}"'))
+    $bashCompileIndex = $ownerOperatorBash.IndexOf('az bicep build', [System.StringComparison]::Ordinal)
+    $bashConfirmationIndex = $ownerOperatorBash.IndexOf('IFS= read -r typed_request_id', [System.StringComparison]::Ordinal)
+    $bashCreateIndex = $ownerOperatorBash.IndexOf('az deployment sub create', [System.StringComparison]::Ordinal)
+    if (
+        $bashVerifyMatches.Count -ne 2 -or
+        $bashSnapshotUses.Count -ne 2 -or
+        $bashCompileIndex -lt 0 -or
+        $bashConfirmationIndex -lt 0 -or
+        $bashCreateIndex -lt 0 -or
+        $bashCompileIndex -gt $bashVerifyMatches[0].Index -or
+        $bashVerifyMatches[0].Index -gt $bashWhatIfIndex -or
+        $bashConfirmationIndex -gt $bashVerifyMatches[1].Index -or
+        $bashVerifyMatches[1].Index -gt $bashCreateIndex
+    ) {
+        Stop-Validation 'Bash Owner eligibility workflow must compile once, reuse the reviewed snapshot, and revalidate live state after confirmation before create.'
+    }
+
+    $powerShellVerifyMatches = [regex]::Matches($ownerOperatorPowerShell, '(?m)^Test-LiveEligibilityState\r?$')
+    $powerShellSnapshotUses = [regex]::Matches($ownerOperatorPowerShell, [regex]::Escape('--template-file $script:TemplateSnapshot'))
+    $powerShellCompileIndex = $ownerOperatorPowerShell.IndexOf('& az bicep build', [System.StringComparison]::Ordinal)
+    $powerShellConfirmationIndex = $ownerOperatorPowerShell.IndexOf('$typedRequestId = Read-Host', [System.StringComparison]::Ordinal)
+    $powerShellCreateIndex = $ownerOperatorPowerShell.IndexOf('& az deployment sub create', [System.StringComparison]::Ordinal)
+    if (
+        $powerShellVerifyMatches.Count -ne 2 -or
+        $powerShellSnapshotUses.Count -ne 2 -or
+        $powerShellCompileIndex -lt 0 -or
+        $powerShellConfirmationIndex -lt 0 -or
+        $powerShellCreateIndex -lt 0 -or
+        $powerShellCompileIndex -gt $powerShellVerifyMatches[0].Index -or
+        $powerShellVerifyMatches[0].Index -gt $powerShellWhatIfIndex -or
+        $powerShellConfirmationIndex -gt $powerShellVerifyMatches[1].Index -or
+        $powerShellVerifyMatches[1].Index -gt $powerShellCreateIndex
+    ) {
+        Stop-Validation 'PowerShell Owner eligibility workflow must compile once, reuse the reviewed snapshot, and revalidate live state after confirmation before create.'
     }
 
     $requirementsPath = Join-Path $ProjectDir 'identity/azure-rbac/owner-activation-requirements.template.json'
