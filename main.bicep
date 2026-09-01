@@ -1,5 +1,12 @@
 targetScope = 'tenant'
 
+func stripDigits(value string) string => replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(value, '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', '')
+func stripHex(value string) string => replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(value), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', '')
+func isGuid(value string) bool => length(value) == 36 ? substring(value, 8, 1) == '-' && substring(value, 13, 1) == '-' && substring(value, 18, 1) == '-' && substring(value, 23, 1) == '-' && length(replace(value, '-', '')) == 32 && empty(stripHex(replace(value, '-', ''))) : false
+func isIpv4(value string) bool => length(split(value, '.')) == 4 && value == trim(value) && !empty(value) && empty(filter(split(value, '.'), octet => empty(octet) || !empty(stripDigits(octet)) || int(octet) > 255))
+func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(first(split(value, '/'))) && !empty(last(split(value, '/'))) && empty(stripDigits(last(split(value, '/')))) && int(last(split(value, '/'))) >= 0 && int(last(split(value, '/'))) <= 32
+func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
+
 @description('Azure region used only to store tenant deployment metadata.')
 param deploymentLocation string = 'eastus'
 
@@ -55,6 +62,35 @@ param denyPolicyEnforcementMode string = 'DoNotEnforce'
   'Disabled'
 ])
 param networkIngressPolicyEffect string = 'Audit'
+
+@description('Effect for selected PaaS public-network-access controls. Keep Audit until private endpoint and DNS dependencies are verified.')
+@allowed([
+  'Audit'
+  'Deny'
+  'Disabled'
+])
+param privateAccessPublicNetworkPolicyEffect string = 'Audit'
+
+@description('PaaS service categories evaluated for private access. Supported values: Storage and KeyVault.')
+param privateAccessServiceCategories array = [
+  'Storage'
+  'KeyVault'
+]
+
+@description('Set true only after supplying approved firewall and route-table architecture inputs. This enables audit-only route validation.')
+param enableFirewallRouteGuardrails bool = false
+
+@description('Resource ID of the customer-approved Azure Firewall. Required when enableFirewallRouteGuardrails is true; no value is inferred.')
+param approvedFirewallResourceId string = ''
+
+@description('Private IP of the customer-approved Azure Firewall virtual appliance. Required when enableFirewallRouteGuardrails is true.')
+param approvedFirewallPrivateIp string = ''
+
+@description('Resource IDs of route tables to validate. Required when enableFirewallRouteGuardrails is true.')
+param approvedRouteTableResourceIds array = []
+
+@description('CIDR prefixes that approved route tables must direct to the approved firewall private IP. Required when enableFirewallRouteGuardrails is true.')
+param approvedRouteTablePrefixes array = []
 
 @description('Continental-US Azure regions allowed by the demo policy.')
 param allowedLocations array = [
@@ -175,6 +211,28 @@ param enableCriticalInfrastructure bool = false
 @description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch. Only used when enableCriticalInfrastructure is true.')
 param criticalInfrastructureSubscriptionIds array = []
 
+var invalidPrivateAccessServiceCategories = filter(privateAccessServiceCategories, serviceCategory => !(serviceCategory == 'Storage' || serviceCategory == 'KeyVault'))
+var validatedPrivateAccessServiceCategories = empty(privateAccessServiceCategories) || !empty(invalidPrivateAccessServiceCategories) || length(privateAccessServiceCategories) != length(union(privateAccessServiceCategories, []))
+  ? fail('privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values.')
+  : privateAccessServiceCategories
+var invalidApprovedRouteTableResourceIds = filter(approvedRouteTableResourceIds, routeTableResourceId => !isResourceId(routeTableResourceId, 'routeTables'))
+var normalizedApprovedRouteTableResourceIds = [for routeTableResourceId in approvedRouteTableResourceIds: toLower(routeTableResourceId)]
+var invalidApprovedRouteTablePrefixes = filter(approvedRouteTablePrefixes, routeTablePrefix => !isIpv4Cidr(routeTablePrefix))
+var normalizedApprovedRouteTablePrefixes = [for routeTablePrefix in approvedRouteTablePrefixes: toLower(routeTablePrefix)]
+var firewallRouteInputsValid = isResourceId(approvedFirewallResourceId, 'azureFirewalls') && isIpv4(approvedFirewallPrivateIp) && !empty(approvedRouteTableResourceIds) && empty(invalidApprovedRouteTableResourceIds) && length(normalizedApprovedRouteTableResourceIds) == length(union(normalizedApprovedRouteTableResourceIds, [])) && !empty(approvedRouteTablePrefixes) && empty(invalidApprovedRouteTablePrefixes) && length(normalizedApprovedRouteTablePrefixes) == length(union(normalizedApprovedRouteTablePrefixes, []))
+var validatedFirewallRouteInputs = enableFirewallRouteGuardrails && !firewallRouteInputsValid
+  ? fail('approvedFirewallResourceId must be an Azure Firewall resource ID, approvedFirewallPrivateIp must be an IPv4 address, and approvedRouteTableResourceIds and approvedRouteTablePrefixes must contain non-empty, valid, case-insensitively unique route-table IDs and IPv4 CIDRs when enableFirewallRouteGuardrails is true.')
+  : true
+
+@description('Assign the stable Microsoft cloud security benchmark (MCSB) initiative at the demo root. Enabled by default for the customer-control profile. The separate Microsoft cloud security benchmark v2 preview initiative is never assigned by this template.')
+param enableMicrosoftCloudSecurityBenchmark bool = true
+
+@description('Set true to add the optional CIS Microsoft Azure Foundations Benchmark v2.0.0 overlay at the demo root. Independent of the MCSB and NIST switches; assignment alone does not establish CIS compliance.')
+param enableCisAzureFoundationsBenchmark bool = false
+
+@description('Set true to add the optional NIST SP 800-53 Rev. 5 overlay at the demo root. This initiative contains four fixed Guest Configuration DeployIfNotExists/Modify members, so the assignment needs a system-assigned identity with the Contributor role; assignment alone does not establish NIST compliance.')
+param enableNistSp80053Rev5 bool = false
+
 @description('Set true to opt in to Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role; see modules/defender-plan-assignment.bicep and docs/CONTROL-MATRIX.md for the fail-closed, no-standing-Owner remediation workflow required before the built-in policy can actually remediate anything.')
 param enableDefenderCspm bool = false
 
@@ -197,6 +255,8 @@ param defenderForServersAgentlessVmScanningEnabled bool = true
 @description('Set true to opt in to Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role.')
 param enableDefenderForStorage bool = false
 
+
+
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
@@ -207,6 +267,19 @@ var requireResourceGroupTagPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
   '96670d01-0a4d-4649-9c89-2d3abc0a5025'
 )
+var microsoftCloudSecurityBenchmarkPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '1f3afdf9-d0c9-4c3d-847f-89da613e70a8'
+)
+var cisAzureFoundationsPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '06f19060-9e68-4070-92ca-f15cc126059e'
+)
+var nistSp80053Rev5PolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '179d1daa-458f-4e47-8086-2a68d0d6c38f'
+)
+var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -456,6 +529,193 @@ module networkIngressAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
+module privateAccessInitiative 'modules/policy-initiative.bicep' = {
+  name: 'private-access-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-private-access'
+    initiativeDisplayName: 'Demo - workload private access guardrails'
+    initiativeDescription: 'Audits selected PaaS public network access and private endpoint readiness; public access denial is an explicit later option.'
+    initiativeCategory: 'Network'
+    initiativeVersion: '1.0.0'
+    initiativeParameters: {
+      publicNetworkAccessEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Public network access effect'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      serviceCategories: {
+        type: 'Array'
+        metadata: {
+          displayName: 'PaaS service categories'
+        }
+        defaultValue: [
+          'Storage'
+          'KeyVault'
+        ]
+      }
+    }
+    policyDefinitionGroups: [
+      {
+        name: 'private-access'
+        displayName: 'Private access'
+        category: 'Network'
+        description: 'Workload and critical-infrastructure private access posture.'
+      }
+    ]
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: policyLibrary.outputs.privateAccessPublicNetworkPolicyDefinitionId
+        policyDefinitionReferenceId: 'paas-public-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'publicNetworkAccessEffect\')]'
+          }
+          serviceCategories: {
+            value: '[parameters(\'serviceCategories\')]'
+          }
+        }
+        groupNames: [
+          'private-access'
+        ]
+      }
+      {
+        policyDefinitionId: '/providers/Microsoft.Authorization/policyDefinitions/6edd7eda-6dd8-40f7-810d-67160c639cd9'
+        policyDefinitionReferenceId: 'storage-private-link'
+        definitionVersion: '2.*.*'
+        parameters: {}
+        groupNames: [
+          'private-access'
+        ]
+      }
+      {
+        policyDefinitionId: '/providers/Microsoft.Authorization/policyDefinitions/a6abeaec-4d90-4a02-805f-6b26c4d3fbe9'
+        policyDefinitionReferenceId: 'key-vault-private-link'
+        definitionVersion: '1.*.*'
+        parameters: {
+          audit_effect: {
+            value: 'Audit'
+          }
+        }
+        groupNames: [
+          'private-access'
+        ]
+      }
+    ]
+  }
+}
+
+module privateAccessWorkloadAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-private-access-workload'
+  scope: managementGroup(workloadManagementGroupId)
+  params: {
+    assignmentName: 'demo-private-access'
+    displayName: 'Demo - workload private access guardrails'
+    description: 'Audits workload PaaS public access and private endpoint readiness.'
+    policyDefinitionId: privateAccessInitiative.outputs.policySetDefinitionId
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      publicNetworkAccessEffect: {
+        value: privateAccessPublicNetworkPolicyEffect
+      }
+      serviceCategories: {
+        value: validatedPrivateAccessServiceCategories
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module privateAccessCriticalAssignment 'modules/policy-assignment.bicep' = if (enableCriticalInfrastructure) {
+  name: 'assign-private-access-critical'
+  scope: managementGroup(criticalInfrastructureManagementGroupId)
+  params: {
+    assignmentName: 'demo-critical-private'
+    displayName: 'Demo - critical private access guardrails'
+    description: 'Audits critical PaaS public access and private endpoint readiness.'
+    policyDefinitionId: privateAccessInitiative.outputs.policySetDefinitionId
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      publicNetworkAccessEffect: {
+        value: privateAccessPublicNetworkPolicyEffect
+      }
+      serviceCategories: {
+        value: validatedPrivateAccessServiceCategories
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module firewallRouteWorkloadAssignment 'modules/policy-assignment.bicep' = if (enableFirewallRouteGuardrails) {
+  name: 'assign-firewall-routes-workload'
+  scope: managementGroup(workloadManagementGroupId)
+  params: {
+    assignmentName: 'demo-firewall-routes'
+    displayName: 'Demo - workload approved firewall routes'
+    description: 'Audits supplied workload route-table expectations against the approved firewall private IP.'
+    policyDefinitionId: policyLibrary.outputs.approvedFirewallRoutesPolicyDefinitionId
+    enforcementMode: 'Default'
+    parameters: {
+      approvedFirewallPrivateIp: {
+        value: validatedFirewallRouteInputs ? approvedFirewallPrivateIp : approvedFirewallPrivateIp
+      }
+      approvedFirewallResourceId: {
+        value: approvedFirewallResourceId
+      }
+      approvedRouteTableResourceIds: {
+        value: approvedRouteTableResourceIds
+      }
+      approvedRouteTablePrefixes: {
+        value: approvedRouteTablePrefixes
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module firewallRouteCriticalAssignment 'modules/policy-assignment.bicep' = if (enableFirewallRouteGuardrails && enableCriticalInfrastructure) {
+  name: 'assign-firewall-routes-critical'
+  scope: managementGroup(criticalInfrastructureManagementGroupId)
+  params: {
+    assignmentName: 'demo-critical-fw-routes'
+    displayName: 'Demo - critical approved firewall routes'
+    description: 'Audits supplied critical route-table expectations against the approved firewall private IP.'
+    policyDefinitionId: policyLibrary.outputs.approvedFirewallRoutesPolicyDefinitionId
+    enforcementMode: 'Default'
+    parameters: {
+      approvedFirewallPrivateIp: {
+        value: validatedFirewallRouteInputs ? approvedFirewallPrivateIp : approvedFirewallPrivateIp
+      }
+      approvedFirewallResourceId: {
+        value: approvedFirewallResourceId
+      }
+      approvedRouteTableResourceIds: {
+        value: approvedRouteTableResourceIds
+      }
+      approvedRouteTablePrefixes: {
+        value: approvedRouteTablePrefixes
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 module expensiveResourcesAssignment 'modules/policy-assignment.bicep' = {
   name: 'assign-expensive-resources'
   scope: managementGroup(demoRootManagementGroupId)
@@ -647,6 +907,64 @@ module defenderAmaAuditLinuxAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
+module microsoftCloudSecurityBenchmarkAssignment 'modules/policy-assignment.bicep' = if (enableMicrosoftCloudSecurityBenchmark) {
+  name: 'assign-mcsb-baseline'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-mcsb-baseline'
+    displayName: 'Demo - Microsoft cloud security benchmark'
+    description: 'Assigns the stable Microsoft cloud security benchmark initiative as the default security baseline for the demo hierarchy. Assignment alone does not establish regulatory compliance.'
+    policyDefinitionId: microsoftCloudSecurityBenchmarkPolicySetDefinitionId
+    definitionVersion: '57.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module cisAzureFoundationsAssignment 'modules/policy-assignment.bicep' = if (enableCisAzureFoundationsBenchmark) {
+  name: 'assign-cis-foundations'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-cis-foundations'
+    displayName: 'Demo - CIS Microsoft Azure Foundations Benchmark v2.0.0'
+    description: 'Optional CIS Azure Foundations overlay. Overlaps heavily with the Microsoft cloud security benchmark; assignment alone does not establish CIS compliance.'
+    policyDefinitionId: cisAzureFoundationsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module nistSp80053Rev5Assignment 'modules/remediating-policy-assignment.bicep' = if (enableNistSp80053Rev5) {
+  name: 'assign-nist-sp-800-53-r5'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-nist-800-53-r5'
+    displayName: 'Demo - NIST SP 800-53 Rev. 5'
+    description: 'Optional NIST SP 800-53 Rev. 5 overlay. Four fixed Guest Configuration members are remediation-capable, so a system-assigned identity with the Contributor role is required. Assignment alone does not establish NIST or NERC CIP compliance.'
+    policyDefinitionId: nistSp80053Rev5PolicySetDefinitionId
+    definitionVersion: '14.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      contributorRoleDefinitionId
+    ]
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 module managementGroupRbac 'modules/management-group-rbac.bicep' = if (deployRoleAssignments) {
   name: 'management-group-rbac'
   scope: managementGroup(demoRootManagementGroupId)
@@ -747,6 +1065,11 @@ output denyPolicyEnforcementMode string = denyPolicyEnforcementMode
 output roleAssignmentsEnabled bool = deployRoleAssignments
 output evidenceResourcesEnabled bool = deployEvidenceResources
 output criticalInfrastructureEnabled bool = enableCriticalInfrastructure
+output securityBenchmarkAssignments object = {
+  microsoftCloudSecurityBenchmark: enableMicrosoftCloudSecurityBenchmark
+  cisAzureFoundationsBenchmark: enableCisAzureFoundationsBenchmark
+  nistSp80053Rev5: enableNistSp80053Rev5
+}
 output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs

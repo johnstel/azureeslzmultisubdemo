@@ -901,96 +901,107 @@
       "id": "REQ-NET-04",
       "domain": "network-security",
       "customerRequirement": "Audit private-link/private-endpoint readiness for storage accounts.",
-      "scope": "landingzones",
+      "scope": "workload and critical-infrastructure branches",
       "classification": "azure-policy",
       "mechanism": {
-        "kind": "policyDefinition",
-        "builtIn": true,
-        "displayName": "Storage accounts should use private link",
-        "definitionId": "6edd7eda-6dd8-40f7-810d-67160c639cd9",
-        "majorVersion": "2",
-        "verifiedVersion": "2.0.0",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/StorageAccountPrivateEndpointEnabled_Audit.json",
-        "verificationMethod": "raw-json",
-        "category": "Storage"
+        "kind": "policySetDefinition",
+        "builtIn": false,
+        "displayName": "Demo - workload private access guardrails",
+        "definitionId": "${namePrefix}-private-access",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Network",
+        "notes": "Includes the custom public-network-access definition and the Storage private-link built-in pinned to 2.*.*."
       },
       "supportedEffects": [
-        "AuditIfNotExists",
-        "Disabled"
+        "Audit",
+        "Deny",
+        "Disabled",
+        "AuditIfNotExists"
       ],
-      "requiredParameters": [],
+      "requiredParameters": [
+        "publicNetworkAccessEffect=Audit",
+        "serviceCategories=Storage"
+      ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + policy compliance state.",
-      "notes": "Issue #17: deny of public network access is deferred to an explicit later-enforcement parameter, not the safe default."
+      "evidenceSource": "Compiled ARM template + workload/critical private-access initiative assignment and policy compliance state.",
+      "notes": "Audit is the safe default. Deny of public network access is an explicit later-enforcement parameter after private endpoint, private DNS, endpoint approval, subnet connectivity, and access validation."
     },
     {
       "id": "REQ-NET-05",
       "domain": "network-security",
       "customerRequirement": "Audit private-link/private-endpoint readiness for Key Vault.",
-      "scope": "landingzones",
+      "scope": "workload and critical-infrastructure branches",
       "classification": "azure-policy",
       "mechanism": {
-        "kind": "policyDefinition",
-        "builtIn": true,
-        "displayName": "Azure Key Vaults should use private link",
-        "definitionId": "a6abeaec-4d90-4a02-805f-6b26c4d3fbe9",
+        "kind": "policySetDefinition",
+        "builtIn": false,
+        "displayName": "Demo - workload private access guardrails",
+        "definitionId": "${namePrefix}-private-access",
         "majorVersion": "1",
-        "verifiedVersion": "1.2.1",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/Should_Use_PrivateEndpoint_Audit.json",
-        "verificationMethod": "raw-json",
-        "category": "Key Vault",
-        "notes": "The operative parameter is audit_effect (allowedValues: Audit, Disabled; used by policyRule.then.effect). A second, deprecated effect parameter still exists in the source JSON with Deny in its allowedValues, but it is marked deprecated:true and is not referenced by policyRule.then.effect, so Deny is not an actual supported effect for this policy."
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Network",
+        "notes": "Includes the custom public-network-access definition and the Key Vault private-link built-in pinned to 1.*.*."
       },
       "supportedEffects": [
         "Audit",
+        "Deny",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": [
+        "publicNetworkAccessEffect=Audit",
+        "serviceCategories=KeyVault"
+      ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + policy compliance state."
+      "evidenceSource": "Compiled ARM template + workload/critical private-access initiative assignment and policy compliance state.",
+      "notes": "Audit is the safe default. Deny of public network access is an explicit later-enforcement parameter after private endpoint, private DNS, endpoint approval, subnet connectivity, and access validation."
     },
     {
       "id": "REQ-NET-06",
       "domain": "network-security",
       "customerRequirement": "Validate that Internet-bound traffic from production/critical subnets routes through an approved Azure Firewall.",
-      "scope": "landingzones",
+      "scope": "workload and critical-infrastructure branches",
       "classification": "azure-policy",
       "mechanism": {
         "kind": "policyDefinition",
-        "builtIn": true,
-        "displayName": "[Preview]: All Internet traffic should be routed via your deployed Azure Firewall",
-        "definitionId": "fc5e4038-4584-4632-8c85-c0448d374b2c",
-        "majorVersion": "3",
-        "verifiedVersion": "3.0.0-preview",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Network/ASC_All_Internet_traffic_should_be_routed_via_Azure_Firewall.json",
-        "verificationMethod": "raw-json",
-        "category": "Network",
-        "notes": "Still in Preview as of the verification date; preview built-ins are excluded from safe/default customer profiles per repository convention (never silently select preview definitions)."
+        "builtIn": false,
+        "displayName": "Demo - audit approved firewall route expectations",
+        "definitionId": "${namePrefix}-audit-approved-firewall-routes",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Network"
       },
       "supportedEffects": [
-        "AuditIfNotExists",
-        "Disabled"
+        "Audit"
       ],
       "requiredParameters": [
+        "enableFirewallRouteGuardrails=true",
         "approvedFirewallResourceId",
         "approvedFirewallPrivateIp",
+        "approvedRouteTableResourceIds",
         "approvedRouteTablePrefixes"
       ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
-      "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Compiled ARM template (opt-in only) + policy compliance state; route-table architecture inputs documented separately from policy evidence (issue #17).",
-      "notes": "The built-in policy above only audits whether an Azure Firewall exists in an AzureFirewallSubnet in the same VNet; it has no parameter for a specific firewall resource ID, private IP, or approved route prefixes. Issue #17's route-table/firewall guardrail therefore requires the customer to explicitly supply approvedFirewallResourceId (the approved Azure Firewall's ARM resource ID), approvedFirewallPrivateIp (its private IP used as the expected next-hop), and approvedRouteTablePrefixes (the CIDR prefixes the approved route table is expected to cover) as catalog-level required inputs; no placeholder values are supplied here, and none are inferred from this record's built-in policy."
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template (explicit opt-in only) + policy assignment parameters naming the approved Azure Firewall and route expectations + policy compliance state.",
+      "notes": "The custom audit policy evaluates every supplied expected prefix for every supplied route table and reports missing prefixes, wrong next-hop types, and wrong next-hop IPs. enableFirewallRouteGuardrails defaults false. Inputs must be non-empty, valid, and case-insensitively unique; the approved firewall ID must be an Azure Firewall ARM resource ID and is retained in assignment evidence. Azure Policy neither deploys nor proves Azure Firewall, private endpoints, private DNS, subnet associations, hub routing, route propagation, or end-to-end traffic traversal."
     },
     {
       "id": "REQ-LOG-01",

@@ -466,6 +466,171 @@ resource requireSubnetNsg 'Microsoft.Authorization/policyDefinitions@2025-03-01'
   }
 }
 
+resource privateAccessPublicNetwork 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-audit-paas-public-network'
+  properties: {
+    displayName: 'Demo - audit selected PaaS public network access'
+    description: 'Audits selected PaaS services that permit public network access. Deny is an explicit later-enforcement option.'
+    mode: 'Indexed'
+    metadata: {
+      category: 'Network'
+      version: '1.0.0'
+    }
+    parameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Effect'
+          description: 'Audit is the safe default. Deny requires confirmed private endpoints, DNS, routing, and approved exemptions.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      serviceCategories: {
+        type: 'Array'
+        metadata: {
+          displayName: 'PaaS service categories'
+          description: 'Categories whose public network access posture is evaluated.'
+        }
+        defaultValue: [
+          'Storage'
+          'KeyVault'
+        ]
+      }
+    }
+    policyRule: {
+      if: {
+        anyOf: [
+          {
+            allOf: [
+              {
+                value: '[contains(parameters(\'serviceCategories\'), \'Storage\')]'
+                equals: true
+              }
+              {
+                field: 'type'
+                equals: 'Microsoft.Storage/storageAccounts'
+              }
+              {
+                field: 'Microsoft.Storage/storageAccounts/publicNetworkAccess'
+                notEquals: 'Disabled'
+              }
+            ]
+          }
+          {
+            allOf: [
+              {
+                value: '[contains(parameters(\'serviceCategories\'), \'KeyVault\')]'
+                equals: true
+              }
+              {
+                field: 'type'
+                equals: 'Microsoft.KeyVault/vaults'
+              }
+              {
+                field: 'Microsoft.KeyVault/vaults/publicNetworkAccess'
+                notEquals: 'Disabled'
+              }
+            ]
+          }
+        ]
+      }
+      then: {
+        effect: '[parameters(\'effect\')]'
+      }
+    }
+  }
+}
+
+resource approvedFirewallRoutes 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-audit-approved-firewall-routes'
+  properties: {
+    displayName: 'Demo - audit approved firewall route expectations'
+    description: 'Audits specified route tables when expected prefixes do not use the supplied approved virtual-appliance private IP.'
+    mode: 'All'
+    metadata: {
+      category: 'Network'
+      version: '1.0.0'
+    }
+    parameters: {
+      approvedFirewallPrivateIp: {
+        type: 'String'
+        metadata: {
+          displayName: 'Approved firewall private IP'
+        }
+      }
+      approvedFirewallResourceId: {
+        type: 'String'
+        metadata: {
+          displayName: 'Approved firewall resource ID'
+        }
+      }
+      approvedRouteTableResourceIds: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Approved route table resource IDs'
+        }
+      }
+      approvedRouteTablePrefixes: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Approved route prefixes'
+        }
+      }
+    }
+    policyRule: {
+      if: {
+        allOf: [
+          {
+            field: 'type'
+            equals: 'Microsoft.Network/routeTables'
+          }
+          {
+            field: 'id'
+            in: '[parameters(\'approvedRouteTableResourceIds\')]'
+          }
+          {
+            count: {
+              value: '[parameters(\'approvedRouteTablePrefixes\')]'
+              name: 'approvedRouteTablePrefix'
+              where: {
+                count: {
+                  field: 'Microsoft.Network/routeTables/routes[*]'
+                  where: {
+                    allOf: [
+                      {
+                        field: 'Microsoft.Network/routeTables/routes[*].addressPrefix'
+                        equals: '[current(\'approvedRouteTablePrefix\')]'
+                      }
+                      {
+                        field: 'Microsoft.Network/routeTables/routes[*].nextHopType'
+                        equals: 'VirtualAppliance'
+                      }
+                      {
+                        field: 'Microsoft.Network/routeTables/routes[*].nextHopIpAddress'
+                        equals: '[parameters(\'approvedFirewallPrivateIp\')]'
+                      }
+                    ]
+                  }
+                }
+                equals: 0
+              }
+            }
+            greater: 0
+          }
+        ]
+      }
+      then: {
+        effect: 'audit'
+      }
+    }
+  }
+}
+
 resource expensiveResources 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   name: '${namePrefix}-block-expensive'
   properties: {
@@ -554,5 +719,7 @@ output allowedResourceTypesAllPolicyDefinitionId string = allowedResourceTypesAl
 output auditPublicIpPolicyDefinitionId string = auditPublicIp.id
 output publicManagementIngressPolicyDefinitionId string = publicManagementIngress.id
 output requireSubnetNsgPolicyDefinitionId string = requireSubnetNsg.id
+output privateAccessPublicNetworkPolicyDefinitionId string = privateAccessPublicNetwork.id
+output approvedFirewallRoutesPolicyDefinitionId string = approvedFirewallRoutes.id
 output expensiveResourcesPolicyDefinitionId string = expensiveResources.id
 output platformTagsPolicyDefinitionId string = platformTags.id

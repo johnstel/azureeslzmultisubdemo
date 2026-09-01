@@ -87,7 +87,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/24 Validate repository versioning and branch guidance...'
+    Write-Host '1/25 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -105,7 +105,7 @@ try {
         }
     }
 
-    Write-Host '2/24 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/25 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -203,7 +203,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/24 Validate both parameter templates...'
+    Write-Host '3/25 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -231,8 +231,30 @@ try {
     if ($compiledParameters.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
         Stop-Test 'networkIngressPolicyEffect must default to Audit in the Bicep parameter template.'
     }
+    if ($parameterTemplate.parameters.privateAccessPublicNetworkPolicyEffect.value -ne 'Audit' -or
+        (Compare-Object @($parameterTemplate.parameters.privateAccessServiceCategories.value) @('Storage', 'KeyVault')) -or
+        $parameterTemplate.parameters.enableFirewallRouteGuardrails.value -ne $false -or
+        $parameterTemplate.parameters.approvedFirewallResourceId.value -ne '' -or
+        $parameterTemplate.parameters.approvedFirewallPrivateIp.value -ne '' -or
+        @($parameterTemplate.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
+        @($parameterTemplate.parameters.approvedRouteTablePrefixes.value).Count -ne 0) {
+        Stop-Test 'Private-access and firewall-route JSON template parameters must retain safe defaults.'
+    }
+    if ($compiledParameters.parameters.privateAccessPublicNetworkPolicyEffect.value -ne 'Audit' -or
+        (Compare-Object @($compiledParameters.parameters.privateAccessServiceCategories.value) @('Storage', 'KeyVault')) -or
+        $compiledParameters.parameters.enableFirewallRouteGuardrails.value -ne $false -or
+        $compiledParameters.parameters.approvedFirewallResourceId.value -ne '' -or
+        $compiledParameters.parameters.approvedFirewallPrivateIp.value -ne '' -or
+        @($compiledParameters.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
+        @($compiledParameters.parameters.approvedRouteTablePrefixes.value).Count -ne 0) {
+        Stop-Test 'Private-access and firewall-route Bicep template parameters must retain safe defaults.'
+    }
 
-    Write-Host '4/24 Confirm there are exactly two unconditional subscription associations...'
+    $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
+        $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
+    }
+    Write-Host '4/25 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -242,7 +264,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/24 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    Write-Host '5/25 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
     if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
         Stop-Test 'A prohibited evidence resource type is declared.'
     }
@@ -256,14 +278,14 @@ try {
         Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/24 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/25 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/24 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/25 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -277,7 +299,7 @@ try {
 
     $rbacNegativeTemplate = Join-Path $TempDir 'main-permanent-owner.json'
     $rbacNegativeJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
-    $rbacNegativeJson.resources += [pscustomobject]@{
+    $rbacNegativeJson.resources | Add-Member -NotePropertyName __testPermanentOwner -NotePropertyValue ([pscustomobject]@{
         type = 'Microsoft.Authorization/roleAssignments'
         apiVersion = '2022-04-01'
         name = '00000000-0000-0000-0000-000000000000'
@@ -285,7 +307,7 @@ try {
             principalId = "[parameters('governanceAdminsGroupObjectId')]"
             roleDefinitionId = "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]"
         }
-    }
+    }) -Force
     $rbacNegativeJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacNegativeTemplate
     $rbacNegativeOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
         -CompiledTemplate $rbacNegativeTemplate `
@@ -299,13 +321,13 @@ try {
     }
     $rbacMainRequestTemplate = Join-Path $TempDir 'main-one-shot-request.json'
     $rbacMainRequestJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
-    $rbacMainRequestJson.resources += [pscustomobject]@{
+    $rbacMainRequestJson.resources | Add-Member -NotePropertyName __testOneShotRequest -NotePropertyValue ([pscustomobject]@{
         type = 'Microsoft.Authorization/roleEligibilityScheduleRequests'
         apiVersion = '2020-10-01'
         name = "[guid(subscription().id, 'reused-request')]"
         condition = $false
         properties = [pscustomobject]@{}
-    }
+    }) -Force
     $rbacMainRequestJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacMainRequestTemplate
     $rbacMainRequestOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
         -CompiledTemplate $rbacMainRequestTemplate `
@@ -763,7 +785,7 @@ exit $LASTEXITCODE
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/24 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/25 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -783,7 +805,7 @@ exit $LASTEXITCODE
     }
 
     $policyLibrary = @($compiledJson.resources | Where-Object {
-        $_.name.StartsWith("[format('policy-library-")
+        $_.PSObject.Properties['name'] -and $_.name.StartsWith("[format('policy-library-")
     })
     if ($policyLibrary.Count -ne 1) {
         Stop-Test 'Expected exactly one compiled policy-library deployment.'
@@ -884,6 +906,103 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the existing public-IP audit to remain a single dedicated-root assignment.'
     }
 
+    $privateAccessInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'private-access-initiative' })
+    $privateAccessWorkloadAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-private-access-workload' })
+    $privateAccessCriticalAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-private-access-critical' })
+    $firewallRouteWorkloadAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-firewall-routes-workload' })
+    if ($privateAccessInitiative.Count -ne 1 -or
+        (Compare-Object @($privateAccessInitiative[0].properties.parameters.policyDefinitionReferences.value |
+            ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object) @('key-vault-private-link', 'paas-public-network-access', 'storage-private-link')) -or
+        $privateAccessInitiative[0].properties.parameters.initiativeParameters.value.publicNetworkAccessEffect.defaultValue -ne 'Audit') {
+        Stop-Test 'Private-access initiative must contain the audit-first public-network and private-link references.'
+    }
+    $privateAccessReferences = @($privateAccessInitiative[0].properties.parameters.policyDefinitionReferences.value)
+    if ((@($privateAccessReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'storage-private-link' }).definitionVersion) -ne '2.*.*' -or
+        (@($privateAccessReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'key-vault-private-link' }).definitionVersion) -ne '1.*.*') {
+        Stop-Test 'Private-link built-in references must be pinned to cataloged major versions.'
+    }
+    if ($privateAccessWorkloadAssignment.Count -ne 1 -or
+        $privateAccessWorkloadAssignment[0].scope -notmatch 'workloadManagementGroupId' -or
+        $privateAccessWorkloadAssignment[0].scope -match 'platformManagementGroupId' -or
+        $privateAccessCriticalAssignment.Count -ne 1 -or
+        $privateAccessCriticalAssignment[0].condition -ne "[parameters('enableCriticalInfrastructure')]" -or
+        $privateAccessCriticalAssignment[0].scope -notmatch 'criticalInfrastructureManagementGroupId' -or
+        $firewallRouteWorkloadAssignment.Count -ne 1 -or
+        $firewallRouteWorkloadAssignment[0].condition -ne "[parameters('enableFirewallRouteGuardrails')]" -or
+        $firewallRouteWorkloadAssignment[0].scope -notmatch 'workloadManagementGroupId') {
+        Stop-Test 'Private-access and firewall-route assignments must remain workload/critical scoped and opt-in.'
+    }
+    $routeParameters = $firewallRouteWorkloadAssignment[0].properties.parameters.parameters.value
+    if ([string]$routeParameters.approvedFirewallResourceId.value -ne "[parameters('approvedFirewallResourceId')]" -or
+        ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'fail\(' -or
+        ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'approvedRouteTablePrefixes') {
+        Stop-Test 'Firewall-route assignment must retain approved-firewall evidence and validate all architecture inputs.'
+    }
+    foreach ($requiredValidationText in @(
+        'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values',
+        'approvedFirewallResourceId must be an Azure Firewall resource ID'
+    )) {
+        if (-not $mainBicepText.Contains($requiredValidationText)) {
+            Stop-Test "Guardrail input validation is missing: $requiredValidationText"
+        }
+        $inputValidationFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/firewall-route-input-validation-cases.json') -Raw | ConvertFrom-Json
+        foreach ($case in $inputValidationFixture.ipv4Cases) {
+            $octets = @([string]$case.value -split '\.')
+            $valid = $octets.Count -eq 4
+            foreach ($octet in $octets) {
+                [int]$number = 0
+                if ($octet -notmatch '^\d+$' -or -not [int]::TryParse($octet, [ref]$number) -or $number -gt 255) {
+                    $valid = $false
+                }
+            }
+            if ($valid -ne $case.valid) {
+                Stop-Test "IPv4 validation case failed: $($case.value)"
+            }
+        }
+        foreach ($case in $inputValidationFixture.serviceCategoryCases) {
+            $values = @($case.value)
+            $valid = ($values.Count -gt 0) -and
+                (@($values | Where-Object {
+                    -not [string]::Equals($_, 'Storage', [System.StringComparison]::Ordinal) -and
+                    -not [string]::Equals($_, 'KeyVault', [System.StringComparison]::Ordinal)
+                }).Count -eq 0) -and
+                (@($values | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -eq $values.Count)
+            if ($valid -ne $case.valid) {
+                Stop-Test "Private-access category validation case failed: $($values -join ',')"
+            }
+        }
+    }
+    $firewallRoutePolicy = @($policyDefinitions | Where-Object {
+        $_.properties.displayName -eq 'Demo - audit approved firewall route expectations'
+    })
+    if ($firewallRoutePolicy.Count -ne 1) {
+        Stop-Test 'Expected exactly one approved-firewall-routes policy definition.'
+    }
+    $firewallRoutePolicyText = $firewallRoutePolicy[0].properties.policyRule.if | ConvertTo-Json -Depth 100 -Compress
+    foreach ($requiredExpression in @(
+        'approvedRouteTablePrefixes',
+        "current('approvedRouteTablePrefix')",
+        'nextHopType',
+        'VirtualAppliance',
+        'nextHopIpAddress',
+        'approvedFirewallPrivateIp'
+    )) {
+        if (-not $firewallRoutePolicyText.Contains($requiredExpression)) {
+            Stop-Test "Compiled firewall route policy is missing: $requiredExpression"
+        }
+    }
+    $firewallRouteFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/firewall-route-semantic-cases.json') -Raw | ConvertFrom-Json
+    foreach ($case in $firewallRouteFixture.cases) {
+        $hasApprovedRoute = @($case.routes | Where-Object {
+            $_.addressPrefix -eq $firewallRouteFixture.approvedRouteTablePrefix -and
+            $_.nextHopType -eq 'VirtualAppliance' -and
+            $_.nextHopIpAddress -eq $firewallRouteFixture.approvedFirewallPrivateIp
+        }).Count -gt 0
+        if ((-not $hasApprovedRoute) -ne $case.expectedNonCompliant) {
+            Stop-Test "Firewall route semantic case failed: $($case.name)"
+        }
+    }
+
     $semanticFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/network-ingress-semantic-cases.json') -Raw | ConvertFrom-Json
     $compiledNonPublicRanges = @($policyLibrary[0].properties.template.variables.nonPublicIpv4Ranges)
     if (Compare-Object $compiledNonPublicRanges @($semanticFixture.nonPublicIpv4Ranges)) {
@@ -972,7 +1091,7 @@ exit $LASTEXITCODE
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '9/24 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/25 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -1012,7 +1131,7 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/24 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
+    Write-Host '10/25 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     if ($mainBicepText -notmatch '(?m)^param enableDefenderCspm bool = false$') {
         Stop-Test 'enableDefenderCspm parameter must default to false.'
@@ -1180,7 +1299,7 @@ exit $LASTEXITCODE
         Stop-Test 'README.md must document Foundational CSPM.'
     }
 
-    Write-Host '11/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '11/25 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -1208,7 +1327,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '12/24 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '12/25 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -1230,7 +1349,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '13/24 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '13/25 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -1251,7 +1370,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/24 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '14/25 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -1263,7 +1382,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '15/24 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '15/25 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -1271,7 +1390,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '16/24 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '16/25 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -1283,7 +1402,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '17/24 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '17/25 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -1300,7 +1419,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '18/24 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '18/25 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -1403,7 +1522,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/24 Parse every PowerShell lifecycle and test script...'
+    Write-Host '19/25 Parse every PowerShell lifecycle and test script...'
     & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
@@ -1422,13 +1541,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '20/24 Validate reusable initiative composition...'
+    Write-Host '20/25 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '21/24 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '21/25 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '22/24 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '22/25 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -1438,10 +1557,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '23/24 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '23/25 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '24/24 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '24/25 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'
@@ -2068,6 +2187,143 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
 
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
+
+    Write-Host '25/25 Confirm security benchmark assignments trace to the control catalog and stay optional...'
+    $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
+    $armParameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
+    $benchmarkAssignments = @(
+        @{
+            DeploymentName = 'assign-mcsb-baseline'
+            ControlId      = 'REQ-BASE-01'
+            VariableName   = 'microsoftCloudSecurityBenchmarkPolicySetDefinitionId'
+            ParameterName  = 'enableMicrosoftCloudSecurityBenchmark'
+            DefaultEnabled = $true
+        },
+        @{
+            DeploymentName = 'assign-cis-foundations'
+            ControlId      = 'REQ-BASE-02'
+            VariableName   = 'cisAzureFoundationsPolicySetDefinitionId'
+            ParameterName  = 'enableCisAzureFoundationsBenchmark'
+            DefaultEnabled = $false
+        },
+        @{
+            DeploymentName = 'assign-nist-sp-800-53-r5'
+            ControlId      = 'REQ-BASE-03'
+            VariableName   = 'nistSp80053Rev5PolicySetDefinitionId'
+            ParameterName  = 'enableNistSp80053Rev5'
+            DefaultEnabled = $false
+        }
+    )
+    foreach ($benchmark in $benchmarkAssignments) {
+        $control = $controlCatalog.controls | Where-Object { $_.id -eq $benchmark.ControlId } | Select-Object -First 1
+        if (-not $control) { Stop-Test "Control catalog is missing $($benchmark.ControlId)." }
+        $deployment = Find-JsonObjects -Node $compiledJson -Predicate {
+            param($node)
+            $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+            $node.PSObject.Properties['name'] -and $node.name -eq $benchmark.DeploymentName
+        } | Select-Object -First 1
+        if (-not $deployment) { Stop-Test "Missing benchmark assignment deployment $($benchmark.DeploymentName)." }
+        if ($compiledJson.parameters.($benchmark.ParameterName).defaultValue -ne $benchmark.DefaultEnabled) {
+            Stop-Test "$($benchmark.ParameterName) must default to $($benchmark.DefaultEnabled)."
+        }
+        if ($armParameterTemplate.parameters.($benchmark.ParameterName).value -ne $benchmark.DefaultEnabled) {
+            Stop-Test "$($benchmark.ParameterName) must be $($benchmark.DefaultEnabled) in the ARM parameter template."
+        }
+        if ($deployment.condition -ne "[parameters('$($benchmark.ParameterName)')]") {
+            Stop-Test "$($benchmark.DeploymentName) must be gated by $($benchmark.ParameterName)."
+        }
+        if ($deployment.scope -notmatch 'demoRootManagementGroupId') {
+            Stop-Test "$($benchmark.DeploymentName) must be assigned at the dedicated demo root."
+        }
+        $expectedDefinitionId = "[tenantResourceId('Microsoft.Authorization/policySetDefinitions', '$($control.mechanism.definitionId)')]"
+        if ($compiledJson.variables.($benchmark.VariableName) -ne $expectedDefinitionId) {
+            Stop-Test "$($benchmark.VariableName) must match the verified $($benchmark.ControlId) initiative ID."
+        }
+        if ($deployment.properties.parameters.policyDefinitionId.value -ne "[variables('$($benchmark.VariableName)')]") {
+            Stop-Test "$($benchmark.DeploymentName) must assign the catalog-verified initiative."
+        }
+        if ($deployment.properties.parameters.definitionVersion.value -ne "$($control.mechanism.majorVersion).*.*") {
+            Stop-Test "$($benchmark.DeploymentName) must pin the supported major version from the control catalog."
+        }
+        if ($deployment.properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]") {
+            Stop-Test "$($benchmark.DeploymentName) must use the safe non-enforcing enforcement mode parameter."
+        }
+    }
+    foreach ($auditOnlyDeploymentName in @('assign-mcsb-baseline', 'assign-cis-foundations')) {
+        $auditOnlyDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+            param($node)
+            $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+            $node.PSObject.Properties['name'] -and $node.name -eq $auditOnlyDeploymentName
+        } | Select-Object -First 1
+        $identityAssignments = @($auditOnlyDeployment.properties.template.resources.PSObject.Properties.Value |
+            Where-Object { $_.type -eq 'Microsoft.Authorization/policyAssignments' -and $_.PSObject.Properties['identity'] })
+        if ($identityAssignments.Count -ne 0) {
+            Stop-Test "$auditOnlyDeploymentName must not request a managed identity for an audit-only benchmark."
+        }
+    }
+    $nistDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-nist-sp-800-53-r5'
+    } | Select-Object -First 1
+    if ($nistDeployment.properties.parameters.identity.value.type -ne 'SystemAssigned') {
+        Stop-Test 'The NIST overlay must use a system-assigned identity for its fixed remediation members.'
+    }
+    $nistControl = $controlCatalog.controls | Where-Object { $_.id -eq 'REQ-BASE-03' } | Select-Object -First 1
+    if (Compare-Object @("[variables('contributorRoleDefinitionId')]") @($nistDeployment.properties.parameters.verifiedRoleDefinitionIds.value)) {
+        Stop-Test 'The NIST overlay must grant only the catalog-verified role.'
+    }
+    if ($compiledJson.variables.contributorRoleDefinitionId -ne @($nistControl.roleDefinitionIds)[0]) {
+        Stop-Test 'contributorRoleDefinitionId must match the verified REQ-BASE-03 role definition ID.'
+    }
+    $benchmarkOutput = $compiledJson.outputs.securityBenchmarkAssignments.value
+    if ($benchmarkOutput.microsoftCloudSecurityBenchmark -ne "[parameters('enableMicrosoftCloudSecurityBenchmark')]" -or
+        $benchmarkOutput.cisAzureFoundationsBenchmark -ne "[parameters('enableCisAzureFoundationsBenchmark')]" -or
+        $benchmarkOutput.nistSp80053Rev5 -ne "[parameters('enableNistSp80053Rev5')]") {
+        Stop-Test 'securityBenchmarkAssignments output must report every benchmark switch.'
+    }
+    Write-Host '    Confirm preview or superseded benchmark initiatives are never selected...'
+    $bicepSourceText = (Get-ChildItem -LiteralPath $ProjectDir -Recurse -Include '*.bicep', '*.bicepparam' -File |
+        Where-Object { $_.FullName -notmatch '\.test-artifacts' } |
+        ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+    foreach ($previewDefinitionId in @(
+        'e3ec7e09-768c-4b64-882c-fcada3772047',
+        '60205a79-6280-4e20-a147-e2011e09dc78',
+        'c3f5c4d9-9a1d-4a99-85c0-7f93e384d5c5'
+    )) {
+        if ($bicepSourceText.Contains($previewDefinitionId)) {
+            Stop-Test "Preview or superseded benchmark initiative $previewDefinitionId must never be assigned."
+        }
+    }
+    if ($bicepSourceText -match '(?i)azure security baseline') {
+        Stop-Test 'Do not create a duplicate "Azure Security Baseline" initiative; per-service baselines are guidance only.'
+    }
+    Write-Host '    Confirm every enabled/disabled benchmark combination compiles with the expected assignments...'
+    $benchmarkParameterTemplateText = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/main.template.bicepparam') -Raw
+    foreach ($benchmarkCase in @(
+        @($true, $false, $false),
+        @($false, $false, $false),
+        @($true, $true, $true),
+        @($false, $true, $false),
+        @($false, $false, $true)
+    )) {
+        $caseValues = $benchmarkCase | ForEach-Object { $_.ToString().ToLowerInvariant() }
+        $caseParametersPath = Join-Path $TempDir ("benchmark-" + ($caseValues -join '-') + '.bicepparam')
+        $caseText = $benchmarkParameterTemplateText `
+            -replace "(?m)^using '\.\./main\.bicep'$", "using '../../main.bicep'" `
+            -replace '(?m)^param enableMicrosoftCloudSecurityBenchmark = .*$', "param enableMicrosoftCloudSecurityBenchmark = $($caseValues[0])" `
+            -replace '(?m)^param enableCisAzureFoundationsBenchmark = .*$', "param enableCisAzureFoundationsBenchmark = $($caseValues[1])" `
+            -replace '(?m)^param enableNistSp80053Rev5 = .*$', "param enableNistSp80053Rev5 = $($caseValues[2])"
+        Set-Content -LiteralPath $caseParametersPath -Value $caseText
+        & az bicep build-params --file $caseParametersPath --outfile "$caseParametersPath.json"
+        if ($LASTEXITCODE -ne 0) { Stop-Test "Benchmark combination $($caseValues -join ',') failed to compile." }
+        $caseParameters = Get-Content -LiteralPath "$caseParametersPath.json" -Raw | ConvertFrom-Json
+        if ($caseParameters.parameters.enableMicrosoftCloudSecurityBenchmark.value -ne $benchmarkCase[0] -or
+            $caseParameters.parameters.enableCisAzureFoundationsBenchmark.value -ne $benchmarkCase[1] -or
+            $caseParameters.parameters.enableNistSp80053Rev5.value -ne $benchmarkCase[2]) {
+            Stop-Test "Benchmark combination $($caseValues -join ',') did not compile to the expected parameter values."
+        }
+    }
 
     Write-Host ''
     Write-Host 'All Windows PowerShell validation and safety tests passed.'
