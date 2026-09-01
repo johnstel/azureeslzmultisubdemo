@@ -39,6 +39,7 @@ module initiativeAssignment '../../modules/policy-assignment.bicep' = {
     ]
     notScopes: [
       '/providers/Microsoft.Management/managementGroups/excluded'
+      '/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-excluded/providers/Microsoft.Network/virtualNetworks/vnet-excluded/subnets/default'
     ]
     resourceSelectors: [
       {
@@ -64,6 +65,27 @@ module initiativeAssignment '../../modules/policy-assignment.bicep' = {
           }
         ]
       }
+      {
+        name: 'subscription-resources'
+        selectors: [
+          {
+            kind: 'resourceWithoutLocation'
+            in: [
+              'subscriptionLevelResources'
+            ]
+          }
+        ]
+      }
     ]
+  }
+}
+
+module customPolicyAssignment '../../modules/policy-assignment.bicep' = {
+  name: 'example-custom-policy-assignment'
+  params: {
+    assignmentName: 'example-custom-policy'
+    displayName: 'Example custom policy assignment'
+    description: 'Exercises a management-group custom definition without unsupported version pinning.'
+    policyDefinitionId: '/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/policyDefinitions/custom-policy'
   }
 }

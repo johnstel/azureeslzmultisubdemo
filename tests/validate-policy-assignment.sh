@@ -32,6 +32,72 @@ az bicep build \
   --file "${SCRIPT_DIR}/fixtures/policy-assignment-shapes.bicep" \
   --outfile "${compiled_shapes}" >/dev/null
 
+expect_bicep_build_failure() {
+  local fixture="$1"
+  local description="$2"
+  local output
+  if output="$(az bicep build --file "${fixture}" --stdout 2>&1)"; then
+    printf 'ERROR: Bicep unexpectedly accepted %s.\n' "${description}" >&2
+    exit 1
+  fi
+}
+
+expect_bicep_build_failure \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-assignment-name.bicep" \
+  'a management-group policy assignment name longer than 24 characters'
+expect_bicep_build_failure \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-selector-kind.bicep" \
+  'policyDefinitionReferenceId as a resource selector kind'
+
+validation_cases="${SCRIPT_DIR}/fixtures/policy-assignment-validation-cases.json"
+jq -e '
+  def valid_assignment_name:
+    . as $name
+    | ($name | length) >= 1
+      and ($name | length) <= 24
+      and (["#", "<", ">", "%", "&", ":", "\\", "?", "/"] | all(.[]; . as $character | ($name | contains($character) | not)))
+      and ($name | test("[[:cntrl:]]") | not)
+      and ($name | endswith(".") | not)
+      and ($name | endswith(" ") | not);
+  def built_in_definition_id:
+    . == (gsub("^\\s+|\\s+$"; ""))
+      and test("^/providers/Microsoft\\.Authorization/(policyDefinitions|policySetDefinitions)/[^/]+$"; "i");
+  def management_group_definition_id:
+    . == (gsub("^\\s+|\\s+$"; ""))
+      and test("^/providers/Microsoft\\.Management/managementGroups/[^/]+/providers/Microsoft\\.Authorization/(policyDefinitions|policySetDefinitions)/[^/]+$"; "i");
+  def valid_definition_version:
+    test("^(0|[1-9][0-9]*)\\.(\\*|0|[1-9][0-9]*)\\.\\*$");
+  def valid_definition_binding:
+    .policyDefinitionId as $definition_id
+    | ($definition_id | built_in_definition_id) as $built_in
+    | (($built_in or ($definition_id | management_group_definition_id))
+      and (.definitionVersion == "" or ($built_in and (.definitionVersion | valid_definition_version))));
+  def valid_resource_id_segments:
+    startswith("/")
+      and (endswith("/") | not)
+      and (split("/")[1:] | all(.[]; length > 0 and . == (gsub("^\\s+|\\s+$"; ""))));
+  def management_group_scope_id:
+    test("^/providers/Microsoft\\.Management/managementGroups/[^/]+$"; "i");
+  def subscription_descendant_id:
+    test("^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/resourceGroups/[^/]+(/providers/[^/]+/[^/]+/[^/]+(/[^/]+/[^/]+)*)?|/providers/[^/]+/[^/]+/[^/]+(/[^/]+/[^/]+)*)?$"; "i");
+  def valid_not_scope($current):
+    (ascii_downcase != ($current | ascii_downcase))
+      and valid_resource_id_segments
+      and (management_group_scope_id or subscription_descendant_id);
+  def valid_resource_without_location:
+    (.kind == "resourceWithoutLocation")
+      and (has("in") != has("notIn"))
+      and ((.in // .notIn) == ["subscriptionLevelResources"]);
+  . as $cases
+  | all($cases.assignmentNames[]; ((.value | valid_assignment_name) == .valid))
+    and all($cases.definitionBindings[]; (valid_definition_binding == .valid))
+    and all($cases.notScopes[]; ((.value | valid_not_scope($cases.currentManagementGroupId)) == .valid))
+    and all($cases.resourceWithoutLocationSelectors[]; ((.selector | valid_resource_without_location) == .valid))
+' "${validation_cases}" >/dev/null || {
+  printf 'ERROR: Policy assignment negative validation cases did not produce the expected results.\n' >&2
+  exit 1
+}
+
 jq -e '
   . as $root
   | def deployments: [$root | .. | objects | select(.type? == "Microsoft.Resources/deployments")];
@@ -63,6 +129,13 @@ jq -e '
     and assignment("assign-expensive-resources").properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]"
     and assignment("assign-platform-tags").properties.parameters.enforcementMode.value == "Default"
     and assignment("assign-workload-rg-tags").properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]"
+    and assignment("assign-allowed-locations").properties.parameters.assignmentName.value == "demo-allowed-us-locs"
+    and assignment("assign-audit-public-ip").properties.parameters.assignmentName.value == "demo-audit-public-ip"
+    and assignment("assign-expensive-resources").properties.parameters.assignmentName.value == "demo-block-expensive"
+    and assignment("assign-platform-tags").properties.parameters.assignmentName.value == "demo-audit-platform-tags"
+    and assignment("assign-workload-rg-tags").properties.parameters.assignmentName.value == "demo-require-rg-tags"
+    and (($assignments | map(.properties.parameters.assignmentName.value) | unique | length) == 5)
+    and all($assignments[]; (.properties.parameters.assignmentName.value | length) <= 24)
     and assignment("assign-allowed-locations").properties.parameters.parameters.value.allowedLocations.value == "[parameters(\u0027allowedLocations\u0027)]"
     and assignment("assign-audit-public-ip").properties.parameters.parameters.value == {}
     and assignment("assign-expensive-resources").properties.parameters.parameters.value == {}
@@ -82,6 +155,7 @@ jq -e '
   | def deployment($name): first($root | .. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
     deployment("example-policy-assignment") as $policy
   | deployment("example-initiative-assignment") as $initiative
+  | deployment("example-custom-policy-assignment") as $custom
   | $policy.properties.template as $module
   | $module.resources.assignment as $resource
   | $resource.properties as $propertiesExpression
@@ -116,12 +190,18 @@ jq -e '
     and ($initiative.properties.parameters.nonComplianceMessages.value | length) == 2
     and $initiative.properties.parameters.nonComplianceMessages.value[1].policyDefinitionReferenceId == "audit-reference"
     and $initiative.properties.parameters.notScopes.value == [
-      "/providers/Microsoft.Management/managementGroups/excluded"
+      "/providers/Microsoft.Management/managementGroups/excluded",
+      "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-excluded/providers/Microsoft.Network/virtualNetworks/vnet-excluded/subnets/default"
     ]
     and $initiative.properties.parameters.resourceSelectors.value[0].selectors[0].kind == "resourceLocation"
     and $initiative.properties.parameters.resourceSelectors.value[0].selectors[0].in == ["eastus2", "westus2"]
     and $initiative.properties.parameters.resourceSelectors.value[1].selectors[0].kind == "resourceType"
     and $initiative.properties.parameters.resourceSelectors.value[1].selectors[0].notIn == ["Microsoft.Compute/virtualMachines"]
+    and $initiative.properties.parameters.resourceSelectors.value[2].selectors[0].kind == "resourceWithoutLocation"
+    and $initiative.properties.parameters.resourceSelectors.value[2].selectors[0].in == ["subscriptionLevelResources"]
+    and $custom.properties.parameters.policyDefinitionId.value == "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/policyDefinitions/custom-policy"
+    and ($custom.properties.parameters | has("definitionVersion") | not)
+    and $module.parameters.assignmentName.maxLength == 24
     and $module.parameters.enforcementMode.defaultValue == "DoNotEnforce"
     and $module.parameters.parameters.defaultValue == {}
     and $module.parameters.metadata.defaultValue == {
@@ -144,16 +224,19 @@ jq -e '
     and $module.definitions.ResourceSelector.additionalProperties == false
     and $module.definitions.ResourceSelector.properties.selectors.minLength == 1
     and $module.definitions.ResourceSelector.properties.selectors.maxLength == 10
-    and ($module.variables.validatedPolicyDefinitionId | contains("fail(\u0027policyDefinitionId must be the full resource ID"))
-    and ($module.variables.validatedDefinitionVersion | contains("fail(\u0027definitionVersion must not contain leading or trailing whitespace"))
+    and ($module.variables.validatedAssignmentName | contains("fail(\u0027assignmentName contains a character that is invalid"))
+    and ($module.variables.validatedPolicyDefinitionId | contains("fail(\u0027policyDefinitionId must be an exact built-in or management-group"))
+    and ($module.variables.validatedDefinitionVersion | contains("fail(\u0027definitionVersion is supported only for built-in definitions and must use N.*.* or N.N.*"))
     and ($module.variables.validatedNonComplianceMessages | contains("fail(\u0027policyDefinitionReferenceId must be non-empty"))
-    and ($module.variables.validatedNotScopes | contains("fail(\u0027notScopes must contain only non-empty resource IDs"))
+    and ($module.variables.validatedNotScopes | contains("fail(\u0027notScopes must contain only valid descendant management-group"))
     and ($module.variables.validatedResourceSelectors | contains("fail(\u0027resourceSelectors must use unique names"))
     and ($module.variables.validatedResourceSelectors | contains("fail(\u0027Each selector kind can be used only once within a resource selector"))
     and ($module.variables.validatedResourceSelectors | contains("fail(\u0027resourceLocation and resourceWithoutLocation cannot be used in the same resource selector"))
+    and ($module.variables.validatedResourceSelectors | contains("fail(\u0027resourceWithoutLocation must use the single supported value subscriptionLevelResources"))
     and ($module.variables.validatedResourceSelectors | contains("fail(\u0027Each resource selector expression must provide one non-empty in or notIn array containing no more than 50 values"))
     and $resource.type == "Microsoft.Authorization/policyAssignments"
     and $resource.apiVersion == "2025-03-01"
+    and $resource.name == "[variables(\u0027validatedAssignmentName\u0027)]"
     and ($resource | has("identity") | not)
     and ($resource | has("location") | not)
     and ($propertiesExpression | type) == "string"
