@@ -904,31 +904,33 @@
       "scope": "workload and critical-infrastructure branches",
       "classification": "azure-policy",
       "mechanism": {
-        "kind": "policyDefinition",
+        "kind": "policySetDefinition",
         "builtIn": false,
-        "displayName": "Demo - selected PaaS public access audit plus Storage private-link audit",
-        "definitionId": "${namePrefix}-audit-paas-public-network + 6edd7eda-6dd8-40f7-810d-67160c639cd9",
-        "majorVersion": "2",
-        "verifiedVersion": "2.0.0",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Storage/StorageAccountPrivateEndpointEnabled_Audit.json",
-        "verificationMethod": "raw-json",
-        "category": "Storage",
-        "notes": "The custom public-network-access definition is assigned with the verified Storage private-link built-in pinned to 2.*.*."
+        "displayName": "Demo - workload private access guardrails",
+        "definitionId": "${namePrefix}-private-access",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Network",
+        "notes": "Includes the custom public-network-access definition and the Storage private-link built-in pinned to 2.*.*."
       },
       "supportedEffects": [
-        "AuditIfNotExists",
-        "Disabled"
+        "Audit",
+        "Deny",
+        "Disabled",
+        "AuditIfNotExists"
       ],
       "requiredParameters": [
-        "effect=Audit",
+        "publicNetworkAccessEffect=Audit",
         "serviceCategories=Storage"
       ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + workload/critical policy compliance state.",
+      "evidenceSource": "Compiled ARM template + workload/critical private-access initiative assignment and policy compliance state.",
       "notes": "Audit is the safe default. Deny of public network access is an explicit later-enforcement parameter after private endpoint, private DNS, endpoint approval, subnet connectivity, and access validation."
     },
     {
@@ -938,31 +940,32 @@
       "scope": "workload and critical-infrastructure branches",
       "classification": "azure-policy",
       "mechanism": {
-        "kind": "policyDefinition",
+        "kind": "policySetDefinition",
         "builtIn": false,
-        "displayName": "Demo - selected PaaS public access audit plus Key Vault private-link audit",
-        "definitionId": "${namePrefix}-audit-paas-public-network + a6abeaec-4d90-4a02-805f-6b26c4d3fbe9",
+        "displayName": "Demo - workload private access guardrails",
+        "definitionId": "${namePrefix}-private-access",
         "majorVersion": "1",
-        "verifiedVersion": "1.2.1",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/Should_Use_PrivateEndpoint_Audit.json",
-        "verificationMethod": "raw-json",
-        "category": "Key Vault",
-        "notes": "The custom public-network-access definition is assigned with the verified Key Vault private-link built-in pinned to 1.*.*."
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Network",
+        "notes": "Includes the custom public-network-access definition and the Key Vault private-link built-in pinned to 1.*.*."
       },
       "supportedEffects": [
         "Audit",
+        "Deny",
         "Disabled"
       ],
       "requiredParameters": [
-        "effect=Audit",
+        "publicNetworkAccessEffect=Audit",
         "serviceCategories=KeyVault"
       ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + workload/critical policy compliance state.",
+      "evidenceSource": "Compiled ARM template + workload/critical private-access initiative assignment and policy compliance state.",
       "notes": "Audit is the safe default. Deny of public network access is an explicit later-enforcement parameter after private endpoint, private DNS, endpoint approval, subnet connectivity, and access validation."
     },
     {

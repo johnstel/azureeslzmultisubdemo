@@ -135,7 +135,7 @@ group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperato
   --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json"
 rbac_negative_template="${TEMP_DIR}/main-permanent-owner.json"
 jq '
-  .resources += [{
+  .resources.__testPermanentOwner = {
     "type": "Microsoft.Authorization/roleAssignments",
     "apiVersion": "2022-04-01",
     "name": "00000000-0000-0000-0000-000000000000",
@@ -143,7 +143,7 @@ jq '
       "principalId": "[parameters('\''governanceAdminsGroupObjectId'\'')]",
       "roleDefinitionId": "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', '\''8e3af657-a8ff-443c-a75c-2fe8c4bcb635'\'')]"
     }
-  }]
+  }
 ' "${TEMP_DIR}/main.json" > "${rbac_negative_template}"
 if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
   --compiled-template "${rbac_negative_template}" \
@@ -157,13 +157,13 @@ if ! printf '%s' "${rbac_validation_output}" | grep -qF 'permanent Owner role as
 fi
 rbac_main_request_fixture="${TEMP_DIR}/main-one-shot-request.json"
 jq '
-  .resources += [{
+  .resources.__testOneShotRequest = {
     "type": "Microsoft.Authorization/roleEligibilityScheduleRequests",
     "apiVersion": "2020-10-01",
     "name": "[guid(subscription().id, '\''reused-request'\'')]",
     "condition": false,
     "properties": {}
-  }]
+  }
 ' "${TEMP_DIR}/main.json" > "${rbac_main_request_fixture}"
 if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
   --compiled-template "${rbac_main_request_fixture}" \
@@ -653,8 +653,30 @@ private_access_and_route_guardrail_count="$(jq '
   printf 'ERROR: Private-access and approved-firewall-route guardrails must remain audit-first, input-gated, and workload/critical scoped.\n' >&2
   exit 1
 }
-rg -q 'privateAccessServiceCategories must contain non-empty, case-insensitively unique Storage and/or KeyVault values' "${PROJECT_DIR}/main.bicep"
+rg -q 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values' "${PROJECT_DIR}/main.bicep"
 rg -q 'approvedFirewallResourceId must be an Azure Firewall resource ID' "${PROJECT_DIR}/main.bicep"
+python3 - "${PROJECT_DIR}/tests/fixtures/firewall-route-input-validation-cases.json" <<'PYEOF'
+import json
+import ipaddress
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    cases = json.load(stream)
+
+for case in cases["ipv4Cases"]:
+    try:
+        valid = isinstance(ipaddress.ip_address(case["value"]), ipaddress.IPv4Address)
+    except ValueError:
+        valid = False
+    if valid != case["valid"]:
+        raise SystemExit(f"ERROR: IPv4 validation case failed: {case['value']}")
+
+for case in cases["serviceCategoryCases"]:
+    values = case["value"]
+    valid = bool(values) and all(value in {"Storage", "KeyVault"} for value in values) and len(values) == len(set(values))
+    if valid != case["valid"]:
+        raise SystemExit(f"ERROR: Private-access category validation case failed: {values}")
+PYEOF
 root_public_ip_assignment_count="$(jq '
   [.resources[]
     | select(.name == "assign-audit-public-ip")

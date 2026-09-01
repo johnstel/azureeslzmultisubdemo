@@ -216,7 +216,7 @@ try {
 
     $rbacNegativeTemplate = Join-Path $TempDir 'main-permanent-owner.json'
     $rbacNegativeJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
-    $rbacNegativeJson.resources += [pscustomobject]@{
+    $rbacNegativeJson.resources | Add-Member -NotePropertyName __testPermanentOwner -NotePropertyValue ([pscustomobject]@{
         type = 'Microsoft.Authorization/roleAssignments'
         apiVersion = '2022-04-01'
         name = '00000000-0000-0000-0000-000000000000'
@@ -224,7 +224,7 @@ try {
             principalId = "[parameters('governanceAdminsGroupObjectId')]"
             roleDefinitionId = "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]"
         }
-    }
+    }) -Force
     $rbacNegativeJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacNegativeTemplate
     $rbacNegativeOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
         -CompiledTemplate $rbacNegativeTemplate `
@@ -238,13 +238,13 @@ try {
     }
     $rbacMainRequestTemplate = Join-Path $TempDir 'main-one-shot-request.json'
     $rbacMainRequestJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
-    $rbacMainRequestJson.resources += [pscustomobject]@{
+    $rbacMainRequestJson.resources | Add-Member -NotePropertyName __testOneShotRequest -NotePropertyValue ([pscustomobject]@{
         type = 'Microsoft.Authorization/roleEligibilityScheduleRequests'
         apiVersion = '2020-10-01'
         name = "[guid(subscription().id, 'reused-request')]"
         condition = $false
         properties = [pscustomobject]@{}
-    }
+    }) -Force
     $rbacMainRequestJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacMainRequestTemplate
     $rbacMainRequestOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
         -CompiledTemplate $rbacMainRequestTemplate `
@@ -856,11 +856,37 @@ exit $LASTEXITCODE
         Stop-Test 'Firewall-route assignment must retain approved-firewall evidence and validate all architecture inputs.'
     }
     foreach ($requiredValidationText in @(
-        'privateAccessServiceCategories must contain non-empty, case-insensitively unique Storage and/or KeyVault values',
+        'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values',
         'approvedFirewallResourceId must be an Azure Firewall resource ID'
     )) {
         if (-not $mainBicepText.Contains($requiredValidationText)) {
             Stop-Test "Guardrail input validation is missing: $requiredValidationText"
+        }
+        $inputValidationFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/firewall-route-input-validation-cases.json') -Raw | ConvertFrom-Json
+        foreach ($case in $inputValidationFixture.ipv4Cases) {
+            $octets = @([string]$case.value -split '\.')
+            $valid = $octets.Count -eq 4
+            foreach ($octet in $octets) {
+                [int]$number = 0
+                if ($octet -notmatch '^\d+$' -or -not [int]::TryParse($octet, [ref]$number) -or $number -gt 255) {
+                    $valid = $false
+                }
+            }
+            if ($valid -ne $case.valid) {
+                Stop-Test "IPv4 validation case failed: $($case.value)"
+            }
+        }
+        foreach ($case in $inputValidationFixture.serviceCategoryCases) {
+            $values = @($case.value)
+            $valid = ($values.Count -gt 0) -and
+                (@($values | Where-Object {
+                    -not [string]::Equals($_, 'Storage', [System.StringComparison]::Ordinal) -and
+                    -not [string]::Equals($_, 'KeyVault', [System.StringComparison]::Ordinal)
+                }).Count -eq 0) -and
+                (@($values | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -eq $values.Count)
+            if ($valid -ne $case.valid) {
+                Stop-Test "Private-access category validation case failed: $($values -join ',')"
+            }
         }
     }
     $firewallRoutePolicy = @($policyDefinitions | Where-Object {
