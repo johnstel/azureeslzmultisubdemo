@@ -1928,6 +1928,12 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($deletionProtectionReference[0].parameters.effect.value -ne "[[parameters('effect')]") {
         Stop-Test 'Key Vault purge protection must follow the reviewed data-protection effect and must never be disabled.'
     }
+    $keyVaultPrivateLinkReference = @($dataProtectionReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'key-vault-private-link-readiness' })
+    $keyVaultPrivateLinkParameterNames = @($keyVaultPrivateLinkReference[0].parameters.PSObject.Properties.Name)
+    if ((Compare-Object $keyVaultPrivateLinkParameterNames @('audit_effect')) -or
+        $keyVaultPrivateLinkReference[0].parameters.audit_effect.value -ne "[[parameters('auditOnlyEffect')]") {
+        Stop-Test 'The Key Vault private-link readiness control must bind the operative audit_effect built-in parameter.'
+    }
 
     # The in-repository customer-managed key control must stay parameterized and
     # must report nothing until the customer supplies an approved key inventory.

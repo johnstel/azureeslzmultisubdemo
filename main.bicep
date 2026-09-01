@@ -629,6 +629,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
         )
         policyDefinitionReferenceId: 'key-vault-private-link-readiness'
         parameters: {
+          // This built-in evaluates audit_effect; its legacy effect parameter is deprecated and unused.
           audit_effect: {
             value: '[parameters(\'auditOnlyEffect\')]'
           }

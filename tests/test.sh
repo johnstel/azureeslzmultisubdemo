@@ -1495,9 +1495,13 @@ jq -e '
   ($initiative.properties.parameters.policyDefinitionReferences.value
     | map(select(.policyDefinitionReferenceId == "key-vault-deletion-protection"))
     | first
-    | .parameters.effect.value) == "[[parameters(\u0027effect\u0027)]"
+    | .parameters.effect.value) == "[[parameters(\u0027effect\u0027)]" and
+  ($initiative.properties.parameters.policyDefinitionReferences.value
+    | map(select(.policyDefinitionReferenceId == "key-vault-private-link-readiness"))
+    | first
+    | .parameters) == { "audit_effect": { "value": "[[parameters(\u0027auditOnlyEffect\u0027)]" } }
 ' "${TEMP_DIR}/main.json" >/dev/null || {
-  printf 'ERROR: Data-protection effects must stay audit-first and must never disable Key Vault purge protection.\n' >&2
+  printf 'ERROR: Data-protection effects must stay audit-first, must never disable Key Vault purge protection, and must bind the operative built-in parameter names.\n' >&2
   exit 1
 }
 
