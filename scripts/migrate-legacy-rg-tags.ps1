@@ -149,7 +149,12 @@ $replacementAssignment = Read-AzureRequired 'the replacement Landing Zones assig
 if ([string]$replacementAssignment.id -ine $replacementAssignmentId) {
     Stop-Migration 'The replacement Landing Zones assignment has an unexpected resource ID.'
 }
-if ([string]$replacementAssignment.policyDefinitionId -ine $replacementInitiativeId) {
+$replacementPolicyDefinitionId = if ($replacementAssignment.PSObject.Properties['policyDefinitionId']) {
+    [string]$replacementAssignment.policyDefinitionId
+} else {
+    [string]$replacementAssignment.properties.policyDefinitionId
+}
+if ($replacementPolicyDefinitionId -ine $replacementInitiativeId) {
     Stop-Migration 'The replacement Landing Zones assignment does not reference the replacement tagging initiative.'
 }
 
@@ -159,8 +164,15 @@ $legacyAssignment = Read-AzureOptional 'legacy workload assignment' 'PolicyAssig
 if ($legacyAssignment.Exists -and [string]$legacyAssignment.Resource.id -ine $legacyAssignmentId) {
     Stop-Migration 'The legacy workload assignment has an unexpected resource ID.'
 }
-if ($legacyAssignment.Exists -and [string]$legacyAssignment.Resource.policyDefinitionId -ine $legacyDefinitionId) {
-    Stop-Migration 'The legacy workload assignment does not reference the exact obsolete custom definition.'
+if ($legacyAssignment.Exists) {
+    $legacyPolicyDefinitionId = if ($legacyAssignment.Resource.PSObject.Properties['policyDefinitionId']) {
+        [string]$legacyAssignment.Resource.policyDefinitionId
+    } else {
+        [string]$legacyAssignment.Resource.properties.policyDefinitionId
+    }
+    if ($legacyPolicyDefinitionId -ine $legacyDefinitionId) {
+        Stop-Migration 'The legacy workload assignment does not reference the exact obsolete custom definition.'
+    }
 }
 $legacyDefinition = Read-AzureOptional 'obsolete custom tag definition' 'PolicyDefinitionNotFound|ResourceNotFound' @(
     'policy', 'definition', 'show', '--name', $legacyDefinitionName, '--management-group', $prefix

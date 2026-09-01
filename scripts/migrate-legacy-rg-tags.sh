@@ -133,7 +133,7 @@ replacement_assignment="$(read_required 'the replacement Landing Zones assignmen
   --name "${legacy_assignment_name}" --scope "${landing_zones_scope}")"
 [[ "$(printf '%s' "${replacement_assignment}" | jq -er '.id | ascii_downcase')" == "$(lower "${replacement_assignment_id}")" ]] \
   || fail 'The replacement Landing Zones assignment has an unexpected resource ID.'
-[[ "$(printf '%s' "${replacement_assignment}" | jq -er '.policyDefinitionId | ascii_downcase')" == "$(lower "${replacement_initiative_id}")" ]] \
+[[ "$(printf '%s' "${replacement_assignment}" | jq -er '(.policyDefinitionId // .properties.policyDefinitionId) | ascii_downcase')" == "$(lower "${replacement_initiative_id}")" ]] \
   || fail 'The replacement Landing Zones assignment does not reference the replacement tagging initiative.'
 
 read_optional 'legacy workload assignment' 'PolicyAssignmentNotFound|ResourceNotFound' \
@@ -143,7 +143,7 @@ legacy_assignment="${READ_JSON}"
 if [[ "${legacy_assignment_exists}" == 'true' ]]; then
   [[ "$(printf '%s' "${legacy_assignment}" | jq -er '.id | ascii_downcase')" == "$(lower "${legacy_assignment_id}")" ]] \
     || fail 'The legacy workload assignment has an unexpected resource ID.'
-  [[ "$(printf '%s' "${legacy_assignment}" | jq -er '.policyDefinitionId | ascii_downcase')" == "$(lower "${legacy_definition_id}")" ]] \
+  [[ "$(printf '%s' "${legacy_assignment}" | jq -er '(.policyDefinitionId // .properties.policyDefinitionId) | ascii_downcase')" == "$(lower "${legacy_definition_id}")" ]] \
     || fail 'The legacy workload assignment does not reference the exact obsolete custom definition.'
 fi
 

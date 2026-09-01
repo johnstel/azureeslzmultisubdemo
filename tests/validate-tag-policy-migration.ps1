@@ -83,7 +83,7 @@ elif command == "policy assignment show --name demo-require-rg-tags --scope " + 
         print("ERROR: (PolicyAssignmentNotFound) replacement assignment missing", file=sys.stderr)
         sys.exit(3)
     replacement_link = demo + "/providers/Microsoft.Authorization/policySetDefinitions/unrelated" if scenario == "replacement-link-wrong" else initiative
-    emit({"id": landing + "/providers/Microsoft.Authorization/policyAssignments/demo-require-rg-tags", "policyDefinitionId": replacement_link})
+    emit({"id": landing + "/providers/Microsoft.Authorization/policyAssignments/demo-require-rg-tags", "properties": {"policyDefinitionId": replacement_link}})
 elif command == "policy assignment show --name demo-require-rg-tags --scope " + workload:
     if scenario in ("assignment-absent", "both-absent"):
         print("ERROR: (PolicyAssignmentNotFound) legacy assignment absent", file=sys.stderr)
@@ -91,7 +91,7 @@ elif command == "policy assignment show --name demo-require-rg-tags --scope " + 
     if scenario == "assignment-read-error":
         print("ERROR: (AuthorizationFailed) access denied", file=sys.stderr)
         sys.exit(3)
-    emit({"id": workload + "/providers/Microsoft.Authorization/policyAssignments/demo-require-rg-tags", "policyDefinitionId": demo + "/providers/Microsoft.Authorization/policyDefinitions/unrelated" if scenario == "wrong-link" else legacy_definition})
+    emit({"id": workload + "/providers/Microsoft.Authorization/policyAssignments/demo-require-rg-tags", "properties": {"policyDefinitionId": demo + "/providers/Microsoft.Authorization/policyDefinitions/unrelated" if scenario == "wrong-link" else legacy_definition}})
 elif command == "policy definition show --name eslz-demo-require-workload-rg-tags --management-group eslz-demo":
     if scenario in ("definition-absent", "both-absent"):
         print("ERROR: (PolicyDefinitionNotFound) legacy definition absent", file=sys.stderr)
