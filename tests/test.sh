@@ -21,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/23 Validate repository versioning and branch guidance...\n'
+printf '1/24 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -32,7 +32,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/23 Build the complete tenant template and validate policy assignment shapes...\n'
+printf '2/24 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -78,7 +78,7 @@ jq -e '
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/23 Validate the ARM parameter template...\n'
+printf '3/24 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -93,14 +93,14 @@ az bicep build-params \
   --outfile "${TEMP_DIR}/main.parameters.json"
 jq -e '.parameters.networkIngressPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
-printf '4/23 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/24 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/23 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+printf '5/24 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
 find_prohibited_paid_declarations() {
   jq -r '
     def prohibited:
@@ -134,13 +134,13 @@ az bicep build \
   exit 1
 }
 
-printf '6/23 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/24 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/23 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+printf '7/24 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 4 ]] || {
   printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
@@ -606,7 +606,7 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/23 Confirm region policy and workload network guardrails are safe by default...\n'
+printf '8/24 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -762,7 +762,7 @@ if forms != {
     raise SystemExit(f"ERROR: Network ingress fixtures do not cover all resource/property forms: {forms}")
 PYEOF
 
-printf '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/24 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -795,7 +795,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/23 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '10/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -811,7 +811,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '11/23 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '11/24 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -835,7 +835,7 @@ landingzones_delete_line_ps1="$(rg -n '\$managementGroups \+= "\$prefix-landingz
   exit 1
 }
 
-printf '12/23 Confirm central monitoring defaults create no metered resources...\n'
+printf '12/24 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -845,23 +845,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "13/23 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "13/24 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '14/23 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '14/24 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '15/23 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '15/24 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '16/23 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '16/24 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -884,7 +884,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '17/23 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '17/24 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -932,7 +932,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '18/23 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '18/24 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
@@ -1003,19 +1003,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '19/23 Validate reusable initiative composition...\n'
+printf '19/24 Validate reusable initiative composition...\n'
 "${SCRIPT_DIR}/validate-initiative-composition.sh"
 
-printf '20/23 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '20/24 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '21/23 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '21/24 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '22/23 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '22/24 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '23/23 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '23/24 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
@@ -1446,5 +1446,108 @@ fi
 rm -f "${CASE_INSENSITIVE_IMG}"
 
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
+
+printf '24/24 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
+control_catalog="${PROJECT_DIR}/policy/control-catalog.json"
+jq -e --slurpfile catalog "${control_catalog}" '
+  def deployment($name):
+    first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
+  def control($id):
+    first($catalog[0].controls[] | select(.id == $id));
+  def definition_id($id):
+    "[tenantResourceId(\u0027Microsoft.Authorization/policySetDefinitions\u0027, \u0027\(control($id).mechanism.definitionId)\u0027)]";
+  def pinned_version($id):
+    "\(control($id).mechanism.majorVersion).*.*";
+  def assigned_at_demo_root($deployment):
+    $deployment.scope | contains("demoRootManagementGroupId");
+  deployment("assign-mcsb-baseline") as $mcsb |
+  deployment("assign-cis-foundations") as $cis |
+  deployment("assign-nist-sp-800-53-r5") as $nist |
+  .parameters.enableMicrosoftCloudSecurityBenchmark.defaultValue == true and
+  .parameters.enableCisAzureFoundationsBenchmark.defaultValue == false and
+  .parameters.enableNistSp80053Rev5.defaultValue == false and
+  $mcsb.condition == "[parameters(\u0027enableMicrosoftCloudSecurityBenchmark\u0027)]" and
+  $cis.condition == "[parameters(\u0027enableCisAzureFoundationsBenchmark\u0027)]" and
+  $nist.condition == "[parameters(\u0027enableNistSp80053Rev5\u0027)]" and
+  assigned_at_demo_root($mcsb) and assigned_at_demo_root($cis) and assigned_at_demo_root($nist) and
+  .variables.microsoftCloudSecurityBenchmarkPolicySetDefinitionId == definition_id("REQ-BASE-01") and
+  .variables.cisAzureFoundationsPolicySetDefinitionId == definition_id("REQ-BASE-02") and
+  .variables.nistSp80053Rev5PolicySetDefinitionId == definition_id("REQ-BASE-03") and
+  $mcsb.properties.parameters.policyDefinitionId.value ==
+    "[variables(\u0027microsoftCloudSecurityBenchmarkPolicySetDefinitionId\u0027)]" and
+  $cis.properties.parameters.policyDefinitionId.value ==
+    "[variables(\u0027cisAzureFoundationsPolicySetDefinitionId\u0027)]" and
+  $nist.properties.parameters.policyDefinitionId.value ==
+    "[variables(\u0027nistSp80053Rev5PolicySetDefinitionId\u0027)]" and
+  $mcsb.properties.parameters.definitionVersion.value == pinned_version("REQ-BASE-01") and
+  $cis.properties.parameters.definitionVersion.value == pinned_version("REQ-BASE-02") and
+  $nist.properties.parameters.definitionVersion.value == pinned_version("REQ-BASE-03") and
+  all(($mcsb, $cis, $nist);
+    .properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]") and
+  all(($mcsb, $cis);
+    all(.properties.template.resources[] | select(.type == "Microsoft.Authorization/policyAssignments");
+      has("identity") | not)) and
+  $nist.properties.parameters.identity.value == {type: "SystemAssigned"} and
+  $nist.properties.parameters.verifiedRoleDefinitionIds.value ==
+    ["[variables(\u0027contributorRoleDefinitionId\u0027)]"] and
+  .variables.contributorRoleDefinitionId == (control("REQ-BASE-03").roleDefinitionIds | first) and
+  .outputs.securityBenchmarkAssignments.value == {
+    microsoftCloudSecurityBenchmark: "[parameters(\u0027enableMicrosoftCloudSecurityBenchmark\u0027)]",
+    cisAzureFoundationsBenchmark: "[parameters(\u0027enableCisAzureFoundationsBenchmark\u0027)]",
+    nistSp80053Rev5: "[parameters(\u0027enableNistSp80053Rev5\u0027)]"
+  }
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Security benchmark assignments do not match the verified control catalog or safe defaults.\n' >&2
+  exit 1
+}
+printf '    Confirm preview or superseded benchmark initiatives are never selected...\n'
+for preview_definition_id in \
+  'e3ec7e09-768c-4b64-882c-fcada3772047' \
+  '60205a79-6280-4e20-a147-e2011e09dc78' \
+  'c3f5c4d9-9a1d-4a99-85c0-7f93e384d5c5'; do
+  if rg -q --glob '*.bicep' --glob '*.bicepparam' "${preview_definition_id}" "${PROJECT_DIR}"; then
+    printf 'ERROR: Preview or superseded benchmark initiative %s must never be assigned.\n' \
+      "${preview_definition_id}" >&2
+    exit 1
+  fi
+done
+if rg -qi 'azure security baseline' --glob '*.bicep' --glob '*.bicepparam' "${PROJECT_DIR}"; then
+  printf 'ERROR: Do not create a duplicate "Azure Security Baseline" initiative; per-service baselines are guidance only.\n' >&2
+  exit 1
+fi
+printf '    Confirm every enabled/disabled benchmark combination compiles with the expected assignments...\n'
+for benchmark_case in 'true,false,false' 'false,false,false' 'true,true,true' 'false,true,false' 'false,false,true'; do
+  mcsb_enabled="${benchmark_case%%,*}"
+  nist_enabled="${benchmark_case##*,}"
+  cis_enabled="${benchmark_case#*,}"
+  cis_enabled="${cis_enabled%%,*}"
+  benchmark_params="${TEMP_DIR}/benchmark-${mcsb_enabled}-${cis_enabled}-${nist_enabled}.bicepparam"
+  sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
+    -e 's/^param enableMicrosoftCloudSecurityBenchmark = .*$/param enableMicrosoftCloudSecurityBenchmark = '"${mcsb_enabled}"'/' \
+    -e 's/^param enableCisAzureFoundationsBenchmark = .*$/param enableCisAzureFoundationsBenchmark = '"${cis_enabled}"'/' \
+    -e 's/^param enableNistSp80053Rev5 = .*$/param enableNistSp80053Rev5 = '"${nist_enabled}"'/' \
+    "${PROJECT_DIR}/parameters/main.template.bicepparam" > "${benchmark_params}"
+  az bicep build-params --file "${benchmark_params}" --outfile "${benchmark_params}.json" >/dev/null
+  jq -e \
+    --argjson mcsb "${mcsb_enabled}" \
+    --argjson cis "${cis_enabled}" \
+    --argjson nist "${nist_enabled}" '
+    .parameters.enableMicrosoftCloudSecurityBenchmark.value == $mcsb and
+    .parameters.enableCisAzureFoundationsBenchmark.value == $cis and
+    .parameters.enableNistSp80053Rev5.value == $nist
+  ' "${benchmark_params}.json" >/dev/null || {
+    printf 'ERROR: Benchmark combination %s did not compile to the expected parameter values.\n' \
+      "${benchmark_case}" >&2
+    exit 1
+  }
+done
+jq -e '
+  .parameters.enableMicrosoftCloudSecurityBenchmark.value == true and
+  .parameters.enableCisAzureFoundationsBenchmark.value == false and
+  .parameters.enableNistSp80053Rev5.value == false
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
+  printf 'ERROR: The ARM parameter template must enable only the stable MCSB baseline by default.\n' >&2
+  exit 1
+}
 
 printf '\nAll local validation and safety tests passed.\n'
