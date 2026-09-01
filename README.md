@@ -110,11 +110,11 @@ $assignmentId = '<tagInheritanceRemediation.policyAssignmentId>'
 'inherit-cost-center', 'inherit-application-name', 'inherit-owner',
 'inherit-environment', 'inherit-data-classification', 'inherit-ssp-id' |
     ForEach-Object {
-        az policy remediation create `
-            --management-group $landingZonesManagementGroup `
-            --name "tag-$_" `
-            --policy-assignment $assignmentId `
-            --definition-reference-id $_
+        New-AzPolicyRemediation `
+            -ManagementGroupName $landingZonesManagementGroup `
+            -Name "tag-$_" `
+            -PolicyAssignmentId $assignmentId `
+            -PolicyDefinitionReferenceId $_
     }
 ```
 
