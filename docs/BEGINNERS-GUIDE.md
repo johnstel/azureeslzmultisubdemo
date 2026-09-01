@@ -488,6 +488,7 @@ Open `parameters/demo.parameters.json` in a text editor. Replace all
 | `workloadContributorsGroupObjectId` | Workload contributors security-group Object ID |
 | `readOnlyAuditorsGroupObjectId` | Auditors security-group Object ID |
 | `denyPolicyEnforcementMode` | Keep `DoNotEnforce` for the first deployment |
+| `networkIngressPolicyEffect` | Keep `Audit`; `Deny` requires reviewed paths and exemptions |
 | `deployRoleAssignments` | Keep `false` for the first deployment |
 | `deployEvidenceResources` | Keep `false` for the first deployment |
 | `evidenceLocation` | Approved region for the optional VNet/NSG, such as `eastus2` |
@@ -499,6 +500,9 @@ Keep these exact values initially:
 ```json
 "denyPolicyEnforcementMode": {
   "value": "DoNotEnforce"
+},
+"networkIngressPolicyEffect": {
+  "value": "Audit"
 },
 "deployRoleAssignments": {
   "value": false
@@ -654,7 +658,27 @@ This reports `Microsoft.Network/publicIPAddresses` resources. It audits rather
 than blocks. It is a simple demonstration signal, not a complete network
 security assessment.
 
-### 3. Block common expensive services and VM sizes
+### 3. Audit workload network ingress
+
+Scope: Corp or Online workload branch only.
+
+The network-ingress initiative reports inbound NSG rules that expose SSH
+(`22`) or RDP (`3389`) through `*`, `Internet`, `0.0.0.0/0`, or an arbitrary
+public IPv4 host/CIDR. It parses exact, wildcard, and numeric destination
+ranges, covers singular/plural properties on inline and child rules, and
+excludes private/non-routable IPv4 ranges and supported Azure service tags.
+Malformed or unknown values do not become public matches. It also reports
+workload subnets without an NSG. It accepts a later `Deny` effect, but both the
+effect and assignment default remain safe (`Audit` and `DoNotEnforce`).
+Platform and Connectivity are intentionally outside the assignment. Use
+private approved management paths; any exceptional public path or
+special-purpose workload subnet must have a documented, time-bound Azure
+Policy exemption approved through the governance process.
+
+The hierarchy-wide public-IP audit described above is reused unchanged rather
+than copied into this workload initiative.
+
+### 4. Block common expensive services and VM sizes
 
 Scope: demo root and descendants.
 
@@ -665,13 +689,13 @@ in `DoNotEnforce`.
 
 This is a demo guardrail, not a complete cost-management program.
 
-### 4. Audit Platform tags
+### 5. Audit Platform tags
 
 Scope: Platform branch.
 
 Taggable Platform resources are audited for `Owner` and `CostCenter`.
 
-### 5. Require workload resource-group tags
+### 6. Require workload resource-group tags
 
 Scope: Corp or Online workload branch.
 

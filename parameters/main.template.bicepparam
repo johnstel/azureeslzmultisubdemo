@@ -13,6 +13,7 @@ param networkOperatorsGroupObjectId = 'REPLACE_WITH_NETWORK_OPERATORS_GROUP_OBJE
 param workloadContributorsGroupObjectId = 'REPLACE_WITH_WORKLOAD_CONTRIBUTORS_GROUP_OBJECT_GUID'
 param readOnlyAuditorsGroupObjectId = 'REPLACE_WITH_READ_ONLY_AUDITORS_GROUP_OBJECT_GUID'
 param denyPolicyEnforcementMode = 'DoNotEnforce'
+param networkIngressPolicyEffect = 'Audit'
 param deployRoleAssignments = false
 param deployEvidenceResources = false
 param evidenceLocation = 'eastus2'
