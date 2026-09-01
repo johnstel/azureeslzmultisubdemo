@@ -56,6 +56,10 @@ param customerAllowedVmSkus = [
   'Standard_B2ms'
 ]
 param networkIngressPolicyEffect = 'Audit'
+param dataProtectionPolicyEffect = 'Audit'
+param storageMinimumTlsVersion = 'TLS1_2'
+param approvedCustomerManagedKeyVaultUris = []
+param approvedCustomerManagedKeyNames = []
 param deployRoleAssignments = false
 param deployEvidenceResources = false
 param evidenceLocation = 'eastus2'

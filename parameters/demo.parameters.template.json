@@ -90,6 +90,18 @@
     "networkIngressPolicyEffect": {
       "value": "Audit"
     },
+    "dataProtectionPolicyEffect": {
+      "value": "Audit"
+    },
+    "storageMinimumTlsVersion": {
+      "value": "TLS1_2"
+    },
+    "approvedCustomerManagedKeyVaultUris": {
+      "value": []
+    },
+    "approvedCustomerManagedKeyNames": {
+      "value": []
+    },
     "deployRoleAssignments": {
       "value": false
     },

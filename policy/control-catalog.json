@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "catalogVersion": "1.1.0",
+  "catalogVersion": "1.2.0",
   "generatedOn": "2026-09-01",
   "purpose": "Authoritative v2 mapping from each customer requirement to its implementation mechanism (Azure Policy built-in/custom definition or initiative, Entra/PIM artifact, Defender CSPM/CIEM feature, shared-service architecture pattern, or manual evidence process) before v2 policy code is expanded. Sourced from public Microsoft Learn and the Azure/azure-policy GitHub repository; no tenant credentials were used.",
   "sourceIssue": "https://github.com/johnstel/azureeslzmultisubdemo/issues/3",
@@ -25,7 +25,8 @@
     "REQ-DEF-01 (\"Configure Microsoft Defender for Cloud plans\") is an all-or-nothing initiative: it exposes no assignment-time parameters, so assigning it enables all 12 member Defender plans immediately with no per-plan opt-out. It is **not safe** for this repository's audit-first/no-cost demo default profile and is documented for completeness only. Each plan must instead be independently enabled via its own verified, individually assignable policy definition (REQ-DEF-02 through REQ-DEF-04), which does expose its own `effect` parameter (`DeployIfNotExists`/`Disabled`) that can be explicitly overridden at assignment time. REQ-DEF-01's `roleDefinitionIds` remains a complete verified union (Owner + Security Admin) across all 12 members (`rolesVaryByMember: true`) for reference only.",
     "REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).",
     "REQ-DEF-06 is a no-cost audit signal from the free Foundational CSPM tier. It does not deploy a vulnerability scanner or enable any paid Defender plan.",
-    "REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship."
+    "REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship.",
+    "Customer-managed key (CMK) controls (REQ-DATA-08, REQ-DATA-09, REQ-DATA-13) are service-specific and audit-first, never a blanket deny across every Azure service. Using a CMK adds customer-owned dependencies that Azure Policy cannot satisfy: a managed identity with get/wrapKey/unwrapKey access to the key, a key rotation process, key availability (a deleted, disabled, expired, or purged key makes the encrypted data unreadable), soft delete and purge protection for recovery (REQ-DATA-05 and REQ-DATA-06; purge protection must never be disabled once enabled), and private-network reachability of the vault when public network access is restricted (REQ-DATA-11 audits vault network configuration and REQ-NET-04/REQ-NET-05 audit private-link readiness; none of them deploy a private endpoint, DNS zone, key, or identity)."
   ],
   "controls": [
     {
@@ -1327,7 +1328,7 @@
       "mechanism": {
         "kind": "service-specific-audit-policy",
         "builtIn": false,
-        "displayName": "Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) \u2014 not yet selected",
+        "displayName": "Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) — not yet selected",
         "definitionId": null,
         "sourceUrl": null,
         "verifiedOn": "2026-08-31",
@@ -1380,7 +1381,114 @@
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state.",
-      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. No remediation identity is needed \u2014 the policy only audits/denies the account setting, it does not deploy or modify resources."
+      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. No remediation identity is needed — the policy only audits/denies the account setting, it does not deploy or modify resources."
+    },
+    {
+      "id": "REQ-DATA-11",
+      "domain": "data-protection",
+      "customerRequirement": "Restrict Key Vault network access by requiring the vault firewall or disabled public network access (issue #14 Key Vault network posture).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Azure Key Vault should have firewall enabled or public network access disabled",
+        "definitionId": "55615ac9-af46-4a59-874e-391cc3dfb490",
+        "majorVersion": "3",
+        "verifiedVersion": "3.3.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/FirewallEnabled_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Key Vault",
+        "notes": "Audits the vault's own networkAcls.defaultAction and publicNetworkAccess settings. It does not deploy a private endpoint, private DNS zone, or virtual network, so it must not be described as delivering private connectivity; REQ-NET-05 remains the separate private-link readiness audit."
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Defaults to Audit. The optional restrictIPAddresses/allowedIPAddresses/forbiddenIPAddresses parameters are left at their built-in defaults because this repository does not maintain a customer IP allowlist."
+    },
+    {
+      "id": "REQ-DATA-12",
+      "domain": "data-protection",
+      "customerRequirement": "Audit Key Vault diagnostics readiness by confirming that Key Vault resource logs are enabled (issue #14 Key Vault diagnostics posture).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Resource logs in Key Vault should be enabled",
+        "definitionId": "cf820ca0-f99e-4f3e-84fb-66e913812d21",
+        "majorVersion": "5",
+        "verifiedVersion": "5.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Key%20Vault/AuditDiagnosticLog_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Key Vault",
+        "notes": "AuditIfNotExists only; it never creates a diagnostic setting, storage account, or Log Analytics workspace, so it adds no ingestion cost and needs no remediation identity."
+      },
+      "supportedEffects": [
+        "AuditIfNotExists",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Complements, rather than duplicates, REQ-LOG-02: this record is the audit-only readiness signal for Key Vault, while REQ-LOG-02 remains the explicit opt-in DeployIfNotExists remediation path. The built-in's requiredRetentionDays parameter is left at its built-in default."
+    },
+    {
+      "id": "REQ-DATA-13",
+      "domain": "data-protection",
+      "customerRequirement": "Audit that storage customer-managed keys come from the customer-approved Key Vault(s) and key name(s) supplied as parameters (issue #14 CMK dependency).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": false,
+        "displayName": "Demo - audit storage customer-managed keys against approved Key Vaults and keys",
+        "definitionId": "${namePrefix}-audit-storage-cmk-approved-key",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Storage",
+        "notes": "Each approved list is evaluated only when it is non-empty, so the safe default (two empty arrays) reports nothing. The definition never creates a Key Vault, key, identity, or role assignment."
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect",
+        "approvedKeyVaultUris",
+        "approvedKeyNames"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-DATA-05",
+        "REQ-DATA-06",
+        "REQ-DATA-08"
+      ],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state for the approved customer-managed key audit, plus the customer-supplied approved Key Vault URI and key-name inventory.",
+      "notes": "The built-in REQ-DATA-08 audit only checks that encryption.keySource is Microsoft.Keyvault; it cannot check which vault or key was used. This custom definition closes that gap without claiming key rotation, availability, recovery, identity access, or private-network connectivity, which stay customer-owned dependencies."
     },
     {
       "id": "REQ-BASE-01",
@@ -1449,7 +1557,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 108 total member policy references, computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01 (validating that each member's effect-named parameter actually references an existing top-level initiative parameter, not just counting top-level parameter names). Applying this method: 106 of 108 members are effect-mapped and 2 are fixed/unexposed at the initiative level -- policyDefinitionReferenceId 06a78e20-9358-41c9-923c-fb736d382a4d ('Audit VMs that do not use managed disks', file VMRequireManagedDisk_Audit.json) and b6e2945c-0b7b-40f5-9233-7a5323b5cdc6 (file NetworkWatcher_Enabled_Audit.json); both were fetched directly and confirmed fixed at a plain Audit effect. No DeployIfNotExists/Modify (remediation-capable) member exists in this initiative; remediationIdentityRequired is therefore false and no roleDefinitionIds are required.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB — avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 108 total member policy references, computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01 (validating that each member's effect-named parameter actually references an existing top-level initiative parameter, not just counting top-level parameter names). Applying this method: 106 of 108 members are effect-mapped and 2 are fixed/unexposed at the initiative level -- policyDefinitionReferenceId 06a78e20-9358-41c9-923c-fb736d382a4d ('Audit VMs that do not use managed disks', file VMRequireManagedDisk_Audit.json) and b6e2945c-0b7b-40f5-9233-7a5323b5cdc6 (file NetworkWatcher_Enabled_Audit.json); both were fetched directly and confirmed fixed at a plain Audit effect. No DeployIfNotExists/Modify (remediation-capable) member exists in this initiative; remediationIdentityRequired is therefore false and no roleDefinitionIds are required.",
       "rolesVaryByMember": false
     },
     {
@@ -1720,7 +1828,7 @@
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier (always on), not by a paid Defender plan.",
-      "notes": "Deliberately independent of REQ-DEF-02..04 (paid Defender plans): this policy only audits Microsoft.Security/assessments for a vulnerability-assessment finding \u2014 it neither deploys a scanner nor requires a paid plan to be assigned, so it stays no-cost-safe and does not duplicate the paid-plan controls (issue #20). Defaults AuditIfNotExists, which is already safe, so no explicit effect override is required by requiredParameters."
+      "notes": "Deliberately independent of REQ-DEF-02..04 (paid Defender plans): this policy only audits Microsoft.Security/assessments for a vulnerability-assessment finding — it neither deploys a scanner nor requires a paid plan to be assigned, so it stays no-cost-safe and does not duplicate the paid-plan controls (issue #20). Defaults AuditIfNotExists, which is already safe, so no explicit effect override is required by requiredParameters."
     },
     {
       "id": "REQ-BKP-01",
@@ -2071,6 +2179,14 @@
     {
       "topic": "Recovery Services vault diagnostics",
       "note": "REQ-BKP-07 reuses REQ-LOG-02's existing ~140-member resource-diagnostics initiative (Microsoft.RecoveryServices/vaults confirmed as a member resource type) rather than creating a duplicate, backup-specific diagnostic-settings policy definition."
+    },
+    {
+      "topic": "Key Vault network access vs. private-link readiness",
+      "note": "REQ-DATA-11 audits the Key Vault's own firewall/public-network-access configuration, while REQ-NET-05 audits private-link readiness. They are complementary signals and neither deploys a private endpoint, so a compliant REQ-DATA-11 result must not be reported as private connectivity."
+    },
+    {
+      "topic": "Key Vault diagnostics readiness vs. diagnostics remediation",
+      "note": "REQ-DATA-12 is the audit-only Key Vault resource-log readiness signal; REQ-LOG-02 remains the opt-in DeployIfNotExists remediation that actually creates diagnostic settings. Assign REQ-DATA-12 for evidence without enabling remediation, and do not treat the two as duplicate enforcement."
     }
   ]
 }
