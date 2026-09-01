@@ -329,7 +329,12 @@ the migration; preview mode performs no Azure operation:
 ./scripts/migrate-legacy-rg-tags.sh parameters/demo.parameters.json
 ```
 
-Only after approval, execute with the separate migration confirmation:
+Only after the replacement is approved, execute with the separate migration
+confirmation. Execution first performs read-only checks of the active tenant
+and subscription, both supplied subscriptions, exact management-group ancestry,
+the legacy assignment-definition link, and the replacement initiative and
+Landing Zones assignment. It prompts for the validated
+`<tenantId>/<namePrefix>-<workloadArchetype>` only after those checks pass:
 
 ```powershell
 $env:ESLZ_TAG_MIGRATION_CONFIRMATION = "REMOVE-LEGACY-RG-TAG-POLICY"
@@ -343,7 +348,10 @@ export ESLZ_TAG_MIGRATION_CONFIRMATION="REMOVE-LEGACY-RG-TAG-POLICY"
 
 The scripts remove only `demo-require-rg-tags` at the legacy workload
 management-group scope and `<namePrefix>-require-workload-rg-tags` at the demo
-root. They are never called automatically by preview or deployment scripts.
+root. Each artifact is checked independently, so an already-absent assignment
+does not prevent definition cleanup; only verified not-found responses are
+treated as complete. All other read errors stop the migration. The scripts are
+never called automatically by preview, deployment, or teardown scripts.
 
 ## Teardown
 

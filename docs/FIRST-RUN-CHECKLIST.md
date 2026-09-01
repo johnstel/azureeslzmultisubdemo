@@ -171,8 +171,12 @@ Skip this section for a first deployment. For an upgraded deployment:
       scope and `<namePrefix>-require-workload-rg-tags` at the demo root.
 
 Preview with `migrate-legacy-rg-tags.ps1` or `migrate-legacy-rg-tags.sh`.
-Execution additionally requires `ESLZ_TAG_MIGRATION_CONFIRMATION` to equal
-`REMOVE-LEGACY-RG-TAG-POLICY` and an interactive workload-scope confirmation.
+Execution first validates the active tenant/subscription, both supplied
+subscriptions, exact management-group ancestry, legacy policy relationship,
+and replacement initiative/assignment. Only then does it require
+`ESLZ_TAG_MIGRATION_CONFIRMATION` to equal
+`REMOVE-LEGACY-RG-TAG-POLICY` and the interactive
+`<tenantId>/<namePrefix>-<workloadArchetype>` confirmation.
 
 ## 10. Teardown
 
