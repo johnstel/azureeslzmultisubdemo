@@ -59,6 +59,7 @@ root:
 | Demo root | Block common costly service types and VM SKUs outside an intentionally small allowlist | Deny assignment in `DoNotEnforce` |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
+| Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -66,6 +67,16 @@ safe shape of Azure's built-in allowed-locations control. Resource groups are
 governed separately by workload tag policy. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
 policy impact.
+
+The workload network-ingress initiative recognizes `*`, `Internet`,
+`0.0.0.0/0`, and arbitrary public IPv4 host/CIDR source values in singular and
+array NSG aliases. Private, non-routable/reserved IPv4 ranges and supported
+Azure service tags are not treated as public. TCP or any-protocol destination
+ranges are parsed so ranges containing `22` or `3389` are detected alongside
+exact and wildcard ports. It is not assigned to Platform or Connectivity.
+Exceptional public paths or special-purpose workload subnets must use a
+documented, time-bound Azure Policy exemption. The existing demo-root
+public-IP audit remains the only public-IP resource control.
 
 ### Reusable initiative composition
 

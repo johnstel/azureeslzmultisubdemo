@@ -1,0 +1,201 @@
+{
+  "nonPublicIpv4Ranges": [
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.88.99.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4"
+  ],
+  "supportedServiceTags": [
+    "VirtualNetwork",
+    "AzureLoadBalancer",
+    "GatewayManager"
+  ],
+  "cases": [
+    {
+      "name": "child public host exact SSH",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["8.8.8.8/32"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "inline public CIDR range contains SSH",
+      "shape": "inline",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["1.1.1.0/24"],
+      "destinationPorts": ["20-23"],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "inline public CIDR range contains RDP",
+      "shape": "inline",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "*",
+      "sourcePrefixes": ["8.8.4.0/24"],
+      "destinationPorts": ["3000-4000"],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "child Internet plural destination range",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["Internet"],
+      "destinationForm": "plural",
+      "destinationPorts": ["443", "3389-3390"],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "inline plural sources include public host",
+      "shape": "inline",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourceForm": "plural",
+      "sourcePrefixes": ["10.2.0.0/16", "9.9.9.9/32"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "child wildcard source port and protocol",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "*",
+      "sourcePrefixes": ["*"],
+      "destinationPorts": ["*"],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "private CIDR is approved path",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["10.20.0.0/16"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "private plural sources are approved paths",
+      "shape": "inline",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourceForm": "plural",
+      "sourcePrefixes": ["172.16.4.0/24", "192.168.2.2/32"],
+      "destinationPorts": ["3389"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "reserved documentation CIDR is not public",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["198.51.100.0/24"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "supported service tags are not public",
+      "shape": "inline",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourceForm": "plural",
+      "sourcePrefixes": ["VirtualNetwork", "AzureLoadBalancer"],
+      "destinationForm": "plural",
+      "destinationPorts": ["22", "3389"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "public source without management port",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["8.8.8.8/32"],
+      "destinationPorts": ["80-443"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "UDP management port is outside TCP guardrail",
+      "shape": "inline",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Udp",
+      "sourcePrefixes": ["8.8.8.8/32"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "outbound management rule is outside ingress guardrail",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Outbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["8.8.8.8/32"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "deny rule is compliant",
+      "shape": "inline",
+      "access": "Deny",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["8.8.8.8/32"],
+      "destinationPorts": ["3389"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "unknown source token fails closed without false positive",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["UnknownServiceTag"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "malformed numeric source fails closed without false positive",
+      "shape": "inline",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["999.1.1.1/99"],
+      "destinationPorts": ["22"],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "malformed destination range fails closed without false positive",
+      "shape": "child",
+      "access": "Allow",
+      "direction": "Inbound",
+      "protocol": "Tcp",
+      "sourcePrefixes": ["8.8.8.8/32"],
+      "destinationPorts": ["twenty-two"],
+      "expectedNonCompliant": false
+    }
+  ]
+}
