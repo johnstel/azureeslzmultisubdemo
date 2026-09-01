@@ -117,6 +117,7 @@ if ($null -ne $criticalSubscriptionsProperty -and $null -ne $criticalSubscriptio
 
 $demoRootScope = "/providers/Microsoft.Management/managementGroups/$prefix"
 $platformScope = "/providers/Microsoft.Management/managementGroups/$prefix-platform"
+$landingZonesScope = "/providers/Microsoft.Management/managementGroups/$prefix-landingzones"
 $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$archetype"
 $connectivityScope = "/subscriptions/$connectivitySubscription"
 $subscriptionWorkloadScope = "/subscriptions/$workloadSubscription"
@@ -183,7 +184,7 @@ if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
     Write-Host "NOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group $existingWorkspaceResourceGroup in subscription $existingWorkspaceSubscription is protected and will never be deleted by this script, even if its name collides with a group above."
 }
 Write-Host '  2. Delete only the seven demo role assignments for the five groups at their documented scopes.'
-Write-Host '  3. Delete demo policy assignments and the five custom policy definitions.'
+Write-Host '  3. Delete demo policy assignments, the tagging initiative, and custom policy definitions.'
 Write-Host "  4. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
 $stepNumber = 5
 if ($criticalEnabled -and $criticalSubscriptions.Count -gt 0) {
@@ -262,7 +263,8 @@ Remove-RoleMapping $networkGroup 'Network Contributor' $connectivityScope
 Remove-RoleMapping $ownersGroup 'Owner' $subscriptionWorkloadScope
 Remove-RoleMapping $workloadGroup 'Contributor' $subscriptionWorkloadScope
 
-Remove-PolicyAssignment 'demo-require-workload-rg-tags' $workloadScope
+Remove-PolicyAssignment 'demo-require-rg-tags' $landingZonesScope
+Remove-PolicyAssignment 'demo-require-rg-tags' $workloadScope
 Remove-PolicyAssignment 'demo-audit-platform-tags' $platformScope
 Remove-PolicyAssignment 'demo-block-expensive' $demoRootScope
 Remove-PolicyAssignment 'demo-audit-public-ip' $demoRootScope
@@ -278,6 +280,7 @@ $policyNames = @(
 foreach ($policyName in $policyNames) {
     & az policy definition delete --name $policyName --management-group $prefix 2>$null
 }
+& az policy set-definition delete --name "$prefix-required-rg-tags" --management-group "$prefix-landingzones" 2>$null
 
 & az account management-group subscription add --name $tenantRoot --subscription $connectivitySubscription
 if ($LASTEXITCODE -ne 0) { Stop-Teardown 'Failed to move the connectivity subscription.' }

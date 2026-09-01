@@ -291,6 +291,7 @@ if command -v pwsh >/dev/null 2>&1; then
 fi
 
 printf '18/23 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+"${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done

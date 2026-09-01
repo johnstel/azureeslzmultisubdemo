@@ -314,6 +314,37 @@ The script runs preflight and what-if again before asking for an interactive
 confirmation. It then creates a named tenant deployment. Do not use the script
 against production subscriptions.
 
+## Migrate the legacy resource-group tag policy
+
+Existing deployments may retain the former workload-scoped assignment and
+custom definition after the replacement Landing Zones initiative is deployed.
+First review what-if, deploy the replacement, and obtain approval. Then preview
+the migration; preview mode performs no Azure operation:
+
+```powershell
+.\scripts\migrate-legacy-rg-tags.ps1 -ParameterFile .\parameters\demo.parameters.json
+```
+
+```bash
+./scripts/migrate-legacy-rg-tags.sh parameters/demo.parameters.json
+```
+
+Only after approval, execute with the separate migration confirmation:
+
+```powershell
+$env:ESLZ_TAG_MIGRATION_CONFIRMATION = "REMOVE-LEGACY-RG-TAG-POLICY"
+.\scripts\migrate-legacy-rg-tags.ps1 -ParameterFile .\parameters\demo.parameters.json -Execute
+```
+
+```bash
+export ESLZ_TAG_MIGRATION_CONFIRMATION="REMOVE-LEGACY-RG-TAG-POLICY"
+./scripts/migrate-legacy-rg-tags.sh parameters/demo.parameters.json --execute
+```
+
+The scripts remove only `demo-require-rg-tags` at the legacy workload
+management-group scope and `<namePrefix>-require-workload-rg-tags` at the demo
+root. They are never called automatically by preview or deployment scripts.
+
 ## Teardown
 
 Teardown is not automatic because subscription movement, RBAC, policy, and
