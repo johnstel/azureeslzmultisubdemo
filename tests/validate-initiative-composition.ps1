@@ -121,7 +121,7 @@ try {
     $groups = @($exampleDeployment.properties.parameters.policyDefinitionGroups.value)
     Assert-Test ($references.Count -eq 2) 'Example must combine exactly one built-in and one custom definition.'
     $referenceIds = @($references | ForEach-Object { [string]$_.policyDefinitionReferenceId })
-    Assert-Test (($referenceIds | Where-Object { $_.Length -eq 0 }).Count -eq 0) 'Example reference IDs must be non-empty.'
+    Assert-Test (@($referenceIds | Where-Object { $_.Length -eq 0 }).Count -eq 0) 'Example reference IDs must be non-empty.'
     $uniqueReferenceIds = @($referenceIds | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique)
     Assert-Test ($uniqueReferenceIds.Count -eq $referenceIds.Count) 'Example reference IDs must be case-insensitively unique.'
     Assert-Test (@($groups | Where-Object { $_.name -eq 'deployment-visibility' }).Count -eq 1) 'Example must define its reference group.'
@@ -172,7 +172,8 @@ finally {
     if (Test-Path -LiteralPath $TempDir) {
         Remove-Item -LiteralPath $TempDir -Recurse -Force
     }
-    if (Test-Path -LiteralPath $ArtifactsParent) {
+    if ((Test-Path -LiteralPath $ArtifactsParent) -and
+        @(Get-ChildItem -LiteralPath $ArtifactsParent -Force).Count -eq 0) {
         Remove-Item -LiteralPath $ArtifactsParent -ErrorAction SilentlyContinue
     }
 }

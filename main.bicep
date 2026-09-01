@@ -82,11 +82,13 @@ param customerAllowedResourceTypes array = [
   'Microsoft.Compute/virtualMachines/extensions'
   'Microsoft.Insights/diagnosticSettings'
   'Microsoft.ManagedIdentity/userAssignedIdentities'
+  'Microsoft.Network/networkInterfaces'
   'Microsoft.Network/networkSecurityGroups'
   'Microsoft.Network/privateDnsZones'
   'Microsoft.Network/privateDnsZones/virtualNetworkLinks'
   'Microsoft.Network/privateEndpoints'
   'Microsoft.Network/privateEndpoints/privateDnsZoneGroups'
+  'Microsoft.Network/publicIPAddresses'
   'Microsoft.Network/virtualNetworks'
   'Microsoft.Network/virtualNetworks/subnets'
   'Microsoft.OperationalInsights/workspaces'
@@ -240,6 +242,7 @@ module rootDeploymentRestrictions 'modules/root-deployment-restrictions.bicep' =
   params: {
     namePrefix: namePrefix
     auditPublicIpPolicyDefinitionId: policyLibrary.outputs.auditPublicIpPolicyDefinitionId
+    allowedResourceTypesPolicyDefinitionId: policyLibrary.outputs.allowedResourceTypesAllPolicyDefinitionId
     allowedLocations: customerAllowedLocations
     allowedResourceTypes: customerAllowedResourceTypes
     allowedVmSkus: customerAllowedVmSkus

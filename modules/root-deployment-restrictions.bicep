@@ -9,6 +9,10 @@ param namePrefix string
 @minLength(1)
 param auditPublicIpPolicyDefinitionId string
 
+@description('Full resource ID of the in-repository mode All allowed-resource-types policy definition.')
+@minLength(1)
+param allowedResourceTypesPolicyDefinitionId string
+
 @description('Change-controlled Azure regions allowed by the customer deployment profile.')
 @minLength(1)
 param allowedLocations string[]
@@ -27,10 +31,6 @@ param enforcementMode 'Default' | 'DoNotEnforce' = 'DoNotEnforce'
 var allowedLocationsPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
   'e56962a6-4747-49cd-b67b-bf8b01975c4c'
-)
-var allowedResourceTypesPolicyDefinitionId = tenantResourceId(
-  'Microsoft.Authorization/policyDefinitions',
-  'a08ec900-254a-4555-9bf5-e42af04b5c5c'
 )
 var allowedVmSkusPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
@@ -101,11 +101,8 @@ module initiative 'policy-initiative.bicep' = {
         policyDefinitionId: allowedResourceTypesPolicyDefinitionId
         policyDefinitionReferenceId: 'allowed-resource-types'
         parameters: {
-          listOfResourceTypesAllowed: {
+          allowedResourceTypes: {
             value: '[parameters(\'allowedResourceTypes\')]'
-          }
-          effect: {
-            value: 'Deny'
           }
         }
         groupNames: [

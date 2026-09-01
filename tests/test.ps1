@@ -43,6 +43,36 @@ function Find-JsonObjects {
     return $results
 }
 
+function Find-ProhibitedPaidDeclarations {
+    param($Node)
+    $results = @()
+    if ($null -eq $Node) {
+        return $results
+    }
+    if ($Node -is [System.Management.Automation.PSCustomObject]) {
+        $typeProperty = $Node.PSObject.Properties['type']
+        $apiVersionProperty = $Node.PSObject.Properties['apiVersion']
+        $nameProperty = $Node.PSObject.Properties['name']
+        if ($typeProperty -and $typeProperty.Value -eq 'Microsoft.Resources/deployments' -and
+            $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel')) {
+            return $results
+        }
+        $prohibitedPattern = '^Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$'
+        if ($typeProperty -and $apiVersionProperty -and $typeProperty.Value -match $prohibitedPattern) {
+            $results += $typeProperty.Value
+        }
+        foreach ($property in $Node.PSObject.Properties) {
+            $results += Find-ProhibitedPaidDeclarations -Node $property.Value
+        }
+    }
+    elseif ($Node -is [System.Collections.IEnumerable] -and $Node -isnot [string]) {
+        foreach ($item in $Node) {
+            $results += Find-ProhibitedPaidDeclarations -Node $item
+        }
+    }
+    return $results
+}
+
 try {
     if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
         Stop-Test 'Azure CLI is required for Bicep validation.'
@@ -111,16 +141,17 @@ try {
     }
 
     Write-Host '5/23 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
-    $bicepFiles = @(
-        Get-Item (Join-Path $ProjectDir 'main.bicep')
-        Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
-            Where-Object { $_.Name -notin @('policy-library.bicep', 'central-monitoring.bicep', 'central-monitoring-workspace.bicep', 'central-monitoring-sentinel.bicep') }
-    )
-    $prohibitedPattern = 'Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)'
-    foreach ($bicepFile in $bicepFiles) {
-        if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match $prohibitedPattern) {
-            Stop-Test "A prohibited evidence resource type is declared in $($bicepFile.Name)."
-        }
+    if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
+        Stop-Test 'A prohibited evidence resource type is declared.'
+    }
+    $paidResourceFixture = Join-Path $TempDir 'paid-resource-declaration.json'
+    & az bicep build `
+        --file (Join-Path $ScriptDir 'fixtures/paid-resource-declaration.bicep') `
+        --outfile $paidResourceFixture
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Paid-resource declaration fixture build failed.' }
+    $paidResourceFixtureJson = Get-Content -LiteralPath $paidResourceFixture -Raw | ConvertFrom-Json
+    if (@(Find-ProhibitedPaidDeclarations -Node $paidResourceFixtureJson).Count -eq 0) {
+        Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
     Write-Host '6/23 Confirm tenant-root scope is only used as the parent hierarchy input...'
