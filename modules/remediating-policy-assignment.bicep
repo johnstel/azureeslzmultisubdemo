@@ -31,6 +31,23 @@ type ResourceSelector = {
   selectors: Selector[]
 }
 
+@sealed()
+type SystemAssignedIdentity = {
+  type: 'SystemAssigned'
+}
+
+@sealed()
+type UserAssignedIdentity = {
+  type: 'UserAssigned'
+  @minLength(1)
+  resourceId: string
+  @minLength(1)
+  principalId: string
+}
+
+@discriminator('type')
+type RemediationIdentity = SystemAssignedIdentity | UserAssignedIdentity
+
 @sys.description('Policy assignment resource name.')
 @minLength(1)
 @maxLength(24)
@@ -54,14 +71,8 @@ param policyDefinitionId string
 @minLength(1)
 param location string
 
-@sys.description('Managed identity type for remediation. UserAssigned requires both user-assigned identity values.')
-param identityType 'SystemAssigned' | 'UserAssigned'
-
-@sys.description('Full resource ID of the supplied user-assigned managed identity. Must be empty for SystemAssigned.')
-param userAssignedIdentityResourceId string = ''
-
-@sys.description('Principal ID of the supplied user-assigned managed identity. Must be empty for SystemAssigned.')
-param userAssignedIdentityPrincipalId string = ''
+@sys.description('Managed identity configuration for remediation. UserAssigned requires the identity resource and principal IDs.')
+param identity RemediationIdentity
 
 @sys.description('Verified built-in role definition IDs required by the assigned policy or initiative.')
 @minLength(1)
@@ -115,14 +126,14 @@ var validatedLocation = !empty(trim(location)) && toLower(trim(location)) != 'gl
   ? trim(location)
   : fail('location must be a non-global Azure region.')
 
+var userAssignedIdentityResourceId = identity.?resourceId ?? ''
+var userAssignedIdentityPrincipalId = identity.?principalId ?? ''
 var userAssignedIdentityParts = split(userAssignedIdentityResourceId, '/')
 var validUserAssignedIdentityResourceId = length(userAssignedIdentityParts) == 9 ? toLower(userAssignedIdentityParts[1]) == 'subscriptions' && isGuid(userAssignedIdentityParts[2]) && toLower(userAssignedIdentityParts[3]) == 'resourcegroups' && toLower(userAssignedIdentityParts[5]) == 'providers' && toLower(userAssignedIdentityParts[6]) == 'microsoft.managedidentity' && toLower(userAssignedIdentityParts[7]) == 'userassignedidentities' && hasValidResourceIdSegments(userAssignedIdentityResourceId) : false
-var hasValidSystemAssignedConfiguration = identityType == 'SystemAssigned' && empty(userAssignedIdentityResourceId) && empty(userAssignedIdentityPrincipalId)
-var hasValidUserAssignedConfiguration = identityType == 'UserAssigned' && validUserAssignedIdentityResourceId && isGuid(userAssignedIdentityPrincipalId)
-var validatedUserAssignedIdentityResourceId = hasValidSystemAssignedConfiguration || hasValidUserAssignedConfiguration
+var validatedUserAssignedIdentityResourceId = identity.type == 'SystemAssigned' || (validUserAssignedIdentityResourceId && isGuid(userAssignedIdentityPrincipalId))
   ? userAssignedIdentityResourceId
-  : fail('Identity configuration must be SystemAssigned with no user-assigned values, or UserAssigned with a valid identity resource ID and principal ID.')
-var validatedIdentityPrincipalId = identityType == 'UserAssigned'
+  : fail('UserAssigned identity configuration must contain a valid identity resource ID and principal ID.')
+var validatedIdentityPrincipalId = identity.type == 'UserAssigned'
   ? userAssignedIdentityPrincipalId
   : assignment.identity.principalId
 
@@ -136,14 +147,14 @@ var validatedRoleDefinitionIds = !empty(invalidRoleDefinitionIds)
   : hasDuplicateRoleDefinitionIds
     ? fail('verifiedRoleDefinitionIds must not contain duplicates.')
     : normalizedRoleDefinitionIds
-var roleAssignmentPrincipalSeed = identityType == 'UserAssigned' ? userAssignedIdentityPrincipalId : assignment.id
+var roleAssignmentPrincipalSeed = identity.type == 'UserAssigned' ? userAssignedIdentityPrincipalId : assignment.id
 
 resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
   name: assignmentName
   location: validatedLocation
   identity: {
-    type: identityType
-    ...((identityType == 'UserAssigned') ? {
+    type: identity.type
+    ...((identity.type == 'UserAssigned') ? {
       userAssignedIdentities: {
         '${validatedUserAssignedIdentityResourceId}': {}
       }
@@ -186,5 +197,5 @@ resource remediationRoleAssignments 'Microsoft.Authorization/roleAssignments@202
 
 output policyAssignmentId string = assignment.id
 output identityPrincipalId string = validatedIdentityPrincipalId
-output identityResourceId string = identityType == 'UserAssigned' ? validatedUserAssignedIdentityResourceId : assignment.id
+output identityResourceId string = identity.type == 'UserAssigned' ? validatedUserAssignedIdentityResourceId : assignment.id
 output roleAssignmentIds string[] = [for index in range(0, length(validatedRoleDefinitionIds)): remediationRoleAssignments[index].id]

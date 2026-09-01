@@ -53,6 +53,9 @@ try {
     Assert-BicepBuildFails `
         -Fixture (Join-Path $ScriptDir 'fixtures/invalid-remediating-assignment-missing-location.bicep') `
         -Description 'a remediating assignment without a location'
+    Assert-BicepBuildFails `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-remediating-assignment-incomplete-user-identity.bicep') `
+        -Description 'a user-assigned remediation identity without a principal ID'
 
     $template = Get-Content -LiteralPath $compiledShapes -Raw | ConvertFrom-Json
     $system = $template.resources | Where-Object name -eq 'example-system-remediation'
@@ -61,13 +64,13 @@ try {
         Stop-Test 'Expected system-assigned and user-assigned remediation examples.'
     }
     if ($system.properties.parameters.location.value -ne 'eastus2' -or
-        $system.properties.parameters.identityType.value -ne 'SystemAssigned' -or
+        $system.properties.parameters.identity.value.type -ne 'SystemAssigned' -or
         @($system.properties.parameters.verifiedRoleDefinitionIds.value).Count -ne 1) {
         Stop-Test 'System-assigned remediation arguments are invalid.'
     }
     if ($user.properties.parameters.location.value -ne 'westus2' -or
-        $user.properties.parameters.identityType.value -ne 'UserAssigned' -or
-        $user.properties.parameters.userAssignedIdentityPrincipalId.value -ne '55555555-5555-5555-5555-555555555555' -or
+        $user.properties.parameters.identity.value.type -ne 'UserAssigned' -or
+        $user.properties.parameters.identity.value.principalId -ne '55555555-5555-5555-5555-555555555555' -or
         @($user.properties.parameters.verifiedRoleDefinitionIds.value).Count -ne 2 -or
         $user.properties.parameters.enforcementMode.value -ne 'Default' -or
         $user.properties.parameters.parameters.value.effect.value -ne 'Modify') {
@@ -79,14 +82,19 @@ try {
     $roles = $module.resources.remediationRoleAssignments
     if ($module.parameters.location.PSObject.Properties['defaultValue'] -or
         $module.parameters.location.minLength -ne 1 -or
-        $module.parameters.identityType.PSObject.Properties['defaultValue'] -or
+        $module.parameters.identity.PSObject.Properties['defaultValue'] -or
+        $module.parameters.identity.'$ref' -ne '#/definitions/RemediationIdentity' -or
+        $module.definitions.SystemAssignedIdentity.additionalProperties -ne $false -or
+        $module.definitions.UserAssignedIdentity.additionalProperties -ne $false -or
+        $module.definitions.UserAssignedIdentity.properties.resourceId.minLength -ne 1 -or
+        $module.definitions.UserAssignedIdentity.properties.principalId.minLength -ne 1 -or
         $module.parameters.verifiedRoleDefinitionIds.PSObject.Properties['defaultValue'] -or
         $module.parameters.verifiedRoleDefinitionIds.minLength -ne 1 -or
         $module.parameters.enforcementMode.defaultValue -ne 'DoNotEnforce') {
         Stop-Test 'Required remediation inputs or safe enforcement defaults changed.'
     }
     if (-not ([string]$module.variables.validatedLocation).Contains('location must be a non-global Azure region') -or
-        -not ([string]$module.variables.validatedUserAssignedIdentityResourceId).Contains('Identity configuration must be SystemAssigned') -or
+        -not ([string]$module.variables.validatedUserAssignedIdentityResourceId).Contains('UserAssigned identity configuration must contain a valid identity resource ID and principal ID') -or
         -not ([string]$module.variables.validatedRoleDefinitionIds).Contains('must not contain Owner or User Access Administrator')) {
         Stop-Test 'Compiled location, identity, or privileged-role validation is incomplete.'
     }

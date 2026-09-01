@@ -37,6 +37,9 @@ expect_bicep_build_failure \
 expect_bicep_build_failure \
   "${SCRIPT_DIR}/fixtures/invalid-remediating-assignment-missing-location.bicep" \
   'a remediating assignment without a location'
+expect_bicep_build_failure \
+  "${SCRIPT_DIR}/fixtures/invalid-remediating-assignment-incomplete-user-identity.bicep" \
+  'a user-assigned remediation identity without a principal ID'
 
 jq -e '
   def deployment($name): first(.resources[] | select(.name == $name));
@@ -47,14 +50,16 @@ jq -e '
   | $module.resources.remediationRoleAssignments as $roles
   | (.resources | length) == 2
     and $system.properties.parameters.location.value == "eastus2"
-    and $system.properties.parameters.identityType.value == "SystemAssigned"
+    and $system.properties.parameters.identity.value == {
+      "type": "SystemAssigned"
+    }
     and $system.properties.parameters.verifiedRoleDefinitionIds.value == [
       "22222222-2222-2222-2222-222222222222"
     ]
     and $user.properties.parameters.location.value == "westus2"
-    and $user.properties.parameters.identityType.value == "UserAssigned"
-    and $user.properties.parameters.userAssignedIdentityResourceId.value == "/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/identities/providers/Microsoft.ManagedIdentity/userAssignedIdentities/policy-remediation"
-    and $user.properties.parameters.userAssignedIdentityPrincipalId.value == "55555555-5555-5555-5555-555555555555"
+    and $user.properties.parameters.identity.value.type == "UserAssigned"
+    and $user.properties.parameters.identity.value.resourceId == "/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/identities/providers/Microsoft.ManagedIdentity/userAssignedIdentities/policy-remediation"
+    and $user.properties.parameters.identity.value.principalId == "55555555-5555-5555-5555-555555555555"
     and $user.properties.parameters.verifiedRoleDefinitionIds.value == [
       "66666666-6666-6666-6666-666666666666",
       "77777777-7777-7777-7777-777777777777"
@@ -68,18 +73,23 @@ jq -e '
     and ($user.properties.parameters.resourceSelectors.value | length) == 1
     and ($module.parameters.location | has("defaultValue") | not)
     and $module.parameters.location.minLength == 1
-    and ($module.parameters.identityType | has("defaultValue") | not)
-    and ($module.parameters.identityType.allowedValues | sort) == ["SystemAssigned", "UserAssigned"]
+    and ($module.parameters.identity | has("defaultValue") | not)
+    and $module.parameters.identity["$ref"] == "#/definitions/RemediationIdentity"
+    and $module.definitions.SystemAssignedIdentity.additionalProperties == false
+    and $module.definitions.UserAssignedIdentity.additionalProperties == false
+    and $module.definitions.UserAssignedIdentity.properties.resourceId.minLength == 1
+    and $module.definitions.UserAssignedIdentity.properties.principalId.minLength == 1
+    and ($module.definitions.RemediationIdentity.discriminator.mapping | keys | sort) == ["SystemAssigned", "UserAssigned"]
     and ($module.parameters.verifiedRoleDefinitionIds | has("defaultValue") | not)
     and $module.parameters.verifiedRoleDefinitionIds.minLength == 1
     and $module.parameters.enforcementMode.defaultValue == "DoNotEnforce"
     and ($module.variables.validatedLocation | contains("location must be a non-global Azure region"))
-    and ($module.variables.validatedUserAssignedIdentityResourceId | contains("Identity configuration must be SystemAssigned"))
+    and ($module.variables.validatedUserAssignedIdentityResourceId | contains("UserAssigned identity configuration must contain a valid identity resource ID and principal ID"))
     and ($module.variables.validatedRoleDefinitionIds | contains("must not contain Owner or User Access Administrator"))
     and $assignment.type == "Microsoft.Authorization/policyAssignments"
     and $assignment.apiVersion == "2025-03-01"
     and $assignment.location == "[variables(\u0027validatedLocation\u0027)]"
-    and ($assignment.identity | contains("parameters(\u0027identityType\u0027)"))
+    and ($assignment.identity | contains("parameters(\u0027identity\u0027).type"))
     and ($assignment.identity | contains("userAssignedIdentities"))
     and ($assignment.properties | contains("parameters(\u0027enforcementMode\u0027)"))
     and ($assignment.properties | contains("variables(\u0027validatedPolicyDefinitionId\u0027)"))
