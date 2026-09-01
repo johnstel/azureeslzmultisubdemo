@@ -133,6 +133,9 @@ try {
             $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
             $node.PSObject.Properties['name'] -and $node.name -eq $evidenceDeploymentName
         } | Select-Object -First 1
+        if ($null -eq $evidenceDeployment) {
+            Stop-Test "$evidenceDeploymentName deployment is missing."
+        }
         if ($evidenceDeploymentName -eq 'connectivity-evidence') {
             $evidenceTags = $evidenceDeployment.properties.template.variables.commonTags
         } else {
