@@ -67,6 +67,159 @@ resource auditPublicIp 'Microsoft.Authorization/policyDefinitions@2025-03-01' = 
   }
 }
 
+resource publicManagementIngress 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-public-mgmt-ingress'
+  properties: {
+    displayName: 'Demo - block public RDP and SSH NSG rules'
+    description: 'Audits or denies inbound NSG rules that allow TCP RDP or SSH from Internet, wildcard, or the IPv4 any-address prefix.'
+    mode: 'All'
+    metadata: {
+      category: 'Network'
+      version: '1.0.0'
+    }
+    parameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Effect'
+          description: 'Audit is the safe default. Deny requires a reviewed assignment and enforcement-mode change.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+    }
+    policyRule: {
+      if: {
+        allOf: [
+          {
+            field: 'type'
+            equals: 'Microsoft.Network/networkSecurityGroups/securityRules'
+          }
+          {
+            field: 'Microsoft.Network/networkSecurityGroups/securityRules/access'
+            equals: 'Allow'
+          }
+          {
+            field: 'Microsoft.Network/networkSecurityGroups/securityRules/direction'
+            equals: 'Inbound'
+          }
+          {
+            field: 'Microsoft.Network/networkSecurityGroups/securityRules/protocol'
+            in: [
+              '*'
+              'Tcp'
+            ]
+          }
+          {
+            anyOf: [
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix'
+                in: [
+                  '*'
+                  'Internet'
+                  '0.0.0.0/0'
+                ]
+              }
+              {
+                count: {
+                  field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                  where: {
+                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                    in: [
+                      '*'
+                      'Internet'
+                      '0.0.0.0/0'
+                    ]
+                  }
+                }
+                greater: 0
+              }
+            ]
+          }
+          {
+            anyOf: [
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange'
+                in: [
+                  '*'
+                  '22'
+                  '3389'
+                ]
+              }
+              {
+                count: {
+                  field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
+                  where: {
+                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
+                    in: [
+                      '*'
+                      '22'
+                      '3389'
+                    ]
+                  }
+                }
+                greater: 0
+              }
+            ]
+          }
+        ]
+      }
+      then: {
+        effect: '[parameters(\'effect\')]'
+      }
+    }
+  }
+}
+
+resource requireSubnetNsg 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-require-subnet-nsg'
+  properties: {
+    displayName: 'Demo - require NSGs on workload subnets'
+    description: 'Audits or denies workload subnets that do not have a network security group association.'
+    mode: 'All'
+    metadata: {
+      category: 'Network'
+      version: '1.0.0'
+    }
+    parameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Effect'
+          description: 'Audit is the safe default. Deny requires a reviewed assignment and enforcement-mode change.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+    }
+    policyRule: {
+      if: {
+        allOf: [
+          {
+            field: 'type'
+            equals: 'Microsoft.Network/virtualNetworks/subnets'
+          }
+          {
+            field: 'Microsoft.Network/virtualNetworks/subnets/networkSecurityGroup.id'
+            exists: 'false'
+          }
+        ]
+      }
+      then: {
+        effect: '[parameters(\'effect\')]'
+      }
+    }
+  }
+}
+
 resource expensiveResources 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   name: '${namePrefix}-block-expensive'
   properties: {
@@ -194,6 +347,8 @@ resource workloadResourceGroupTags 'Microsoft.Authorization/policyDefinitions@20
 
 output allowedLocationsPolicyDefinitionId string = allowedLocations.id
 output auditPublicIpPolicyDefinitionId string = auditPublicIp.id
+output publicManagementIngressPolicyDefinitionId string = publicManagementIngress.id
+output requireSubnetNsgPolicyDefinitionId string = requireSubnetNsg.id
 output expensiveResourcesPolicyDefinitionId string = expensiveResources.id
 output platformTagsPolicyDefinitionId string = platformTags.id
 output workloadResourceGroupTagsPolicyDefinitionId string = workloadResourceGroupTags.id

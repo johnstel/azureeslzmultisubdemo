@@ -41,6 +41,9 @@
     "denyPolicyEnforcementMode": {
       "value": "DoNotEnforce"
     },
+    "networkIngressPolicyEffect": {
+      "value": "Audit"
+    },
     "deployRoleAssignments": {
       "value": false
     },
@@ -76,4 +79,3 @@
     }
   }
 }
-

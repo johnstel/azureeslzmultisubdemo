@@ -45,7 +45,8 @@ printf '3/23 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
-  .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce"
+  .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
+  .parameters.networkIngressPolicyEffect.value == "Audit"
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
@@ -84,10 +85,47 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/23 Confirm region policy safely permits global resources...\n'
+printf '8/23 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
+jq -e '
+  .parameters.networkIngressPolicyEffect.defaultValue == "Audit" and
+  .parameters.networkIngressPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and
+  .resources as $resources |
+  ($resources[] | select(.name | startswith("[format(\u0027policy-library-")) | .properties.template.resources) as $definitions |
+  ($definitions | map(select(.properties.displayName == "Demo - block public RDP and SSH NSG rules")) | first) as $ingress |
+  ($definitions | map(select(.properties.displayName == "Demo - require NSGs on workload subnets")) | first) as $subnet |
+  ($resources | map(select(.name == "network-ingress-initiative")) | first) as $initiative |
+  ($resources | map(select(.name == "assign-network-ingress")) | first) as $assignment |
+  $ingress.properties.parameters.effect.defaultValue == "Audit" and
+  $ingress.properties.parameters.effect.allowedValues == ["Audit", "Deny", "Disabled"] and
+  ($ingress.properties.policyRule.if | tostring | contains("Microsoft.Network/networkSecurityGroups/securityRules")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"22\"")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"3389\"")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"Internet\"")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"0.0.0.0/0\"")) and
+  ($ingress.properties.policyRule.if | tostring | contains("sourceAddressPrefixes[*]")) and
+  ($ingress.properties.policyRule.if | tostring | contains("destinationPortRanges[*]")) and
+  ($subnet.properties.policyRule.if | tostring | contains("networkSecurityGroup.id")) and
+  ($initiative.scope | contains("demoRootManagementGroupId")) and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == ["public-management-ingress", "require-subnet-nsg"] and
+  ($assignment.scope | contains("workloadManagementGroupId")) and
+  ($assignment.scope | contains("platformManagementGroupId") | not) and
+  $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  $assignment.properties.parameters.parameters.value.effect.value == "[parameters(\u0027networkIngressPolicyEffect\u0027)]" and
+  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 2
+' "${TEMP_DIR}/main.json" >/dev/null
+root_public_ip_assignment_count="$(jq '
+  [.resources[]
+    | select(.name == "assign-audit-public-ip")
+    | select(.scope | contains("demoRootManagementGroupId"))
+  ] | length
+' "${TEMP_DIR}/main.json")"
+[[ "${root_public_ip_assignment_count}" -eq 1 ]] || {
+  printf 'ERROR: Expected the existing public-IP audit to remain a single dedicated-root assignment.\n' >&2
+  exit 1
+}
 
 printf '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
