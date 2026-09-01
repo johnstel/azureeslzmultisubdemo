@@ -829,7 +829,7 @@
       ],
       "enforcementPhase": "deny-do-not-enforce",
       "evidenceSource": "Compiled ARM template + workload policy compliance state.",
-      "notes": "Matches inbound Allow rules for TCP or any protocol on destination 22, 3389, or wildcard, including singular and array aliases, when the source is *, Internet, or the IPv4 any-address prefix 0.0.0.0/0. The workload initiative complements, rather than duplicates, the dedicated-root public-IP audit."
+      "notes": "Matches inbound Allow rules for TCP or any protocol when singular/plural destination ranges contain 22 or 3389, including exact and wildcard ports. Singular/plural sources include *, Internet, 0.0.0.0/0, and arbitrary public IPv4 hosts/CIDRs; private/non-routable ranges and supported service tags are excluded, and malformed/unknown values are not classified as public. The workload initiative complements, rather than duplicates, the dedicated-root public-IP audit."
     },
     {
       "id": "REQ-NET-02",

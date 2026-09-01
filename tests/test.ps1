@@ -87,10 +87,15 @@ try {
     if ($parameterTemplate.parameters.denyPolicyEnforcementMode.value -ne 'DoNotEnforce') {
         Stop-Test 'denyPolicyEnforcementMode must default to DoNotEnforce.'
     }
+    $compiledParametersPath = Join-Path $TempDir 'main.parameters.json'
     & az bicep build-params `
         --file (Join-Path $ProjectDir 'parameters/main.template.bicepparam') `
-        --outfile (Join-Path $TempDir 'main.parameters.json')
+        --outfile $compiledParametersPath
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
+    $compiledParameters = Get-Content -LiteralPath $compiledParametersPath -Raw | ConvertFrom-Json
+    if ($compiledParameters.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
+        Stop-Test 'networkIngressPolicyEffect must default to Audit in the Bicep parameter template.'
+    }
 
     Write-Host '4/23 Confirm there are exactly two unconditional subscription associations...'
     $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
@@ -142,7 +147,7 @@ try {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/23 Confirm the region policy safely permits global resources...'
+    Write-Host '8/23 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -152,6 +157,203 @@ try {
         if (-not $policyText.Contains($requiredPolicyText)) {
             Stop-Test "Region policy is missing: $requiredPolicyText"
         }
+    }
+    if ($parameterTemplate.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
+        Stop-Test 'networkIngressPolicyEffect must default to Audit in the JSON parameter template.'
+    }
+    if ($compiledJson.parameters.networkIngressPolicyEffect.defaultValue -ne 'Audit' -or
+        (Compare-Object @($compiledJson.parameters.networkIngressPolicyEffect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
+        Stop-Test 'Compiled networkIngressPolicyEffect must allow Audit, Deny, and Disabled and default to Audit.'
+    }
+
+    $policyLibrary = @($compiledJson.resources | Where-Object {
+        $_.name.StartsWith("[format('policy-library-")
+    })
+    if ($policyLibrary.Count -ne 1) {
+        Stop-Test 'Expected exactly one compiled policy-library deployment.'
+    }
+    $policyDefinitions = @($policyLibrary[0].properties.template.resources)
+    $publicManagementIngress = @($policyDefinitions | Where-Object {
+        $_.properties.displayName -eq 'Demo - block public RDP and SSH NSG rules'
+    })
+    $requireSubnetNsg = @($policyDefinitions | Where-Object {
+        $_.properties.displayName -eq 'Demo - require NSGs on workload subnets'
+    })
+    if ($publicManagementIngress.Count -ne 1 -or $requireSubnetNsg.Count -ne 1) {
+        Stop-Test 'Expected exactly one public-management-ingress and one subnet-NSG definition.'
+    }
+    if ($publicManagementIngress[0].properties.parameters.effect.defaultValue -ne 'Audit' -or
+        (Compare-Object @($publicManagementIngress[0].properties.parameters.effect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
+        Stop-Test 'Public-management-ingress effect must allow Audit, Deny, and Disabled and default to Audit.'
+    }
+    if (Compare-Object @($policyLibrary[0].properties.template.variables.managementPorts) @('22', '3389')) {
+        Stop-Test 'Compiled management port list must contain exactly SSH 22 and RDP 3389.'
+    }
+
+    $ingressPolicyText = $publicManagementIngress[0].properties.policyRule.if | ConvertTo-Json -Depth 100 -Compress
+    foreach ($requiredExpression in @(
+        'ipRangeContains(',
+        "ipRangeContains('0.0.0.0/0'",
+        'int(first(split(',
+        'int(last(split(',
+        'Microsoft.Network/networkSecurityGroups/securityRules',
+        'Microsoft.Network/networkSecurityGroups/securityRules[*]',
+        'securityRules/sourceAddressPrefixes[*]',
+        'securityRules[*].sourceAddressPrefixes[*]',
+        'securityRules/destinationPortRanges[*]',
+        'securityRules[*].destinationPortRanges[*]'
+    )) {
+        if (-not $ingressPolicyText.Contains($requiredExpression)) {
+            Stop-Test "Compiled ingress policy is missing semantic expression: $requiredExpression"
+        }
+    }
+    foreach ($expectedOccurrence in @(
+        @{ Expression = "ipRangeContains('0.0.0.0/0'"; Count = 4 },
+        @{ Expression = "ipRangeContains(current('nonPublicIpv4Range')"; Count = 4 },
+        @{ Expression = 'int(first(split('; Count = 4 },
+        @{ Expression = 'int(last(split('; Count = 4 }
+    )) {
+        $actualCount = ([regex]::Matches(
+            $ingressPolicyText,
+            [regex]::Escape($expectedOccurrence.Expression)
+        )).Count
+        if ($actualCount -ne $expectedOccurrence.Count) {
+            Stop-Test "Compiled ingress policy has $actualCount occurrences of $($expectedOccurrence.Expression); expected $($expectedOccurrence.Count)."
+        }
+    }
+    $subnetPolicyText = $requireSubnetNsg[0].properties.policyRule.if | ConvertTo-Json -Depth 100 -Compress
+    foreach ($requiredExpression in @(
+        'Microsoft.Network/virtualNetworks/subnets',
+        'Microsoft.Network/virtualNetworks',
+        'virtualNetworks/subnets[*].networkSecurityGroup.id'
+    )) {
+        if (-not $subnetPolicyText.Contains($requiredExpression)) {
+            Stop-Test "Compiled subnet-NSG policy is missing resource shape: $requiredExpression"
+        }
+    }
+
+    $networkInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'network-ingress-initiative' })
+    $networkAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-network-ingress' })
+    if ($networkInitiative.Count -ne 1 -or $networkInitiative[0].scope -notmatch 'demoRootManagementGroupId') {
+        Stop-Test 'Network ingress initiative must be defined once at the dedicated demo root.'
+    }
+    $referenceIds = @($networkInitiative[0].properties.parameters.policyDefinitionReferences.value |
+        ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object)
+    if (Compare-Object $referenceIds @('public-management-ingress', 'require-subnet-nsg')) {
+        Stop-Test 'Network ingress initiative must contain only the two workload-boundary references.'
+    }
+    if ($networkAssignment.Count -ne 1 -or
+        $networkAssignment[0].scope -notmatch 'workloadManagementGroupId' -or
+        $networkAssignment[0].scope -match 'platformManagementGroupId') {
+        Stop-Test 'Network ingress assignment must target only the selected workload management group.'
+    }
+    if ($networkAssignment[0].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        $networkAssignment[0].properties.parameters.parameters.value.effect.value -ne "[parameters('networkIngressPolicyEffect')]") {
+        Stop-Test 'Network ingress assignment must preserve DoNotEnforce/Audit parameter wiring.'
+    }
+    if (@($networkAssignment[0].properties.parameters.nonComplianceMessages.value).Count -ne 2) {
+        Stop-Test 'Network ingress assignment must provide two targeted noncompliance messages.'
+    }
+    $messageReferenceIds = @($networkAssignment[0].properties.parameters.nonComplianceMessages.value |
+        ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object)
+    if ((Compare-Object $messageReferenceIds @('public-management-ingress', 'require-subnet-nsg')) -or
+        @($networkAssignment[0].properties.parameters.nonComplianceMessages.value |
+            Where-Object { [string]::IsNullOrEmpty($_.message) }).Count -ne 0) {
+        Stop-Test 'Network ingress noncompliance messages must be non-empty and target both initiative references.'
+    }
+    $rootPublicIpAssignments = @($compiledJson.resources | Where-Object {
+        $_.name -eq 'assign-audit-public-ip' -and $_.scope -match 'demoRootManagementGroupId'
+    })
+    if ($rootPublicIpAssignments.Count -ne 1) {
+        Stop-Test 'Expected the existing public-IP audit to remain a single dedicated-root assignment.'
+    }
+
+    $semanticFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/network-ingress-semantic-cases.json') -Raw | ConvertFrom-Json
+    $compiledNonPublicRanges = @($policyLibrary[0].properties.template.variables.nonPublicIpv4Ranges)
+    if (Compare-Object $compiledNonPublicRanges @($semanticFixture.nonPublicIpv4Ranges)) {
+        Stop-Test 'Compiled non-public IPv4 ranges differ from the behavioral fixture.'
+    }
+
+    function ConvertTo-Ipv4Network {
+        param([string]$Value)
+        $parts = $Value.Split('/')
+        if ($parts.Count -gt 2 -or [string]::IsNullOrEmpty($parts[0])) { return $null }
+        $address = $null
+        if (-not [System.Net.IPAddress]::TryParse($parts[0], [ref]$address) -or
+            $address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+            return $null
+        }
+        $prefixLength = 32
+        if ($parts.Count -eq 2 -and
+            (-not [int]::TryParse($parts[1], [ref]$prefixLength) -or $prefixLength -lt 0 -or $prefixLength -gt 32)) {
+            return $null
+        }
+        $bytes = $address.GetAddressBytes()
+        [uint64]$value = ([uint64]$bytes[0] -shl 24) -bor ([uint64]$bytes[1] -shl 16) -bor
+            ([uint64]$bytes[2] -shl 8) -bor [uint64]$bytes[3]
+        [uint64]$mask = if ($prefixLength -eq 0) {
+            0
+        } else {
+            [uint64]4294967295 - (([uint64]1 -shl (32 - $prefixLength)) - 1)
+        }
+        return [pscustomobject]@{
+            Network = $value -band $mask
+            PrefixLength = $prefixLength
+            Mask = $mask
+        }
+    }
+
+    $nonPublicNetworks = @($semanticFixture.nonPublicIpv4Ranges | ForEach-Object { ConvertTo-Ipv4Network $_ })
+    $supportedServiceTags = @($semanticFixture.supportedServiceTags)
+    function Test-PublicIpv4Source {
+        param([string]$Value)
+        if ($Value -in @('*', 'Internet', '0.0.0.0/0')) { return $true }
+        if ([string]::IsNullOrEmpty($Value) -or $Value -in $supportedServiceTags -or [char]::IsLetter($Value[0])) { return $false }
+        $source = ConvertTo-Ipv4Network $Value
+        if ($null -eq $source) { return $false }
+        foreach ($network in $nonPublicNetworks) {
+            if ($source.PrefixLength -ge $network.PrefixLength -and
+                ($source.Network -band $network.Mask) -eq $network.Network) {
+                return $false
+            }
+        }
+        return $true
+    }
+
+    function Test-ManagementPortRange {
+        param([string]$Value)
+        if ($Value -eq '*') { return $true }
+        if ($Value -notmatch '^([0-9]{1,5})(?:-([0-9]{1,5}))?$') { return $false }
+        $start = [int]$Matches[1]
+        $end = if ($Matches[2]) { [int]$Matches[2] } else { $start }
+        if ($start -gt $end -or $end -gt 65535) { return $false }
+        return (($start -le 22 -and 22 -le $end) -or ($start -le 3389 -and 3389 -le $end))
+    }
+
+    $coveredShapes = @{}
+    $coveredSourceForms = @{}
+    $coveredDestinationForms = @{}
+    foreach ($case in $semanticFixture.cases) {
+        $sourceForm = if ($case.PSObject.Properties['sourceForm']) { $case.sourceForm } else { 'single' }
+        $destinationForm = if ($case.PSObject.Properties['destinationForm']) { $case.destinationForm } else { 'single' }
+        $coveredShapes[$case.shape] = $true
+        $coveredSourceForms[$sourceForm] = $true
+        $coveredDestinationForms[$destinationForm] = $true
+        $actual = (
+            $case.access -eq 'Allow' -and
+            $case.direction -eq 'Inbound' -and
+            $case.protocol -in @('Tcp', '*') -and
+            @($case.sourcePrefixes | Where-Object { Test-PublicIpv4Source $_ }).Count -gt 0 -and
+            @($case.destinationPorts | Where-Object { Test-ManagementPortRange $_ }).Count -gt 0
+        )
+        if ($actual -ne $case.expectedNonCompliant) {
+            Stop-Test "Network ingress semantic case failed: $($case.name) (expected $($case.expectedNonCompliant), got $actual)."
+        }
+    }
+    if (@($coveredShapes.Keys).Count -ne 2 -or
+        @($coveredSourceForms.Keys).Count -ne 2 -or
+        @($coveredDestinationForms.Keys).Count -ne 2) {
+        Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
     Write-Host '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'

@@ -663,7 +663,11 @@ security assessment.
 Scope: Corp or Online workload branch only.
 
 The network-ingress initiative reports inbound NSG rules that expose SSH
-(`22`) or RDP (`3389`) through `*`, `Internet`, or IPv4 `0.0.0.0/0`, and
+(`22`) or RDP (`3389`) through `*`, `Internet`, `0.0.0.0/0`, or an arbitrary
+public IPv4 host/CIDR. It parses exact, wildcard, and numeric destination
+ranges, covers singular/plural properties on inline and child rules, and
+excludes private/non-routable IPv4 ranges and supported Azure service tags.
+Malformed or unknown values do not become public matches. It also reports
 workload subnets without an NSG. It accepts a later `Deny` effect, but both the
 effect and assignment default remain safe (`Audit` and `DoNotEnforce`).
 Platform and Connectivity are intentionally outside the assignment. Use

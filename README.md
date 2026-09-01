@@ -68,13 +68,15 @@ governed separately by workload tag policy. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
 policy impact.
 
-The workload network-ingress initiative recognizes `*`, `Internet`, and
-`0.0.0.0/0` source values in singular and array NSG aliases, and checks TCP or
-any-protocol rules for destination `22`, `3389`, or `*`. It is not assigned to
-Platform or Connectivity. Approved private management sources do not match
-these any-public values; exceptional public paths or special-purpose workload
-subnets must use a documented, time-bound Azure Policy exemption. The existing
-demo-root public-IP audit remains the only public-IP resource control.
+The workload network-ingress initiative recognizes `*`, `Internet`,
+`0.0.0.0/0`, and arbitrary public IPv4 host/CIDR source values in singular and
+array NSG aliases. Private, non-routable/reserved IPv4 ranges and supported
+Azure service tags are not treated as public. TCP or any-protocol destination
+ranges are parsed so ranges containing `22` or `3389` are detected alongside
+exact and wildcard ports. It is not assigned to Platform or Connectivity.
+Exceptional public paths or special-purpose workload subnets must use a
+documented, time-bound Azure Policy exemption. The existing demo-root
+public-IP audit remains the only public-IP resource control.
 
 ### Reusable initiative composition
 

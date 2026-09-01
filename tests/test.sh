@@ -51,6 +51,7 @@ jq -e '
 az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
+jq -e '.parameters.networkIngressPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
 printf '4/23 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
@@ -93,16 +94,16 @@ jq -e '
   .parameters.networkIngressPolicyEffect.defaultValue == "Audit" and
   .parameters.networkIngressPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and
   .resources as $resources |
-  ($resources[] | select(.name | startswith("[format(\u0027policy-library-")) | .properties.template.resources) as $definitions |
+  ($resources[] | select(.name | startswith("[format(\u0027policy-library-"))) as $library |
+  $library.properties.template.resources as $definitions |
   ($definitions | map(select(.properties.displayName == "Demo - block public RDP and SSH NSG rules")) | first) as $ingress |
   ($definitions | map(select(.properties.displayName == "Demo - require NSGs on workload subnets")) | first) as $subnet |
   ($resources | map(select(.name == "network-ingress-initiative")) | first) as $initiative |
   ($resources | map(select(.name == "assign-network-ingress")) | first) as $assignment |
   $ingress.properties.parameters.effect.defaultValue == "Audit" and
   $ingress.properties.parameters.effect.allowedValues == ["Audit", "Deny", "Disabled"] and
+  $library.properties.template.variables.managementPorts == ["22", "3389"] and
   ($ingress.properties.policyRule.if | tostring | contains("Microsoft.Network/networkSecurityGroups/securityRules")) and
-  ($ingress.properties.policyRule.if | tostring | contains("\"22\"")) and
-  ($ingress.properties.policyRule.if | tostring | contains("\"3389\"")) and
   ($ingress.properties.policyRule.if | tostring | contains("\"Internet\"")) and
   ($ingress.properties.policyRule.if | tostring | contains("\"0.0.0.0/0\"")) and
   ($ingress.properties.policyRule.if | tostring | contains("sourceAddressPrefixes[*]")) and
@@ -118,7 +119,9 @@ jq -e '
   ($assignment.scope | contains("platformManagementGroupId") | not) and
   $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
   $assignment.properties.parameters.parameters.value.effect.value == "[parameters(\u0027networkIngressPolicyEffect\u0027)]" and
-  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 2
+  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 2 and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) == ["public-management-ingress", "require-subnet-nsg"] and
+  ($assignment.properties.parameters.nonComplianceMessages.value | all(.message | length > 0))
 ' "${TEMP_DIR}/main.json" >/dev/null
 root_public_ip_assignment_count="$(jq '
   [.resources[]
@@ -130,6 +133,114 @@ root_public_ip_assignment_count="$(jq '
   printf 'ERROR: Expected the existing public-IP audit to remain a single dedicated-root assignment.\n' >&2
   exit 1
 }
+python3 - "${TEMP_DIR}/main.json" "${PROJECT_DIR}/tests/fixtures/network-ingress-semantic-cases.json" <<'PYEOF'
+import ipaddress
+import json
+import sys
+
+compiled_path, fixture_path = sys.argv[1:3]
+with open(compiled_path, encoding="utf-8") as stream:
+    compiled = json.load(stream)
+with open(fixture_path, encoding="utf-8") as stream:
+    fixture = json.load(stream)
+
+library = next(
+    resource
+    for resource in compiled["resources"]
+    if resource["name"].startswith("[format('policy-library-")
+)
+template = library["properties"]["template"]
+definition = next(
+    resource
+    for resource in template["resources"]
+    if resource["properties"]["displayName"] == "Demo - block public RDP and SSH NSG rules"
+)
+if template["variables"]["nonPublicIpv4Ranges"] != fixture["nonPublicIpv4Ranges"]:
+    raise SystemExit("ERROR: Compiled non-public IPv4 ranges differ from the behavioral fixture.")
+
+policy_text = json.dumps(definition["properties"]["policyRule"]["if"])
+for required_expression in (
+    "ipRangeContains(",
+    "ipRangeContains('0.0.0.0/0'",
+    "int(first(split(",
+    "int(last(split(",
+    "securityRules/sourceAddressPrefixes[*]",
+    "securityRules[*].sourceAddressPrefixes[*]",
+    "securityRules/destinationPortRanges[*]",
+    "securityRules[*].destinationPortRanges[*]",
+):
+    if required_expression not in policy_text:
+        raise SystemExit(f"ERROR: Compiled ingress policy is missing semantic expression: {required_expression}")
+for expression, expected_count in (
+    ("ipRangeContains('0.0.0.0/0'", 4),
+    ("ipRangeContains(current('nonPublicIpv4Range')", 4),
+    ("int(first(split(", 4),
+    ("int(last(split(", 4),
+):
+    if policy_text.count(expression) != expected_count:
+        raise SystemExit(
+            f"ERROR: Compiled ingress policy has {policy_text.count(expression)} occurrences "
+            f"of {expression}; expected {expected_count}."
+        )
+
+non_public = [ipaddress.ip_network(value) for value in fixture["nonPublicIpv4Ranges"]]
+service_tags = set(fixture["supportedServiceTags"])
+
+def is_public_source(value):
+    if value in {"*", "Internet", "0.0.0.0/0"}:
+        return True
+    if value in service_tags or not value or value[0].isalpha():
+        return False
+    try:
+        source = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return False
+    return source.version == 4 and not any(source.subnet_of(network) for network in non_public)
+
+def contains_management_port(value):
+    if value == "*":
+        return True
+    try:
+        parts = value.split("-")
+        if len(parts) == 1:
+            start = end = int(parts[0])
+        elif len(parts) == 2:
+            start, end = map(int, parts)
+        else:
+            return False
+    except ValueError:
+        return False
+    return 0 <= start <= end <= 65535 and any(start <= port <= end for port in (22, 3389))
+
+forms = {
+    "shape": set(),
+    "source": set(),
+    "destination": set(),
+}
+for case in fixture["cases"]:
+    forms["shape"].add(case["shape"])
+    forms["source"].add(case.get("sourceForm", "single"))
+    forms["destination"].add(case.get("destinationForm", "single"))
+    actual = (
+        case["access"] == "Allow"
+        and case["direction"] == "Inbound"
+        and case["protocol"] in {"Tcp", "*"}
+        and any(is_public_source(value) for value in case["sourcePrefixes"])
+        and any(contains_management_port(value) for value in case["destinationPorts"])
+    )
+    if actual != case["expectedNonCompliant"]:
+        raise SystemExit(
+            f"ERROR: Network ingress semantic case failed: {case['name']} "
+            f"(expected {case['expectedNonCompliant']}, got {actual})."
+        )
+
+if forms != {
+    "shape": {"child", "inline"},
+    "source": {"single", "plural"},
+    "destination": {"single", "plural"},
+}:
+    raise SystemExit(f"ERROR: Network ingress fixtures do not cover all resource/property forms: {forms}")
+PYEOF
 
 printf '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"

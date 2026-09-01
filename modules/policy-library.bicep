@@ -2,6 +2,28 @@ targetScope = 'managementGroup'
 
 param namePrefix string
 
+var managementPorts = [
+  '22'
+  '3389'
+]
+var nonPublicIpv4Ranges = [
+  '0.0.0.0/8'
+  '10.0.0.0/8'
+  '100.64.0.0/10'
+  '127.0.0.0/8'
+  '169.254.0.0/16'
+  '172.16.0.0/12'
+  '192.0.0.0/24'
+  '192.0.2.0/24'
+  '192.88.99.0/24'
+  '192.168.0.0/16'
+  '198.18.0.0/15'
+  '198.51.100.0/24'
+  '203.0.113.0/24'
+  '224.0.0.0/4'
+  '240.0.0.0/4'
+]
+
 resource allowedLocations 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   name: '${namePrefix}-allowed-us-locations'
   properties: {
@@ -71,7 +93,7 @@ resource publicManagementIngress 'Microsoft.Authorization/policyDefinitions@2025
   name: '${namePrefix}-public-mgmt-ingress'
   properties: {
     displayName: 'Demo - block public RDP and SSH NSG rules'
-    description: 'Audits or denies inbound NSG rules that allow TCP RDP or SSH from Internet, wildcard, or the IPv4 any-address prefix.'
+    description: 'Audits or denies inbound NSG rules that allow TCP RDP or SSH from any public IPv4 host, CIDR, Internet, or wildcard source.'
     mode: 'All'
     metadata: {
       category: 'Network'
@@ -127,14 +149,56 @@ resource publicManagementIngress 'Microsoft.Authorization/policyDefinitions@2025
                     ]
                   }
                   {
+                    allOf: [
+                      {
+                        value: '[if(or(empty(field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\')), greaterOrEquals(first(field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\')))]'
+                        equals: true
+                      }
+                      {
+                        count: {
+                          value: nonPublicIpv4Ranges
+                          name: 'nonPublicIpv4Range'
+                          where: {
+                            value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), field(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix\'))]'
+                            equals: false
+                          }
+                        }
+                        equals: length(nonPublicIpv4Ranges)
+                      }
+                    ]
+                  }
+                  {
                     count: {
                       field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
                       where: {
-                        field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
-                        in: [
-                          '*'
-                          'Internet'
-                          '0.0.0.0/0'
+                        anyOf: [
+                          {
+                            field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                            in: [
+                              '*'
+                              'Internet'
+                              '0.0.0.0/0'
+                            ]
+                          }
+                          {
+                            allOf: [
+                              {
+                                value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\')))]'
+                                equals: true
+                              }
+                              {
+                                count: {
+                                  value: nonPublicIpv4Ranges
+                                  name: 'nonPublicIpv4Range'
+                                  where: {
+                                    value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), current(\'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]\'))]'
+                                    equals: false
+                                  }
+                                }
+                                equals: length(nonPublicIpv4Ranges)
+                              }
+                            ]
+                          }
                         ]
                       }
                     }
@@ -143,30 +207,29 @@ resource publicManagementIngress 'Microsoft.Authorization/policyDefinitions@2025
                 ]
               }
               {
-                anyOf: [
-                  {
-                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange'
-                    in: [
-                      '*'
-                      '22'
-                      '3389'
+                count: {
+                  value: managementPorts
+                  name: 'managementPort'
+                  where: {
+                    anyOf: [
+                      {
+                        value: '[if(or(empty(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\')), greaterOrEquals(first(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\')), \'A\')), false, if(equals(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\'), \'*\'), true, and(lessOrEquals(int(first(split(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(field(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                        equals: true
+                      }
+                      {
+                        count: {
+                          field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
+                          where: {
+                            value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\')), \'A\')), false, if(equals(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\'), \'*\'), true, and(lessOrEquals(int(first(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                            equals: true
+                          }
+                        }
+                        greater: 0
+                      }
                     ]
                   }
-                  {
-                    count: {
-                      field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
-                      where: {
-                        field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
-                        in: [
-                          '*'
-                          '22'
-                          '3389'
-                        ]
-                      }
-                    }
-                    greater: 0
-                  }
-                ]
+                }
+                greater: 0
               }
             ]
           }
@@ -207,54 +270,87 @@ resource publicManagementIngress 'Microsoft.Authorization/policyDefinitions@2025
                             ]
                           }
                           {
-                            not: {
-                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
-                              notEquals: '*'
-                            }
+                            allOf: [
+                              {
+                                value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\')))]'
+                                equals: true
+                              }
+                              {
+                                count: {
+                                  value: nonPublicIpv4Ranges
+                                  name: 'nonPublicIpv4Range'
+                                  where: {
+                                    value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\'))]'
+                                    equals: false
+                                  }
+                                }
+                                equals: length(nonPublicIpv4Ranges)
+                              }
+                            ]
                           }
                           {
-                            not: {
+                            count: {
                               field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
-                              notEquals: 'Internet'
+                              where: {
+                                anyOf: [
+                                  {
+                                    field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
+                                    in: [
+                                      '*'
+                                      'Internet'
+                                      '0.0.0.0/0'
+                                    ]
+                                  }
+                                  {
+                                    allOf: [
+                                      {
+                                        value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\')), \'A\')), false, ipRangeContains(\'0.0.0.0/0\', current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\')))]'
+                                        equals: true
+                                      }
+                                      {
+                                        count: {
+                                          value: nonPublicIpv4Ranges
+                                          name: 'nonPublicIpv4Range'
+                                          where: {
+                                            value: '[ipRangeContains(current(\'nonPublicIpv4Range\'), current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]\'))]'
+                                            equals: false
+                                          }
+                                        }
+                                        equals: length(nonPublicIpv4Ranges)
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
                             }
-                          }
-                          {
-                            not: {
-                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
-                              notEquals: '0.0.0.0/0'
-                            }
+                            greater: 0
                           }
                         ]
                       }
                       {
-                        anyOf: [
-                          {
-                            field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange'
-                            in: [
-                              '*'
-                              '22'
-                              '3389'
+                        count: {
+                          value: managementPorts
+                          name: 'managementPort'
+                          where: {
+                            anyOf: [
+                              {
+                                value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\')), \'A\')), false, if(equals(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\'), \'*\'), true, and(lessOrEquals(int(first(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                                equals: true
+                              }
+                              {
+                                count: {
+                                  field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
+                                  where: {
+                                    value: '[if(or(empty(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\')), greaterOrEquals(first(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\')), \'A\')), false, if(equals(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\'), \'*\'), true, and(lessOrEquals(int(first(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\'))), greaterOrEquals(int(last(split(current(\'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]\'), \'-\'))), int(current(\'managementPort\')))))))]'
+                                    equals: true
+                                  }
+                                }
+                                greater: 0
+                              }
                             ]
                           }
-                          {
-                            not: {
-                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
-                              notEquals: '*'
-                            }
-                          }
-                          {
-                            not: {
-                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
-                              notEquals: '22'
-                            }
-                          }
-                          {
-                            not: {
-                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
-                              notEquals: '3389'
-                            }
-                          }
-                        ]
+                        }
+                        greater: 0
                       }
                     ]
                   }
