@@ -78,7 +78,6 @@ $archetype = Get-Value 'workloadArchetype'
 $connectivitySubscription = Get-Value 'connectivitySubscriptionId'
 $workloadSubscription = Get-Value 'workloadSubscriptionId'
 $governanceGroup = Get-Value 'governanceAdminsGroupObjectId'
-$ownersGroup = Get-Value 'subscriptionOwnersGroupObjectId'
 $networkGroup = Get-Value 'networkOperatorsGroupObjectId'
 $workloadGroup = Get-Value 'workloadContributorsGroupObjectId'
 $auditorsGroup = Get-Value 'readOnlyAuditorsGroupObjectId'
@@ -182,7 +181,7 @@ if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
     Write-Host ''
     Write-Host "NOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group $existingWorkspaceResourceGroup in subscription $existingWorkspaceSubscription is protected and will never be deleted by this script, even if its name collides with a group above."
 }
-Write-Host '  2. Delete only the seven demo role assignments for the five groups at their documented scopes.'
+Write-Host '  2. Delete only the five permanent lower-privilege demo role assignments for the four operator/auditor groups at their documented scopes.'
 Write-Host '  3. Delete demo policy assignments and the five custom policy definitions.'
 Write-Host "  4. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
 $stepNumber = 5
@@ -197,6 +196,8 @@ if ($criticalEnabled) {
 else {
     Write-Host "  $stepNumber. Delete management groups $prefix-connectivity, $prefix-platform, $prefix-$archetype, $prefix-landingzones, then $prefix."
 }
+Write-Host ''
+Write-Host 'NOTE: Owner eligibility is managed only through the separate one-shot PIM artifact. This teardown never discovers or removes it; submit a new, separately reviewed AdminRemove request for each existing schedule and verify removal in PIM.'
 Write-Host ''
 Write-Host 'Subscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.'
 
@@ -257,9 +258,7 @@ if ($monitoringGroupIsRepoOwned) {
 Remove-RoleMapping $governanceGroup 'Management Group Contributor' $demoRootScope
 Remove-RoleMapping $governanceGroup 'Resource Policy Contributor' $demoRootScope
 Remove-RoleMapping $auditorsGroup 'Reader' $demoRootScope
-Remove-RoleMapping $ownersGroup 'Owner' $connectivityScope
 Remove-RoleMapping $networkGroup 'Network Contributor' $connectivityScope
-Remove-RoleMapping $ownersGroup 'Owner' $subscriptionWorkloadScope
 Remove-RoleMapping $workloadGroup 'Contributor' $subscriptionWorkloadScope
 
 Remove-PolicyAssignment 'demo-require-workload-rg-tags' $workloadScope
@@ -307,4 +306,4 @@ foreach ($managementGroup in $managementGroups) {
 }
 
 Write-Host ''
-Write-Host 'Teardown commands completed. Verify the hierarchy and both subscriptions in the Azure portal.'
+Write-Host 'Teardown commands completed. Verify the hierarchy, both subscriptions, and any separately managed PIM eligibility schedules in the Azure portal.'

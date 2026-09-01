@@ -32,9 +32,6 @@ param workloadSubscriptionId string
 @description('Object ID of an existing Entra security group for governance administrators.')
 param governanceAdminsGroupObjectId string
 
-@description('Object ID of an existing Entra security group for subscription owners.')
-param subscriptionOwnersGroupObjectId string
-
 @description('Object ID of an existing Entra security group for network operators.')
 param networkOperatorsGroupObjectId string
 
@@ -411,7 +408,7 @@ module connectivityRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssign
   name: 'connectivity-subscription-rbac'
   scope: subscription(connectivitySubscriptionId)
   params: {
-    subscriptionOwnersGroupObjectId: subscriptionOwnersGroupObjectId
+    deployOperatorRoleAssignment: deployRoleAssignments
     operatorGroupObjectId: networkOperatorsGroupObjectId
     operatorRoleDefinitionId: '4d97b98b-1d4f-4787-a291-c67834d212e7'
   }
@@ -424,7 +421,7 @@ module workloadRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssignment
   name: 'workload-subscription-rbac'
   scope: subscription(workloadSubscriptionId)
   params: {
-    subscriptionOwnersGroupObjectId: subscriptionOwnersGroupObjectId
+    deployOperatorRoleAssignment: deployRoleAssignments
     operatorGroupObjectId: workloadContributorsGroupObjectId
     operatorRoleDefinitionId: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
   }
