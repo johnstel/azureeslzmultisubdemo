@@ -94,71 +94,168 @@ resource publicManagementIngress 'Microsoft.Authorization/policyDefinitions@2025
     }
     policyRule: {
       if: {
-        allOf: [
+        anyOf: [
           {
-            field: 'type'
-            equals: 'Microsoft.Network/networkSecurityGroups/securityRules'
-          }
-          {
-            field: 'Microsoft.Network/networkSecurityGroups/securityRules/access'
-            equals: 'Allow'
-          }
-          {
-            field: 'Microsoft.Network/networkSecurityGroups/securityRules/direction'
-            equals: 'Inbound'
-          }
-          {
-            field: 'Microsoft.Network/networkSecurityGroups/securityRules/protocol'
-            in: [
-              '*'
-              'Tcp'
-            ]
-          }
-          {
-            anyOf: [
+            allOf: [
               {
-                field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix'
+                field: 'type'
+                equals: 'Microsoft.Network/networkSecurityGroups/securityRules'
+              }
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/access'
+                equals: 'Allow'
+              }
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/direction'
+                equals: 'Inbound'
+              }
+              {
+                field: 'Microsoft.Network/networkSecurityGroups/securityRules/protocol'
                 in: [
                   '*'
-                  'Internet'
-                  '0.0.0.0/0'
+                  'Tcp'
                 ]
               }
               {
-                count: {
-                  field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
-                  where: {
-                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                anyOf: [
+                  {
+                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefix'
                     in: [
                       '*'
                       'Internet'
                       '0.0.0.0/0'
                     ]
                   }
-                }
-                greater: 0
-              }
-            ]
-          }
-          {
-            anyOf: [
-              {
-                field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange'
-                in: [
-                  '*'
-                  '22'
-                  '3389'
+                  {
+                    count: {
+                      field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                      where: {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules/sourceAddressPrefixes[*]'
+                        in: [
+                          '*'
+                          'Internet'
+                          '0.0.0.0/0'
+                        ]
+                      }
+                    }
+                    greater: 0
+                  }
                 ]
               }
               {
-                count: {
-                  field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
-                  where: {
-                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
+                anyOf: [
+                  {
+                    field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRange'
                     in: [
                       '*'
                       '22'
                       '3389'
+                    ]
+                  }
+                  {
+                    count: {
+                      field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
+                      where: {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules/destinationPortRanges[*]'
+                        in: [
+                          '*'
+                          '22'
+                          '3389'
+                        ]
+                      }
+                    }
+                    greater: 0
+                  }
+                ]
+              }
+            ]
+          }
+          {
+            allOf: [
+              {
+                field: 'type'
+                equals: 'Microsoft.Network/networkSecurityGroups'
+              }
+              {
+                count: {
+                  field: 'Microsoft.Network/networkSecurityGroups/securityRules[*]'
+                  where: {
+                    allOf: [
+                      {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].access'
+                        equals: 'Allow'
+                      }
+                      {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].direction'
+                        equals: 'Inbound'
+                      }
+                      {
+                        field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].protocol'
+                        in: [
+                          '*'
+                          'Tcp'
+                        ]
+                      }
+                      {
+                        anyOf: [
+                          {
+                            field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix'
+                            in: [
+                              '*'
+                              'Internet'
+                              '0.0.0.0/0'
+                            ]
+                          }
+                          {
+                            not: {
+                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
+                              notEquals: '*'
+                            }
+                          }
+                          {
+                            not: {
+                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
+                              notEquals: 'Internet'
+                            }
+                          }
+                          {
+                            not: {
+                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefixes[*]'
+                              notEquals: '0.0.0.0/0'
+                            }
+                          }
+                        ]
+                      }
+                      {
+                        anyOf: [
+                          {
+                            field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRange'
+                            in: [
+                              '*'
+                              '22'
+                              '3389'
+                            ]
+                          }
+                          {
+                            not: {
+                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
+                              notEquals: '*'
+                            }
+                          }
+                          {
+                            not: {
+                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
+                              notEquals: '22'
+                            }
+                          }
+                          {
+                            not: {
+                              field: 'Microsoft.Network/networkSecurityGroups/securityRules[*].destinationPortRanges[*]'
+                              notEquals: '3389'
+                            }
+                          }
+                        ]
+                      }
                     ]
                   }
                 }
@@ -202,14 +299,36 @@ resource requireSubnetNsg 'Microsoft.Authorization/policyDefinitions@2025-03-01'
     }
     policyRule: {
       if: {
-        allOf: [
+        anyOf: [
           {
-            field: 'type'
-            equals: 'Microsoft.Network/virtualNetworks/subnets'
+            allOf: [
+              {
+                field: 'type'
+                equals: 'Microsoft.Network/virtualNetworks/subnets'
+              }
+              {
+                field: 'Microsoft.Network/virtualNetworks/subnets/networkSecurityGroup.id'
+                exists: 'false'
+              }
+            ]
           }
           {
-            field: 'Microsoft.Network/virtualNetworks/subnets/networkSecurityGroup.id'
-            exists: 'false'
+            allOf: [
+              {
+                field: 'type'
+                equals: 'Microsoft.Network/virtualNetworks'
+              }
+              {
+                count: {
+                  field: 'Microsoft.Network/virtualNetworks/subnets[*]'
+                  where: {
+                    field: 'Microsoft.Network/virtualNetworks/subnets[*].networkSecurityGroup.id'
+                    exists: 'false'
+                  }
+                }
+                greater: 0
+              }
+            ]
           }
         ]
       }

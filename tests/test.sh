@@ -107,7 +107,11 @@ jq -e '
   ($ingress.properties.policyRule.if | tostring | contains("\"0.0.0.0/0\"")) and
   ($ingress.properties.policyRule.if | tostring | contains("sourceAddressPrefixes[*]")) and
   ($ingress.properties.policyRule.if | tostring | contains("destinationPortRanges[*]")) and
+  ($ingress.properties.policyRule.if | tostring | contains("networkSecurityGroups/securityRules[*].protocol")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"Microsoft.Network/networkSecurityGroups\"")) and
   ($subnet.properties.policyRule.if | tostring | contains("networkSecurityGroup.id")) and
+  ($subnet.properties.policyRule.if | tostring | contains("virtualNetworks/subnets[*].networkSecurityGroup.id")) and
+  ($subnet.properties.policyRule.if | tostring | contains("\"Microsoft.Network/virtualNetworks\"")) and
   ($initiative.scope | contains("demoRootManagementGroupId")) and
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == ["public-management-ingress", "require-subnet-nsg"] and
   ($assignment.scope | contains("workloadManagementGroupId")) and
