@@ -52,12 +52,42 @@ function Find-JsonObjects {
     return $results
 }
 
+function Find-ProhibitedPaidDeclarations {
+    param($Node)
+    $results = @()
+    if ($null -eq $Node) {
+        return $results
+    }
+    if ($Node -is [System.Management.Automation.PSCustomObject]) {
+        $typeProperty = $Node.PSObject.Properties['type']
+        $apiVersionProperty = $Node.PSObject.Properties['apiVersion']
+        $nameProperty = $Node.PSObject.Properties['name']
+        if ($typeProperty -and $typeProperty.Value -eq 'Microsoft.Resources/deployments' -and
+            $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel')) {
+            return $results
+        }
+        $prohibitedPattern = '^Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$'
+        if ($typeProperty -and $apiVersionProperty -and $typeProperty.Value -match $prohibitedPattern) {
+            $results += $typeProperty.Value
+        }
+        foreach ($property in $Node.PSObject.Properties) {
+            $results += Find-ProhibitedPaidDeclarations -Node $property.Value
+        }
+    }
+    elseif ($Node -is [System.Collections.IEnumerable] -and $Node -isnot [string]) {
+        foreach ($item in $Node) {
+            $results += Find-ProhibitedPaidDeclarations -Node $item
+        }
+    }
+    return $results
+}
+
 try {
     if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/22 Validate repository versioning and branch guidance...'
+    Write-Host '1/23 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -75,7 +105,7 @@ try {
         }
     }
 
-    Write-Host '2/22 Build the complete tenant template...'
+    Write-Host '2/23 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -87,8 +117,10 @@ try {
         --file (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.bicep') `
         --outfile $compiledEligibilityTemplate
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Owner eligibility Bicep build failed.' }
+    & (Join-Path $ScriptDir 'validate-policy-assignment.ps1') -CompiledMainTemplate $compiledTemplate
+    & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/22 Validate both parameter templates...'
+    Write-Host '3/23 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -100,12 +132,24 @@ try {
     if ($parameterTemplate.parameters.denyPolicyEnforcementMode.value -ne 'DoNotEnforce') {
         Stop-Test 'denyPolicyEnforcementMode must default to DoNotEnforce.'
     }
+    if (Compare-Object @('eastus', 'eastus2') @($parameterTemplate.parameters.customerAllowedLocations.value)) {
+        Stop-Test 'customerAllowedLocations must default to eastus and eastus2.'
+    }
+    if ('Microsoft.PolicyInsights/remediations' -notin @($parameterTemplate.parameters.customerAllowedResourceTypes.value) -or
+        @($parameterTemplate.parameters.customerAllowedVmSkus.value).Count -eq 0) {
+        Stop-Test 'Customer resource-type and VM SKU allowlists must remain safe and populated.'
+    }
+    $compiledParametersPath = Join-Path $TempDir 'main.parameters.json'
     & az bicep build-params `
         --file (Join-Path $ProjectDir 'parameters/main.template.bicepparam') `
-        --outfile (Join-Path $TempDir 'main.parameters.json')
+        --outfile $compiledParametersPath
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
+    $compiledParameters = Get-Content -LiteralPath $compiledParametersPath -Raw | ConvertFrom-Json
+    if ($compiledParameters.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
+        Stop-Test 'networkIngressPolicyEffect must default to Audit in the Bicep parameter template.'
+    }
 
-    Write-Host '4/22 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/23 Confirm there are exactly two unconditional subscription associations...'
     $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -116,27 +160,28 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/22 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
-    $bicepFiles = @(
-        Get-Item (Join-Path $ProjectDir 'main.bicep')
-        Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
-            Where-Object { $_.Name -notin @('policy-library.bicep', 'central-monitoring.bicep', 'central-monitoring-workspace.bicep', 'central-monitoring-sentinel.bicep') }
-    )
-    $prohibitedPattern = 'Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)'
-    foreach ($bicepFile in $bicepFiles) {
-        if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match $prohibitedPattern) {
-            Stop-Test "A prohibited evidence resource type is declared in $($bicepFile.Name)."
-        }
+    Write-Host '5/23 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
+        Stop-Test 'A prohibited evidence resource type is declared.'
+    }
+    $paidResourceFixture = Join-Path $TempDir 'paid-resource-declaration.json'
+    & az bicep build `
+        --file (Join-Path $ScriptDir 'fixtures/paid-resource-declaration.bicep') `
+        --outfile $paidResourceFixture
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Paid-resource declaration fixture build failed.' }
+    $paidResourceFixtureJson = Get-Content -LiteralPath $paidResourceFixture -Raw | ConvertFrom-Json
+    if (@(Find-ProhibitedPaidDeclarations -Node $paidResourceFixtureJson).Count -eq 0) {
+        Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/22 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/23 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/22 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/23 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -636,7 +681,7 @@ exit $LASTEXITCODE
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/22 Confirm the region policy safely permits global resources...'
+    Write-Host '8/23 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -647,8 +692,205 @@ exit $LASTEXITCODE
             Stop-Test "Region policy is missing: $requiredPolicyText"
         }
     }
+    if ($parameterTemplate.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
+        Stop-Test 'networkIngressPolicyEffect must default to Audit in the JSON parameter template.'
+    }
+    if ($compiledJson.parameters.networkIngressPolicyEffect.defaultValue -ne 'Audit' -or
+        (Compare-Object @($compiledJson.parameters.networkIngressPolicyEffect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
+        Stop-Test 'Compiled networkIngressPolicyEffect must allow Audit, Deny, and Disabled and default to Audit.'
+    }
 
-    Write-Host '9/22 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    $policyLibrary = @($compiledJson.resources | Where-Object {
+        $_.name.StartsWith("[format('policy-library-")
+    })
+    if ($policyLibrary.Count -ne 1) {
+        Stop-Test 'Expected exactly one compiled policy-library deployment.'
+    }
+    $policyDefinitions = @($policyLibrary[0].properties.template.resources)
+    $publicManagementIngress = @($policyDefinitions | Where-Object {
+        $_.properties.displayName -eq 'Demo - block public RDP and SSH NSG rules'
+    })
+    $requireSubnetNsg = @($policyDefinitions | Where-Object {
+        $_.properties.displayName -eq 'Demo - require NSGs on workload subnets'
+    })
+    if ($publicManagementIngress.Count -ne 1 -or $requireSubnetNsg.Count -ne 1) {
+        Stop-Test 'Expected exactly one public-management-ingress and one subnet-NSG definition.'
+    }
+    if ($publicManagementIngress[0].properties.parameters.effect.defaultValue -ne 'Audit' -or
+        (Compare-Object @($publicManagementIngress[0].properties.parameters.effect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
+        Stop-Test 'Public-management-ingress effect must allow Audit, Deny, and Disabled and default to Audit.'
+    }
+    if (Compare-Object @($policyLibrary[0].properties.template.variables.managementPorts) @('22', '3389')) {
+        Stop-Test 'Compiled management port list must contain exactly SSH 22 and RDP 3389.'
+    }
+
+    $ingressPolicyText = $publicManagementIngress[0].properties.policyRule.if | ConvertTo-Json -Depth 100 -Compress
+    foreach ($requiredExpression in @(
+        'ipRangeContains(',
+        "ipRangeContains('0.0.0.0/0'",
+        'int(first(split(',
+        'int(last(split(',
+        'Microsoft.Network/networkSecurityGroups/securityRules',
+        'Microsoft.Network/networkSecurityGroups/securityRules[*]',
+        'securityRules/sourceAddressPrefixes[*]',
+        'securityRules[*].sourceAddressPrefixes[*]',
+        'securityRules/destinationPortRanges[*]',
+        'securityRules[*].destinationPortRanges[*]'
+    )) {
+        if (-not $ingressPolicyText.Contains($requiredExpression)) {
+            Stop-Test "Compiled ingress policy is missing semantic expression: $requiredExpression"
+        }
+    }
+    foreach ($expectedOccurrence in @(
+        @{ Expression = "ipRangeContains('0.0.0.0/0'"; Count = 4 },
+        @{ Expression = "ipRangeContains(current('nonPublicIpv4Range')"; Count = 4 },
+        @{ Expression = 'int(first(split('; Count = 4 },
+        @{ Expression = 'int(last(split('; Count = 4 }
+    )) {
+        $actualCount = ([regex]::Matches(
+            $ingressPolicyText,
+            [regex]::Escape($expectedOccurrence.Expression)
+        )).Count
+        if ($actualCount -ne $expectedOccurrence.Count) {
+            Stop-Test "Compiled ingress policy has $actualCount occurrences of $($expectedOccurrence.Expression); expected $($expectedOccurrence.Count)."
+        }
+    }
+    $subnetPolicyText = $requireSubnetNsg[0].properties.policyRule.if | ConvertTo-Json -Depth 100 -Compress
+    foreach ($requiredExpression in @(
+        'Microsoft.Network/virtualNetworks/subnets',
+        'Microsoft.Network/virtualNetworks',
+        'virtualNetworks/subnets[*].networkSecurityGroup.id'
+    )) {
+        if (-not $subnetPolicyText.Contains($requiredExpression)) {
+            Stop-Test "Compiled subnet-NSG policy is missing resource shape: $requiredExpression"
+        }
+    }
+
+    $networkInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'network-ingress-initiative' })
+    $networkAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-network-ingress' })
+    if ($networkInitiative.Count -ne 1 -or $networkInitiative[0].scope -notmatch 'demoRootManagementGroupId') {
+        Stop-Test 'Network ingress initiative must be defined once at the dedicated demo root.'
+    }
+    $referenceIds = @($networkInitiative[0].properties.parameters.policyDefinitionReferences.value |
+        ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object)
+    if (Compare-Object $referenceIds @('public-management-ingress', 'require-subnet-nsg')) {
+        Stop-Test 'Network ingress initiative must contain only the two workload-boundary references.'
+    }
+    if ($networkAssignment.Count -ne 1 -or
+        $networkAssignment[0].scope -notmatch 'workloadManagementGroupId' -or
+        $networkAssignment[0].scope -match 'platformManagementGroupId') {
+        Stop-Test 'Network ingress assignment must target only the selected workload management group.'
+    }
+    if ($networkAssignment[0].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        $networkAssignment[0].properties.parameters.parameters.value.effect.value -ne "[parameters('networkIngressPolicyEffect')]") {
+        Stop-Test 'Network ingress assignment must preserve DoNotEnforce/Audit parameter wiring.'
+    }
+    if (@($networkAssignment[0].properties.parameters.nonComplianceMessages.value).Count -ne 2) {
+        Stop-Test 'Network ingress assignment must provide two targeted noncompliance messages.'
+    }
+    $messageReferenceIds = @($networkAssignment[0].properties.parameters.nonComplianceMessages.value |
+        ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object)
+    if ((Compare-Object $messageReferenceIds @('public-management-ingress', 'require-subnet-nsg')) -or
+        @($networkAssignment[0].properties.parameters.nonComplianceMessages.value |
+            Where-Object { [string]::IsNullOrEmpty($_.message) }).Count -ne 0) {
+        Stop-Test 'Network ingress noncompliance messages must be non-empty and target both initiative references.'
+    }
+    $rootPublicIpAssignments = @($compiledJson.resources | Where-Object {
+        $_.name -eq 'assign-audit-public-ip' -and $_.scope -match 'demoRootManagementGroupId'
+    })
+    if ($rootPublicIpAssignments.Count -ne 1) {
+        Stop-Test 'Expected the existing public-IP audit to remain a single dedicated-root assignment.'
+    }
+
+    $semanticFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/network-ingress-semantic-cases.json') -Raw | ConvertFrom-Json
+    $compiledNonPublicRanges = @($policyLibrary[0].properties.template.variables.nonPublicIpv4Ranges)
+    if (Compare-Object $compiledNonPublicRanges @($semanticFixture.nonPublicIpv4Ranges)) {
+        Stop-Test 'Compiled non-public IPv4 ranges differ from the behavioral fixture.'
+    }
+
+    function ConvertTo-Ipv4Network {
+        param([string]$Value)
+        $parts = $Value.Split('/')
+        if ($parts.Count -gt 2 -or [string]::IsNullOrEmpty($parts[0])) { return $null }
+        $address = $null
+        if (-not [System.Net.IPAddress]::TryParse($parts[0], [ref]$address) -or
+            $address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+            return $null
+        }
+        $prefixLength = 32
+        if ($parts.Count -eq 2 -and
+            (-not [int]::TryParse($parts[1], [ref]$prefixLength) -or $prefixLength -lt 0 -or $prefixLength -gt 32)) {
+            return $null
+        }
+        $bytes = $address.GetAddressBytes()
+        [uint64]$value = ([uint64]$bytes[0] -shl 24) -bor ([uint64]$bytes[1] -shl 16) -bor
+            ([uint64]$bytes[2] -shl 8) -bor [uint64]$bytes[3]
+        [uint64]$mask = if ($prefixLength -eq 0) {
+            0
+        } else {
+            [uint64]4294967295 - (([uint64]1 -shl (32 - $prefixLength)) - 1)
+        }
+        return [pscustomobject]@{
+            Network = $value -band $mask
+            PrefixLength = $prefixLength
+            Mask = $mask
+        }
+    }
+
+    $nonPublicNetworks = @($semanticFixture.nonPublicIpv4Ranges | ForEach-Object { ConvertTo-Ipv4Network $_ })
+    $supportedServiceTags = @($semanticFixture.supportedServiceTags)
+    function Test-PublicIpv4Source {
+        param([string]$Value)
+        if ($Value -in @('*', 'Internet', '0.0.0.0/0')) { return $true }
+        if ([string]::IsNullOrEmpty($Value) -or $Value -in $supportedServiceTags -or [char]::IsLetter($Value[0])) { return $false }
+        $source = ConvertTo-Ipv4Network $Value
+        if ($null -eq $source) { return $false }
+        foreach ($network in $nonPublicNetworks) {
+            if ($source.PrefixLength -ge $network.PrefixLength -and
+                ($source.Network -band $network.Mask) -eq $network.Network) {
+                return $false
+            }
+        }
+        return $true
+    }
+
+    function Test-ManagementPortRange {
+        param([string]$Value)
+        if ($Value -eq '*') { return $true }
+        if ($Value -notmatch '^([0-9]{1,5})(?:-([0-9]{1,5}))?$') { return $false }
+        $start = [int]$Matches[1]
+        $end = if ($Matches[2]) { [int]$Matches[2] } else { $start }
+        if ($start -gt $end -or $end -gt 65535) { return $false }
+        return (($start -le 22 -and 22 -le $end) -or ($start -le 3389 -and 3389 -le $end))
+    }
+
+    $coveredShapes = @{}
+    $coveredSourceForms = @{}
+    $coveredDestinationForms = @{}
+    foreach ($case in $semanticFixture.cases) {
+        $sourceForm = if ($case.PSObject.Properties['sourceForm']) { $case.sourceForm } else { 'single' }
+        $destinationForm = if ($case.PSObject.Properties['destinationForm']) { $case.destinationForm } else { 'single' }
+        $coveredShapes[$case.shape] = $true
+        $coveredSourceForms[$sourceForm] = $true
+        $coveredDestinationForms[$destinationForm] = $true
+        $actual = (
+            $case.access -eq 'Allow' -and
+            $case.direction -eq 'Inbound' -and
+            $case.protocol -in @('Tcp', '*') -and
+            @($case.sourcePrefixes | Where-Object { Test-PublicIpv4Source $_ }).Count -gt 0 -and
+            @($case.destinationPorts | Where-Object { Test-ManagementPortRange $_ }).Count -gt 0
+        )
+        if ($actual -ne $case.expectedNonCompliant) {
+            Stop-Test "Network ingress semantic case failed: $($case.name) (expected $($case.expectedNonCompliant), got $actual)."
+        }
+    }
+    if (@($coveredShapes.Keys).Count -ne 2 -or
+        @($coveredSourceForms.Keys).Count -ne 2 -or
+        @($coveredDestinationForms.Keys).Count -ne 2) {
+        Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
+    }
+
+    Write-Host '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -688,7 +930,7 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/22 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '10/23 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -716,7 +958,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '11/22 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '11/23 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -738,7 +980,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '12/22 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '12/23 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -759,7 +1001,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '13/22 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '13/23 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -771,7 +1013,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/22 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '14/23 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -779,7 +1021,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '15/22 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '15/23 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -791,7 +1033,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '16/22 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '16/23 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -808,7 +1050,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '17/22 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '17/23 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -911,7 +1153,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '18/22 Parse every PowerShell lifecycle and test script...'
+    Write-Host '18/23 Parse every PowerShell lifecycle and test script...'
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
         Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'
@@ -929,10 +1171,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/22 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '19/23 Validate reusable initiative composition...'
+    & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
+
+    Write-Host '20/23 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '20/22 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '21/23 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -942,10 +1187,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '21/22 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '22/23 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '22/22 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '23/23 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'

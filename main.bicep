@@ -48,6 +48,14 @@ param readOnlyAuditorsGroupObjectId string
 ])
 param denyPolicyEnforcementMode string = 'DoNotEnforce'
 
+@description('Effect for workload public-management-ingress and subnet-NSG controls. Keep Audit until policy impact and exemptions are reviewed.')
+@allowed([
+  'Audit'
+  'Deny'
+  'Disabled'
+])
+param networkIngressPolicyEffect string = 'Audit'
+
 @description('Continental-US Azure regions allowed by the demo policy.')
 param allowedLocations array = [
   'centralus'
@@ -59,6 +67,55 @@ param allowedLocations array = [
   'westus'
   'westus2'
   'westus3'
+]
+
+@description('Change-controlled customer-control region allowlist. This does not replace the broader safe demo allowedLocations profile.')
+param customerAllowedLocations array = [
+  'eastus'
+  'eastus2'
+]
+
+@description('Change-controlled customer-control resource-type allowlist. Keep required diagnostics, extensions, private endpoint, backup, and policy-remediation child types before enforcement.')
+param customerAllowedResourceTypes array = [
+  'Microsoft.Authorization/policyDefinitions'
+  'Microsoft.Authorization/policyExemptions'
+  'Microsoft.Authorization/policyAssignments'
+  'Microsoft.Authorization/policySetDefinitions'
+  'Microsoft.Authorization/roleAssignments'
+  'Microsoft.Compute/disks'
+  'Microsoft.Compute/virtualMachines'
+  'Microsoft.Compute/virtualMachines/extensions'
+  'Microsoft.Insights/diagnosticSettings'
+  'Microsoft.ManagedIdentity/userAssignedIdentities'
+  'Microsoft.Network/networkInterfaces'
+  'Microsoft.Network/networkSecurityGroups'
+  'Microsoft.Network/privateDnsZones'
+  'Microsoft.Network/privateDnsZones/virtualNetworkLinks'
+  'Microsoft.Network/privateEndpoints'
+  'Microsoft.Network/privateEndpoints/privateDnsZoneGroups'
+  'Microsoft.Network/publicIPAddresses'
+  'Microsoft.Network/virtualNetworks'
+  'Microsoft.Network/virtualNetworks/subnets'
+  'Microsoft.OperationalInsights/workspaces'
+  'Microsoft.OperationsManagement/solutions'
+  'Microsoft.PolicyInsights/remediations'
+  'Microsoft.RecoveryServices/vaults'
+  'Microsoft.RecoveryServices/vaults/backupFabrics'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems'
+  'Microsoft.RecoveryServices/vaults/backupPolicies'
+  'Microsoft.Resources/deployments'
+  'Microsoft.Resources/resourceGroups'
+  'Microsoft.SecurityInsights/onboardingStates'
+]
+
+@description('Change-controlled customer-control virtual machine size SKU allowlist.')
+param customerAllowedVmSkus array = [
+  'Standard_B1ls'
+  'Standard_B1s'
+  'Standard_B1ms'
+  'Standard_B2s'
+  'Standard_B2ms'
 ]
 
 @description('Set true only after reviewing the RBAC matrix and what-if.')
@@ -159,7 +216,7 @@ module allowedLocationsAssignment 'modules/policy-assignment.bicep' = {
   name: 'assign-allowed-locations'
   scope: managementGroup(demoRootManagementGroupId)
   params: {
-    assignmentName: 'demo-allowed-us-locations'
+    assignmentName: 'demo-allowed-us-locs'
     displayName: 'Demo - allowed continental-US locations'
     description: 'Restricts regional resources to the approved continental-US list while safely allowing global resources.'
     policyDefinitionId: policyLibrary.outputs.allowedLocationsPolicyDefinitionId
@@ -183,6 +240,111 @@ module auditPublicIpAssignment 'modules/policy-assignment.bicep' = {
     enforcementMode: 'Default'
     parameters: {}
   }
+}
+
+module rootDeploymentRestrictions 'modules/root-deployment-restrictions.bicep' = {
+  name: 'root-deployment-restrictions'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    namePrefix: namePrefix
+    auditPublicIpPolicyDefinitionId: policyLibrary.outputs.auditPublicIpPolicyDefinitionId
+    allowedResourceTypesPolicyDefinitionId: policyLibrary.outputs.allowedResourceTypesAllPolicyDefinitionId
+    allowedLocations: customerAllowedLocations
+    allowedResourceTypes: customerAllowedResourceTypes
+    allowedVmSkus: customerAllowedVmSkus
+    enforcementMode: denyPolicyEnforcementMode
+  }
+}
+
+module networkIngressInitiative 'modules/policy-initiative.bicep' = {
+  name: 'network-ingress-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-network-ingress'
+    initiativeDisplayName: 'Demo - workload network ingress guardrails'
+    initiativeDescription: 'Audits public RDP/SSH NSG rules and workload subnets without NSGs; deny remains opt-in and non-enforcing by default.'
+    initiativeCategory: 'Network'
+    initiativeVersion: '1.0.0'
+    initiativeParameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Network ingress effect'
+          description: 'Audit is the safe default. Select Deny only after reviewing approved management paths and exemptions.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+    }
+    policyDefinitionGroups: [
+      {
+        name: 'workload-boundary'
+        displayName: 'Workload boundary'
+        category: 'Network'
+        description: 'Controls applied only to the selected Corp or Online workload branch.'
+      }
+    ]
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: policyLibrary.outputs.publicManagementIngressPolicyDefinitionId
+        policyDefinitionReferenceId: 'public-management-ingress'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'workload-boundary'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.requireSubnetNsgPolicyDefinitionId
+        policyDefinitionReferenceId: 'require-subnet-nsg'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'workload-boundary'
+        ]
+      }
+    ]
+  }
+}
+
+module networkIngressAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-network-ingress'
+  scope: managementGroup(workloadManagementGroupId)
+  params: {
+    assignmentName: 'demo-network-ingress'
+    displayName: 'Demo - workload network ingress guardrails'
+    description: 'Audits public management ingress and missing subnet NSGs in the selected workload branch.'
+    policyDefinitionId: networkIngressInitiative.outputs.policySetDefinitionId
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: networkIngressPolicyEffect
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Public inbound TCP access to SSH (22) or RDP (3389) is not approved. Use a private approved management path or obtain a governed exemption.'
+        policyDefinitionReferenceId: 'public-management-ingress'
+      }
+      {
+        message: 'Workload subnets require an NSG association. Document platform constraints and obtain a governed exemption when an NSG is unsupported.'
+        policyDefinitionReferenceId: 'require-subnet-nsg'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
 }
 
 module expensiveResourcesAssignment 'modules/policy-assignment.bicep' = {
@@ -218,7 +380,7 @@ module workloadResourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
   name: 'assign-workload-rg-tags'
   scope: managementGroup(workloadManagementGroupId)
   params: {
-    assignmentName: 'demo-require-workload-rg-tags'
+    assignmentName: 'demo-require-rg-tags'
     displayName: 'Demo - require workload resource group tags'
     description: 'Requires Application, Environment, and Owner tags on workload resource groups.'
     policyDefinitionId: policyLibrary.outputs.workloadResourceGroupTagsPolicyDefinitionId

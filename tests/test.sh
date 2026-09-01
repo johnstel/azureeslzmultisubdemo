@@ -21,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/22 Validate repository versioning and branch guidance...\n'
+printf '1/23 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -32,7 +32,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/22 Build the complete tenant template...\n'
+printf '2/23 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -42,40 +42,72 @@ fi
 az bicep build \
   --file "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.bicep" \
   --outfile "${TEMP_DIR}/owner-eligibility-request.json" >/dev/null
+COMPILED_MAIN_TEMPLATE="${TEMP_DIR}/main.json" "${SCRIPT_DIR}/validate-policy-assignment.sh"
+"${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/22 Validate the ARM parameter template...\n'
+printf '3/23 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
-  .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce"
+  .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
+  .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
+  (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
+  (.parameters.customerAllowedVmSkus.value | length) > 0 and
+  .parameters.networkIngressPolicyEffect.value == "Audit"
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
+jq -e '.parameters.networkIngressPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
-printf '4/22 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/23 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/22 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
-if rg -n \
-  "Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)" \
-  "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" \
-  -g '*.bicep' | rg -v 'policy-library\.bicep|central-monitoring(-workspace|-sentinel)?\.bicep'; then
+printf '5/23 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+find_prohibited_paid_declarations() {
+  jq -r '
+    def prohibited:
+      test("^Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$"; "i");
+    def declarations:
+      if type == "object" then
+        . as $resource
+        | if $resource.type? == "Microsoft.Resources/deployments"
+            and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel"))
+          then empty
+          elif (($resource.type? | type) == "string") and $resource.apiVersion? and ($resource.type | prohibited)
+          then $resource.type
+          else .[] | declarations
+          end
+      elif type == "array" then .[] | declarations
+      else empty
+      end;
+    declarations
+  ' "$1"
+}
+
+if [[ -n "$(find_prohibited_paid_declarations "${TEMP_DIR}/main.json")" ]]; then
   printf 'ERROR: A prohibited evidence resource type is declared.\n' >&2
   exit 1
 fi
+az bicep build \
+  --file "${SCRIPT_DIR}/fixtures/paid-resource-declaration.bicep" \
+  --outfile "${TEMP_DIR}/paid-resource-declaration.json"
+[[ -n "$(find_prohibited_paid_declarations "${TEMP_DIR}/paid-resource-declaration.json")" ]] || {
+  printf 'ERROR: The paid-resource declaration safety check did not reject its negative fixture.\n' >&2
+  exit 1
+}
 
-printf '6/22 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/23 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/22 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+printf '7/23 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 4 ]] || {
   printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
@@ -541,12 +573,163 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/22 Confirm region policy safely permits global resources...\n'
+printf '8/23 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
+jq -e '
+  .parameters.networkIngressPolicyEffect.defaultValue == "Audit" and
+  .parameters.networkIngressPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and
+  .resources as $resources |
+  ($resources[] | select(.name | startswith("[format(\u0027policy-library-"))) as $library |
+  $library.properties.template.resources as $definitions |
+  ($definitions | map(select(.properties.displayName == "Demo - block public RDP and SSH NSG rules")) | first) as $ingress |
+  ($definitions | map(select(.properties.displayName == "Demo - require NSGs on workload subnets")) | first) as $subnet |
+  ($resources | map(select(.name == "network-ingress-initiative")) | first) as $initiative |
+  ($resources | map(select(.name == "assign-network-ingress")) | first) as $assignment |
+  $ingress.properties.parameters.effect.defaultValue == "Audit" and
+  $ingress.properties.parameters.effect.allowedValues == ["Audit", "Deny", "Disabled"] and
+  $library.properties.template.variables.managementPorts == ["22", "3389"] and
+  ($ingress.properties.policyRule.if | tostring | contains("Microsoft.Network/networkSecurityGroups/securityRules")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"Internet\"")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"0.0.0.0/0\"")) and
+  ($ingress.properties.policyRule.if | tostring | contains("sourceAddressPrefixes[*]")) and
+  ($ingress.properties.policyRule.if | tostring | contains("destinationPortRanges[*]")) and
+  ($ingress.properties.policyRule.if | tostring | contains("networkSecurityGroups/securityRules[*].protocol")) and
+  ($ingress.properties.policyRule.if | tostring | contains("\"Microsoft.Network/networkSecurityGroups\"")) and
+  ($subnet.properties.policyRule.if | tostring | contains("networkSecurityGroup.id")) and
+  ($subnet.properties.policyRule.if | tostring | contains("virtualNetworks/subnets[*].networkSecurityGroup.id")) and
+  ($subnet.properties.policyRule.if | tostring | contains("\"Microsoft.Network/virtualNetworks\"")) and
+  ($initiative.scope | contains("demoRootManagementGroupId")) and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == ["public-management-ingress", "require-subnet-nsg"] and
+  ($assignment.scope | contains("workloadManagementGroupId")) and
+  ($assignment.scope | contains("platformManagementGroupId") | not) and
+  $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  $assignment.properties.parameters.parameters.value.effect.value == "[parameters(\u0027networkIngressPolicyEffect\u0027)]" and
+  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 2 and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) == ["public-management-ingress", "require-subnet-nsg"] and
+  ($assignment.properties.parameters.nonComplianceMessages.value | all(.message | length > 0))
+' "${TEMP_DIR}/main.json" >/dev/null
+root_public_ip_assignment_count="$(jq '
+  [.resources[]
+    | select(.name == "assign-audit-public-ip")
+    | select(.scope | contains("demoRootManagementGroupId"))
+  ] | length
+' "${TEMP_DIR}/main.json")"
+[[ "${root_public_ip_assignment_count}" -eq 1 ]] || {
+  printf 'ERROR: Expected the existing public-IP audit to remain a single dedicated-root assignment.\n' >&2
+  exit 1
+}
+python3 - "${TEMP_DIR}/main.json" "${PROJECT_DIR}/tests/fixtures/network-ingress-semantic-cases.json" <<'PYEOF'
+import ipaddress
+import json
+import sys
 
-printf '9/22 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+compiled_path, fixture_path = sys.argv[1:3]
+with open(compiled_path, encoding="utf-8") as stream:
+    compiled = json.load(stream)
+with open(fixture_path, encoding="utf-8") as stream:
+    fixture = json.load(stream)
+
+library = next(
+    resource
+    for resource in compiled["resources"]
+    if resource["name"].startswith("[format('policy-library-")
+)
+template = library["properties"]["template"]
+definition = next(
+    resource
+    for resource in template["resources"]
+    if resource["properties"]["displayName"] == "Demo - block public RDP and SSH NSG rules"
+)
+if template["variables"]["nonPublicIpv4Ranges"] != fixture["nonPublicIpv4Ranges"]:
+    raise SystemExit("ERROR: Compiled non-public IPv4 ranges differ from the behavioral fixture.")
+
+policy_text = json.dumps(definition["properties"]["policyRule"]["if"])
+for required_expression in (
+    "ipRangeContains(",
+    "ipRangeContains('0.0.0.0/0'",
+    "int(first(split(",
+    "int(last(split(",
+    "securityRules/sourceAddressPrefixes[*]",
+    "securityRules[*].sourceAddressPrefixes[*]",
+    "securityRules/destinationPortRanges[*]",
+    "securityRules[*].destinationPortRanges[*]",
+):
+    if required_expression not in policy_text:
+        raise SystemExit(f"ERROR: Compiled ingress policy is missing semantic expression: {required_expression}")
+for expression, expected_count in (
+    ("ipRangeContains('0.0.0.0/0'", 4),
+    ("ipRangeContains(current('nonPublicIpv4Range')", 4),
+    ("int(first(split(", 4),
+    ("int(last(split(", 4),
+):
+    if policy_text.count(expression) != expected_count:
+        raise SystemExit(
+            f"ERROR: Compiled ingress policy has {policy_text.count(expression)} occurrences "
+            f"of {expression}; expected {expected_count}."
+        )
+
+non_public = [ipaddress.ip_network(value) for value in fixture["nonPublicIpv4Ranges"]]
+service_tags = set(fixture["supportedServiceTags"])
+
+def is_public_source(value):
+    if value in {"*", "Internet", "0.0.0.0/0"}:
+        return True
+    if value in service_tags or not value or value[0].isalpha():
+        return False
+    try:
+        source = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return False
+    return source.version == 4 and not any(source.subnet_of(network) for network in non_public)
+
+def contains_management_port(value):
+    if value == "*":
+        return True
+    try:
+        parts = value.split("-")
+        if len(parts) == 1:
+            start = end = int(parts[0])
+        elif len(parts) == 2:
+            start, end = map(int, parts)
+        else:
+            return False
+    except ValueError:
+        return False
+    return 0 <= start <= end <= 65535 and any(start <= port <= end for port in (22, 3389))
+
+forms = {
+    "shape": set(),
+    "source": set(),
+    "destination": set(),
+}
+for case in fixture["cases"]:
+    forms["shape"].add(case["shape"])
+    forms["source"].add(case.get("sourceForm", "single"))
+    forms["destination"].add(case.get("destinationForm", "single"))
+    actual = (
+        case["access"] == "Allow"
+        and case["direction"] == "Inbound"
+        and case["protocol"] in {"Tcp", "*"}
+        and any(is_public_source(value) for value in case["sourcePrefixes"])
+        and any(contains_management_port(value) for value in case["destinationPorts"])
+    )
+    if actual != case["expectedNonCompliant"]:
+        raise SystemExit(
+            f"ERROR: Network ingress semantic case failed: {case['name']} "
+            f"(expected {case['expectedNonCompliant']}, got {actual})."
+        )
+
+if forms != {
+    "shape": {"child", "inline"},
+    "source": {"single", "plural"},
+    "destination": {"single", "plural"},
+}:
+    raise SystemExit(f"ERROR: Network ingress fixtures do not cover all resource/property forms: {forms}")
+PYEOF
+
+printf '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -579,7 +762,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/22 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '10/23 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -595,7 +778,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '11/22 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '11/23 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -619,7 +802,7 @@ landingzones_delete_line_ps1="$(rg -n '"\$prefix-landingzones"' "${PROJECT_DIR}/
   exit 1
 }
 
-printf '12/22 Confirm central monitoring defaults create no metered resources...\n'
+printf '12/23 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -629,23 +812,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "13/22 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "13/23 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '14/22 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '14/23 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '15/22 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '15/23 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '16/22 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '16/23 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -668,7 +851,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '17/22 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '17/23 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -716,7 +899,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '18/22 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '18/23 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done
@@ -746,11 +929,13 @@ for bash_bin in /usr/local/bin/bash /opt/homebrew/bin/bash /bin/bash; do
   fi
 done
 if [[ -n "${bash3_candidate}" ]]; then
-  printf '  Found a Bash < 4.0 interpreter (%s); executing static validators under it...\n' "${bash3_candidate}"
-  if ! "${bash3_candidate}" "${PROJECT_DIR}/tests/validate-control-catalog.sh" >/dev/null; then
-    printf 'ERROR: tests/validate-control-catalog.sh failed when executed directly under %s.\n' "${bash3_candidate}" >&2
-    exit 1
-  fi
+  printf '  Found a Bash < 4.0 interpreter (%s); executing Bash validators under it...\n' "${bash3_candidate}"
+  for bash3_validator in validate-control-catalog.sh validate-initiative-composition.sh; do
+    if ! "${bash3_candidate}" "${PROJECT_DIR}/tests/${bash3_validator}" >/dev/null; then
+      printf 'ERROR: tests/%s failed when executed directly under %s.\n' "${bash3_validator}" "${bash3_candidate}" >&2
+      exit 1
+    fi
+  done
   if ! "${bash3_candidate}" "${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" >/dev/null; then
     printf 'ERROR: scripts/validate-rbac-artifacts.sh failed when executed directly under %s.\n' "${bash3_candidate}" >&2
     exit 1
@@ -784,16 +969,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '19/22 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '19/23 Validate reusable initiative composition...\n'
+"${SCRIPT_DIR}/validate-initiative-composition.sh"
+
+printf '20/23 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '20/22 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '21/23 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '21/22 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '22/23 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '22/22 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '23/23 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"

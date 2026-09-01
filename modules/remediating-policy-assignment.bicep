@@ -33,6 +33,21 @@ type ResourceSelector = {
   selectors: Selector[]
 }
 
+@sealed()
+type SystemAssignedIdentity = {
+  type: 'SystemAssigned'
+}
+
+@sealed()
+type UserAssignedIdentity = {
+  type: 'UserAssigned'
+  @minLength(1)
+  resourceId: string
+}
+
+@discriminator('type')
+type RemediationIdentity = SystemAssignedIdentity | UserAssignedIdentity
+
 @sys.description('Policy assignment resource name.')
 @minLength(1)
 @maxLength(24)
@@ -51,6 +66,17 @@ param description string
 @sys.description('Full resource ID of a policy definition or policy set definition.')
 @minLength(1)
 param policyDefinitionId string
+
+@sys.description('Non-global Azure region used to store the policy assignment and its managed identity.')
+@minLength(1)
+param location string
+
+@sys.description('Managed identity configuration for remediation. UserAssigned requires the identity resource and principal IDs.')
+param identity RemediationIdentity
+
+@sys.description('Verified built-in role definition IDs required by the assigned policy or initiative.')
+@minLength(1)
+param verifiedRoleDefinitionIds string[]
 
 @sys.description('Optional policy or initiative definition version. An empty value leaves the definition unpinned.')
 param definitionVersion string = ''
@@ -169,6 +195,37 @@ var validatedDefinitionVersion = empty(definitionVersion) || (isBuiltInDefinitio
   ? definitionVersion
   : fail('definitionVersion is supported only for built-in definitions and must use N.*.* or N.N.* format.')
 
+var validatedLocation = !empty(trim(location)) && toLower(trim(location)) != 'global'
+  ? trim(location)
+  : fail('location must be a non-global Azure region.')
+
+var userAssignedIdentityResourceId = identity.?resourceId ?? ''
+var userAssignedIdentityParts = split(userAssignedIdentityResourceId, '/')
+var validUserAssignedIdentityResourceId = length(userAssignedIdentityParts) == 9 ? toLower(userAssignedIdentityParts[1]) == 'subscriptions' && isGuid(userAssignedIdentityParts[2]) && toLower(userAssignedIdentityParts[3]) == 'resourcegroups' && toLower(userAssignedIdentityParts[5]) == 'providers' && toLower(userAssignedIdentityParts[6]) == 'microsoft.managedidentity' && toLower(userAssignedIdentityParts[7]) == 'userassignedidentities' && hasValidResourceIdSegments(userAssignedIdentityResourceId) : false
+var validatedUserAssignedIdentityResourceId = identity.type == 'SystemAssigned' || validUserAssignedIdentityResourceId
+  ? userAssignedIdentityResourceId
+  : fail('UserAssigned identity configuration must contain a valid user-assigned managed identity resource ID.')
+
+resource userAssignedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2024-11-30' existing = if (identity.type == 'UserAssigned') {
+  name: userAssignedIdentityParts[8]
+  scope: resourceGroup(userAssignedIdentityParts[2], userAssignedIdentityParts[4])
+}
+
+var validatedIdentityPrincipalId = identity.type == 'UserAssigned'
+  ? userAssignedIdentity!.properties.principalId
+  : assignment.identity.principalId
+
+var ownerRoleDefinitionId = '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+var userAccessAdministratorRoleDefinitionId = '18d7d88d-5c7c-48f3-befd-73a015c7e944'
+var normalizedRoleDefinitionIds = map(verifiedRoleDefinitionIds, roleDefinitionId => toLower(roleDefinitionId))
+var invalidRoleDefinitionIds = filter(normalizedRoleDefinitionIds, roleDefinitionId => !isGuid(roleDefinitionId) || roleDefinitionId == ownerRoleDefinitionId || roleDefinitionId == userAccessAdministratorRoleDefinitionId)
+var hasDuplicateRoleDefinitionIds = length(normalizedRoleDefinitionIds) != length(union(normalizedRoleDefinitionIds, normalizedRoleDefinitionIds))
+var validatedRoleDefinitionIds = !empty(invalidRoleDefinitionIds)
+  ? fail('verifiedRoleDefinitionIds must contain valid built-in role definition IDs and must not contain Owner or User Access Administrator.')
+  : hasDuplicateRoleDefinitionIds
+    ? fail('verifiedRoleDefinitionIds must not contain duplicates.')
+    : normalizedRoleDefinitionIds
+
 var invalidNonComplianceMessageReferences = filter(nonComplianceMessages, message => contains(message, 'policyDefinitionReferenceId') && empty(trim(message.?policyDefinitionReferenceId ?? '')))
 var validatedNonComplianceMessages = empty(invalidNonComplianceMessageReferences)
   ? nonComplianceMessages
@@ -199,6 +256,15 @@ var validatedResourceSelectors = hasDuplicateResourceSelectorNames
 
 resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
   name: validatedAssignmentName
+  location: validatedLocation
+  identity: {
+    type: identity.type
+    ...((identity.type == 'UserAssigned') ? {
+      userAssignedIdentities: {
+        '${validatedUserAssignedIdentityResourceId}': {}
+      }
+    } : {})
+  }
   properties: {
     displayName: displayName
     description: description
@@ -225,4 +291,15 @@ resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
   }
 }
 
+module remediationRbac './remediating-policy-rbac.bicep' = {
+  name: 'remediation-rbac-${uniqueString(assignment.id)}'
+  params: {
+    principalId: validatedIdentityPrincipalId
+    roleDefinitionIds: validatedRoleDefinitionIds
+  }
+}
+
 output policyAssignmentId string = assignment.id
+output identityPrincipalId string = validatedIdentityPrincipalId
+output identityResourceId string = identity.type == 'UserAssigned' ? validatedUserAssignedIdentityResourceId : assignment.id
+output roleAssignmentIds string[] = remediationRbac.outputs.roleAssignmentIds

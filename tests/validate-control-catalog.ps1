@@ -27,6 +27,7 @@ function Stop-Test {
 
 $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 $idPattern = '^REQ-[A-Z]+-[0-9]{2}$'
+$verificationMethods = @('raw-json', 'initiative-json-member', 'ms-learn-page', 'documentation-pattern', 'internal-design', 'in-repository-custom-definition', 'not-yet-selected', 'not-yet-created')
 
 Write-Host '1/10 Validate catalog JSON syntax...'
 $catalogText = Get-Content -LiteralPath $CatalogPath -Raw
@@ -61,7 +62,6 @@ $phases = @($catalog.enforcementPhaseValues)
 $controls = @($catalog.controls)
 
 Write-Host '3/10 Validate required per-control fields and enums...'
-$verificationMethods = @('raw-json', 'initiative-json-member', 'ms-learn-page', 'documentation-pattern', 'internal-design', 'in-repository-custom-definition', 'not-yet-selected', 'not-yet-created')
 foreach ($control in $controls) {
     foreach ($field in @('id', 'domain', 'customerRequirement', 'scope', 'classification', 'mechanism',
             'supportedEffects', 'requiredParameters', 'roleDefinitionIds', 'remediationIdentityRequired',

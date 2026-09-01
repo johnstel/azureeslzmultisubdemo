@@ -254,30 +254,28 @@
       "classification": "azure-policy",
       "mechanism": {
         "kind": "policyDefinition",
-        "builtIn": true,
-        "displayName": "Allowed resource types",
-        "definitionId": "a08ec900-254a-4555-9bf5-e42af04b5c5c",
+        "builtIn": false,
+        "displayName": "Demo - allowed resource types (all resources)",
+        "definitionId": "${namePrefix}-allowed-resource-types-all",
         "majorVersion": "1",
-        "verifiedVersion": "1.1.0",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/General/AllowedResourceTypes_Deny.json",
-        "verificationMethod": "raw-json",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
         "category": "General"
       },
       "supportedEffects": [
-        "Audit",
-        "Deny",
-        "Disabled"
+        "deny"
       ],
       "requiredParameters": [
-        "listOfResourceTypesAllowed"
+        "allowedResourceTypes"
       ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "deny-do-not-enforce",
       "evidenceSource": "Compiled ARM template + policy assignment enforcementMode.",
-      "notes": "Allowlist must include diagnostics, extensions, private endpoint, backup, and policy-remediation child resource types before enabling Deny (issue #11 acceptance criteria)."
+      "notes": "The built-in Allowed resource types definition uses Indexed mode and does not evaluate all child or locationless resources. The in-repository custom definition deliberately uses mode All. Its allowlist must include diagnostics, extensions, private endpoint, backup, policy-remediation, and governance resource types before enabling Deny (issue #11 acceptance criteria)."
     },
     {
       "id": "REQ-DEPLOY-03",
@@ -809,56 +807,65 @@
       "classification": "azure-policy",
       "mechanism": {
         "kind": "policyDefinition",
-        "builtIn": true,
-        "displayName": "Management ports should be closed on your virtual machines",
-        "definitionId": "22730e10-96f6-4aac-ad84-9383d35b5917",
-        "majorVersion": "3",
-        "verifiedVersion": "3.0.0",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_OpenManagementPortsOnVirtualMachines_Audit.json",
-        "verificationMethod": "raw-json",
-        "category": "Security Center",
-        "notes": "Existence condition depends on a Microsoft Defender for Cloud security assessment. This specific recommendation is populated by the free, default-on Foundational CSPM tier (confirmed via Microsoft Learn's Defender for Cloud compute recommendations reference); it does not require the paid Defender CSPM plan (REQ-DEF-02) or the unsafe all-plans REQ-DEF-01 initiative."
+        "builtIn": false,
+        "displayName": "Demo - block public RDP and SSH NSG rules",
+        "definitionId": "${namePrefix}-public-mgmt-ingress",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Network"
       },
       "supportedEffects": [
-        "AuditIfNotExists",
+        "Audit",
+        "Deny",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": [
+        "effect=Audit"
+      ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
-      "dependencies": [],
-      "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + Defender for Cloud recommendation/assessment (populated at no cost by Foundational CSPM: https://learn.microsoft.com/en-us/azure/defender-for-cloud/concept-cloud-security-posture-management)."
+      "dependencies": [
+        "REQ-DEPLOY-06"
+      ],
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + workload policy compliance state.",
+      "notes": "Matches inbound Allow rules for TCP or any protocol when singular/plural destination ranges contain 22 or 3389, including exact and wildcard ports. Singular/plural sources include *, Internet, 0.0.0.0/0, and arbitrary public IPv4 hosts/CIDRs; private/non-routable ranges and supported service tags are excluded, and malformed/unknown values are not classified as public. The workload initiative complements, rather than duplicates, the dedicated-root public-IP audit."
     },
     {
       "id": "REQ-NET-02",
       "domain": "network-security",
       "customerRequirement": "Require subnets to be associated with a Network Security Group.",
-      "scope": "connectivity",
+      "scope": "landingzones",
       "classification": "azure-policy",
       "mechanism": {
         "kind": "policyDefinition",
-        "builtIn": true,
-        "displayName": "Subnets should be associated with a Network Security Group",
-        "definitionId": "e71308d3-144b-4262-b144-efdc3cc90517",
-        "majorVersion": "3",
-        "verifiedVersion": "3.0.0",
-        "verifiedOn": "2026-08-31",
-        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_NetworkSecurityGroupsOnSubnets_Audit.json",
-        "verificationMethod": "raw-json",
-        "category": "Security Center"
+        "builtIn": false,
+        "displayName": "Demo - require NSGs on workload subnets",
+        "definitionId": "${namePrefix}-require-subnet-nsg",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.0",
+        "verifiedOn": "2026-09-01",
+        "sourceUrl": null,
+        "verificationMethod": "in-repository-custom-definition",
+        "category": "Network"
       },
       "supportedEffects": [
-        "AuditIfNotExists",
+        "Audit",
+        "Deny",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": [
+        "effect=Audit"
+      ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
-      "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + policy compliance state; documented exception path via governed exemptions (issue #10) for platform subnets such as AzureFirewallSubnet/GatewaySubnet."
+      "enforcementPhase": "deny-do-not-enforce",
+      "evidenceSource": "Compiled ARM template + workload policy compliance state; documented exception path via governed exemptions for special-purpose subnets where NSGs are unsupported.",
+      "notes": "Assigned only to the selected workload branch. Platform and Connectivity are outside scope; exceptional workload subnets require a time-bound governed Azure Policy exemption rather than an embedded bypass."
     },
     {
       "id": "REQ-NET-03",
