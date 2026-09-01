@@ -63,6 +63,9 @@ root:
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
 | Corp/Online and opt-in Critical Infrastructure | Audit selected PaaS public network access and private endpoint readiness | Audit |
 | Corp/Online and opt-in Critical Infrastructure | Audit supplied route-table expectations for an approved firewall | Explicit opt-in, Audit |
+| Demo root | Microsoft cloud security benchmark (built-in initiative, enabled by default) | Assignment in `DoNotEnforce` |
+| Demo root | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
+| Demo root | NIST SP 800-53 Rev. 5 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -111,6 +114,58 @@ private IP. It does not deploy or prove the firewall, VNet peering, private
 DNS, private endpoints, subnet associations, route propagation, or end-to-end
 traffic traversal. Those are customer-owned hub-routing architecture and
 operational-validation dependencies, separate from Azure Policy evidence.
+
+### Security benchmark and optional compliance overlays
+
+The demo root assigns the stable **Microsoft cloud security benchmark** (MCSB)
+built-in initiative (`1f3afdf9-d0c9-4c3d-847f-89da613e70a8`) by default through
+`enableMicrosoftCloudSecurityBenchmark`. Two overlays are independently opt-in
+and disabled by default:
+
+| Parameter | Built-in initiative | Pinned version | Default |
+|---|---|---|---|
+| `enableMicrosoftCloudSecurityBenchmark` | Microsoft cloud security benchmark | `57.*.*` | `true` |
+| `enableCisAzureFoundationsBenchmark` | CIS Microsoft Azure Foundations Benchmark v2.0.0 | `1.*.*` | `false` |
+| `enableNistSp80053Rev5` | NIST SP 800-53 Rev. 5 | `14.*.*` | `false` |
+
+Every initiative ID and pinned major version traces to
+[`policy/control-catalog.json`](policy/control-catalog.json) (REQ-BASE-01
+through REQ-BASE-03) and the generated
+[control matrix](docs/CONTROL-MATRIX.md). Assignments are made only at the
+dedicated demo root — never at the tenant root — and reuse
+`denyPolicyEnforcementMode`, so the safe default remains a non-enforcing
+`DoNotEnforce` audit posture.
+
+Version behavior and previews:
+
+- Each assignment pins the supported major version (for example `57.*.*`), so
+  Azure picks up minor and patch updates of the same major version without
+  silently adopting a new major revision. MCSB's built-in definition is updated
+  in place very frequently; re-verify its current version before promoting the
+  assignment to `Default`.
+- Preview or superseded initiatives are never selected automatically. The
+  separate *Microsoft cloud security benchmark v2*
+  (`e3ec7e09-768c-4b64-882c-fcada3772047`), *NIST SP 800-53 R5.1.1*
+  (`60205a79-6280-4e20-a147-e2011e09dc78`), and *CIS v1.4.0*
+  (`c3f5c4d9-9a1d-4a99-85c0-7f93e384d5c5`) initiatives are documented in the
+  catalog only and must be independently re-verified before any future switch.
+- MCSB and CIS are audit-only, so their assignments request no managed identity.
+  NIST SP 800-53 Rev. 5 contains four fixed Guest Configuration
+  `DeployIfNotExists`/`Modify` members, so enabling it creates a system-assigned
+  identity granted only the verified Contributor role
+  (`b24988ac-6180-42a0-ab88-20f7382dd24c`) at the demo root.
+
+Overlap with the organizational controls above is intentional: the data
+protection, network, and logging controls in these benchmarks are the
+authoritative source of truth, so this repository does not create duplicate
+custom definitions for the same intent. There is also **no** single assignable
+"Azure Security Baseline" initiative — Azure service security baselines (for
+example Storage, Key Vault, and Compute) are Microsoft Learn guidance that maps
+into individual service controls (REQ-BASE-04), not one initiative.
+
+Assigning any of these initiatives produces compliance signal only. It does not
+by itself establish, claim, or certify regulatory compliance, and no Defender
+for Cloud plan is enabled by these assignments.
 
 ### Reusable initiative composition
 
@@ -308,6 +363,15 @@ For a first review, retain:
 "denyPolicyEnforcementMode": { "value": "DoNotEnforce" },
 "deployRoleAssignments": { "value": false },
 "deployEvidenceResources": { "value": false }
+```
+
+Benchmark defaults keep only the stable MCSB baseline enabled; add the CIS or
+NIST overlays independently after reviewing their impact:
+
+```json
+"enableMicrosoftCloudSecurityBenchmark": { "value": true },
+"enableCisAzureFoundationsBenchmark": { "value": false },
+"enableNistSp80053Rev5": { "value": false }
 ```
 
 An equivalent Bicep parameter template is provided at

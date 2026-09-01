@@ -146,6 +146,15 @@
     },
     "criticalInfrastructureSubscriptionIds": {
       "value": []
+    },
+    "enableMicrosoftCloudSecurityBenchmark": {
+      "value": true
+    },
+    "enableCisAzureFoundationsBenchmark": {
+      "value": false
+    },
+    "enableNistSp80053Rev5": {
+      "value": false
     }
   }
 }

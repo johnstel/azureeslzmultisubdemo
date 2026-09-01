@@ -224,6 +224,15 @@ var validatedFirewallRouteInputs = enableFirewallRouteGuardrails && !firewallRou
   ? fail('approvedFirewallResourceId must be an Azure Firewall resource ID, approvedFirewallPrivateIp must be an IPv4 address, and approvedRouteTableResourceIds and approvedRouteTablePrefixes must contain non-empty, valid, case-insensitively unique route-table IDs and IPv4 CIDRs when enableFirewallRouteGuardrails is true.')
   : true
 
+@description('Assign the stable Microsoft cloud security benchmark (MCSB) initiative at the demo root. Enabled by default for the customer-control profile. The separate Microsoft cloud security benchmark v2 preview initiative is never assigned by this template.')
+param enableMicrosoftCloudSecurityBenchmark bool = true
+
+@description('Set true to add the optional CIS Microsoft Azure Foundations Benchmark v2.0.0 overlay at the demo root. Independent of the MCSB and NIST switches; assignment alone does not establish CIS compliance.')
+param enableCisAzureFoundationsBenchmark bool = false
+
+@description('Set true to add the optional NIST SP 800-53 Rev. 5 overlay at the demo root. This initiative contains four fixed Guest Configuration DeployIfNotExists/Modify members, so the assignment needs a system-assigned identity with the Contributor role; assignment alone does not establish NIST compliance.')
+param enableNistSp80053Rev5 bool = false
+
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
@@ -234,6 +243,19 @@ var requireResourceGroupTagPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
   '96670d01-0a4d-4649-9c89-2d3abc0a5025'
 )
+var microsoftCloudSecurityBenchmarkPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '1f3afdf9-d0c9-4c3d-847f-89da613e70a8'
+)
+var cisAzureFoundationsPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '06f19060-9e68-4070-92ca-f15cc126059e'
+)
+var nistSp80053Rev5PolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '179d1daa-458f-4e47-8086-2a68d0d6c38f'
+)
+var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -741,6 +763,64 @@ module resourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
+module microsoftCloudSecurityBenchmarkAssignment 'modules/policy-assignment.bicep' = if (enableMicrosoftCloudSecurityBenchmark) {
+  name: 'assign-mcsb-baseline'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-mcsb-baseline'
+    displayName: 'Demo - Microsoft cloud security benchmark'
+    description: 'Assigns the stable Microsoft cloud security benchmark initiative as the default security baseline for the demo hierarchy. Assignment alone does not establish regulatory compliance.'
+    policyDefinitionId: microsoftCloudSecurityBenchmarkPolicySetDefinitionId
+    definitionVersion: '57.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module cisAzureFoundationsAssignment 'modules/policy-assignment.bicep' = if (enableCisAzureFoundationsBenchmark) {
+  name: 'assign-cis-foundations'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-cis-foundations'
+    displayName: 'Demo - CIS Microsoft Azure Foundations Benchmark v2.0.0'
+    description: 'Optional CIS Azure Foundations overlay. Overlaps heavily with the Microsoft cloud security benchmark; assignment alone does not establish CIS compliance.'
+    policyDefinitionId: cisAzureFoundationsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module nistSp80053Rev5Assignment 'modules/remediating-policy-assignment.bicep' = if (enableNistSp80053Rev5) {
+  name: 'assign-nist-sp-800-53-r5'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-nist-800-53-r5'
+    displayName: 'Demo - NIST SP 800-53 Rev. 5'
+    description: 'Optional NIST SP 800-53 Rev. 5 overlay. Four fixed Guest Configuration members are remediation-capable, so a system-assigned identity with the Contributor role is required. Assignment alone does not establish NIST or NERC CIP compliance.'
+    policyDefinitionId: nistSp80053Rev5PolicySetDefinitionId
+    definitionVersion: '14.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      contributorRoleDefinitionId
+    ]
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 module managementGroupRbac 'modules/management-group-rbac.bicep' = if (deployRoleAssignments) {
   name: 'management-group-rbac'
   scope: managementGroup(demoRootManagementGroupId)
@@ -841,6 +921,11 @@ output denyPolicyEnforcementMode string = denyPolicyEnforcementMode
 output roleAssignmentsEnabled bool = deployRoleAssignments
 output evidenceResourcesEnabled bool = deployEvidenceResources
 output criticalInfrastructureEnabled bool = enableCriticalInfrastructure
+output securityBenchmarkAssignments object = {
+  microsoftCloudSecurityBenchmark: enableMicrosoftCloudSecurityBenchmark
+  cisAzureFoundationsBenchmark: enableCisAzureFoundationsBenchmark
+  nistSp80053Rev5: enableNistSp80053Rev5
+}
 output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
