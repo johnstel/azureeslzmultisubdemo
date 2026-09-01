@@ -175,6 +175,15 @@ param enableCriticalInfrastructure bool = false
 @description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch. Only used when enableCriticalInfrastructure is true.')
 param criticalInfrastructureSubscriptionIds array = []
 
+@description('Set true to opt in to Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role; see modules/defender-plan-assignment.bicep and docs/CONTROL-MATRIX.md for the fail-closed, no-standing-Owner remediation workflow required before the built-in policy can actually remediate anything.')
+param enableDefenderCspm bool = false
+
+@description('Set true to opt in to Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role. Whether the plan itself provisions agentless scanning or the Azure Monitor Agent depends on the sub-plan/settings a customer chooses directly in Microsoft Defender for Cloud; this assignment does not configure or claim that. See the unconditional Azure Monitor Agent audit assignments below (REQ-DEF-07/08) for a free, no-identity audit of current (non-deprecated) agent presence.')
+param enableDefenderForServers bool = false
+
+@description('Set true to opt in to Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role.')
+param enableDefenderForStorage bool = false
+
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
@@ -393,29 +402,33 @@ module workloadResourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
 }
 
 // REQ-DEF-02/03/04 (Microsoft Defender CSPM, for Servers, and for Storage)
-// are governance markers only: policy/control-catalog.json classifies them
-// "manual-evidence" because their only verified remediation role is Owner,
-// and a single management-group-scoped identity inherited across every
-// descendant subscription is too broad a blast radius to grant Owner to
-// automatically (this repository's shared RBAC modules never auto-grant
-// Owner/User Access Administrator; see
+// are independent, explicit, safe-by-default (false) opt-ins per issue #20.
+// Their only verified remediation role is Owner, and a single management-
+// group-scoped identity inherited across every descendant subscription is
+// too broad a blast radius for a standing grant (this repository's shared
+// RBAC modules never auto-grant Owner/User Access Administrator; see
 // modules/remediating-policy-assignment.bicep). modules/defender-plan-
-// assignment.bicep therefore always assigns effect Disabled and never
-// creates a managed identity, so this template can never create or leave
-// standing Owner access. Actually enabling a paid plan is an independent
-// action a customer takes directly against Microsoft Defender for Cloud
-// (Azure Portal or `az security pricing create`), entirely outside this
-// template.
+// assignment.bicep therefore never assigns a role to the identity it
+// creates when a plan is opted in: fail closed instead, so normal
+// deployment of this template -- opted in or not -- can never create or
+// leave standing Owner access anywhere. See modules/defender-plan-
+// assignment.bicep and docs/CONTROL-MATRIX.md for the fail-closed,
+// time-bounded remediation workflow a customer must run separately, outside
+// this template, before the built-in policy can actually remediate.
 var vulnerabilityAssessmentAuditPolicyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', '501541f7-f7e7-4cd6-868c-4190fdad3ac9')
+var windowsAmaAuditPolicyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', 'c02729e5-e5e7-4458-97fa-2b5ad0661f28')
+var linuxAmaAuditPolicyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', '1afdc4b6-581a-45fb-b630-f1e6051e3e7a')
 
 module defenderCspmAssignment 'modules/defender-plan-assignment.bicep' = {
   name: 'assign-defender-cspm'
   scope: managementGroup(demoRootManagementGroupId)
   params: {
     assignmentName: 'demo-defender-cspm'
-    displayName: 'Demo - Microsoft Defender CSPM (manual evidence, paid)'
-    description: 'Governance marker for Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Always Disabled and creates no managed identity; this template never enables the plan or grants any role. Enabling the plan is a separate, customer-performed action against Microsoft Defender for Cloud (Azure Portal or az security pricing create) with its own licensing cost and role considerations.'
+    displayName: 'Demo - Microsoft Defender CSPM (opt-in, paid)'
+    description: 'Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Defaults Disabled with no managed identity; enableDefenderCspm opts in per plan. This template never grants the resulting identity any role -- remediation requires a separate, customer-run, time-bounded authorization outside this template.'
     plan: 'cspm'
+    enablePlan: enableDefenderCspm
+    location: deploymentLocation
   }
   dependsOn: [
     hierarchy
@@ -427,9 +440,11 @@ module defenderForServersAssignment 'modules/defender-plan-assignment.bicep' = {
   scope: managementGroup(landingZonesManagementGroupId)
   params: {
     assignmentName: 'demo-defender-servers'
-    displayName: 'Demo - Microsoft Defender for Servers (manual evidence, paid)'
-    description: 'Governance marker for Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Always Disabled and creates no managed identity; this template never enables the plan or grants any role. Enabling the plan is a separate, customer-performed action against Microsoft Defender for Cloud; whether that provisions agentless scanning or the Azure Monitor Agent depends on the sub-plan/settings chosen at that time and is not configured or claimed here.'
+    displayName: 'Demo - Microsoft Defender for Servers (opt-in, paid)'
+    description: 'Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Defaults Disabled, no managed identity; enableDefenderForServers opts in. Never grants the resulting identity a role. Whether the plan itself provisions agentless scanning or Azure Monitor Agent depends on the sub-plan a customer chooses in Defender for Cloud; not configured or claimed here. See REQ-DEF-07/08 for a free, no-identity audit of current agent presence.'
     plan: 'servers'
+    enablePlan: enableDefenderForServers
+    location: deploymentLocation
   }
   dependsOn: [
     hierarchy
@@ -441,9 +456,11 @@ module defenderForStorageAssignment 'modules/defender-plan-assignment.bicep' = {
   scope: managementGroup(landingZonesManagementGroupId)
   params: {
     assignmentName: 'demo-defender-storage'
-    displayName: 'Demo - Microsoft Defender for Storage (manual evidence, paid)'
-    description: 'Governance marker for Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Always Disabled and creates no managed identity; this template never enables the plan or grants any role. Enabling the plan is a separate, customer-performed action against Microsoft Defender for Cloud (Azure Portal or az security pricing create) with its own licensing cost and role considerations.'
+    displayName: 'Demo - Microsoft Defender for Storage (opt-in, paid)'
+    description: 'Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Defaults Disabled with no managed identity; enableDefenderForStorage opts in. This template never grants the resulting identity any role -- remediation requires a separate, customer-run, time-bounded authorization outside this template.'
     plan: 'storage'
+    enablePlan: enableDefenderForStorage
+    location: deploymentLocation
   }
   dependsOn: [
     hierarchy
@@ -458,6 +475,40 @@ module vulnerabilityAssessmentAuditAssignment 'modules/policy-assignment.bicep' 
     displayName: 'Demo - audit VM vulnerability assessment'
     description: 'Audits that virtual machines have a supported vulnerability assessment solution enabled (REQ-DEF-06), independent of any paid Defender plan. No-cost audit signal populated by the free, default-on Foundational CSPM tier.'
     policyDefinitionId: vulnerabilityAssessmentAuditPolicyDefinitionId
+    definitionVersion: '3.*.*'
+    enforcementMode: 'Default'
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module defenderAmaAuditWindowsAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-defender-ama-audit-windows'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-audit-ama-windows'
+    displayName: 'Demo - audit Windows Azure Monitor Agent presence'
+    description: 'Audits that Windows virtual machines have the current, supported Azure Monitor Agent installed (REQ-DEF-07), independent of any paid Defender plan and never the deprecated Log Analytics (MMA) agent (REQ-DEF-05). No-cost, no-identity audit signal; creates no managed identity and deploys nothing.'
+    policyDefinitionId: windowsAmaAuditPolicyDefinitionId
+    definitionVersion: '3.*.*'
+    enforcementMode: 'Default'
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module defenderAmaAuditLinuxAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-defender-ama-audit-linux'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-audit-ama-linux'
+    displayName: 'Demo - audit Linux Azure Monitor Agent presence'
+    description: 'Audits that Linux virtual machines have the current, supported Azure Monitor Agent installed (REQ-DEF-08), independent of any paid Defender plan and never the deprecated Log Analytics (MMA) agent (REQ-DEF-05). No-cost, no-identity audit signal; creates no managed identity and deploys nothing.'
+    policyDefinitionId: linuxAmaAuditPolicyDefinitionId
     definitionVersion: '3.*.*'
     enforcementMode: 'Default'
     parameters: {}
@@ -572,5 +623,10 @@ output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
 output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
 output defenderCspmPolicyAssignmentId string = defenderCspmAssignment.outputs.policyAssignmentId
+output defenderCspmIdentityPrincipalId string = defenderCspmAssignment.outputs.identityPrincipalId
 output defenderForServersPolicyAssignmentId string = defenderForServersAssignment.outputs.policyAssignmentId
+output defenderForServersIdentityPrincipalId string = defenderForServersAssignment.outputs.identityPrincipalId
 output defenderForStoragePolicyAssignmentId string = defenderForStorageAssignment.outputs.policyAssignmentId
+output defenderForStorageIdentityPrincipalId string = defenderForStorageAssignment.outputs.identityPrincipalId
+output defenderAmaAuditWindowsPolicyAssignmentId string = defenderAmaAuditWindowsAssignment.outputs.policyAssignmentId
+output defenderAmaAuditLinuxPolicyAssignmentId string = defenderAmaAuditLinuxAssignment.outputs.policyAssignmentId

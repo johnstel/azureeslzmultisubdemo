@@ -122,6 +122,15 @@
     },
     "criticalInfrastructureSubscriptionIds": {
       "value": []
+    },
+    "enableDefenderCspm": {
+      "value": false
+    },
+    "enableDefenderForServers": {
+      "value": false
+    },
+    "enableDefenderForStorage": {
+      "value": false
     }
   }
 }
