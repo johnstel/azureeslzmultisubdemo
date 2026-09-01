@@ -3,8 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TEMP_DIR="$(mktemp -d)"
-trap 'rm -rf "${TEMP_DIR}"' EXIT
+ARTIFACTS_PARENT="${PROJECT_DIR}/.test-artifacts"
+TEMP_DIR="${ARTIFACTS_PARENT}/test-sh-$$"
+mkdir -p "${TEMP_DIR}"
+trap 'rm -rf "${TEMP_DIR}"; rmdir "${ARTIFACTS_PARENT}" 2>/dev/null || true' EXIT
 
 command -v az >/dev/null 2>&1 || {
   printf 'ERROR: Azure CLI is required for Bicep validation.\n' >&2
@@ -19,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/20 Validate repository versioning and branch guidance...\n'
+printf '1/22 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -30,7 +32,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/20 Build the complete tenant template...\n'
+printf '2/22 Build the complete tenant template...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -38,7 +40,7 @@ if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   exit 1
 fi
 
-printf '3/20 Validate the ARM parameter template...\n'
+printf '3/22 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -48,14 +50,14 @@ az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
 
-printf '4/20 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/22 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/20 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+printf '5/22 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
 if rg -n \
   "Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)" \
   "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" \
@@ -64,13 +66,13 @@ if rg -n \
   exit 1
 fi
 
-printf '6/20 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/22 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/20 Confirm five distinct Entra group parameters and guarded scripts...\n'
+printf '7/22 Confirm five distinct Entra group parameters and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 5 ]] || {
   printf 'ERROR: Expected five Entra security-group parameters.\n' >&2
@@ -81,12 +83,12 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/20 Confirm region policy safely permits global resources...\n'
+printf '8/22 Confirm region policy safely permits global resources...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
 
-printf '9/20 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/22 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -119,7 +121,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/20 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '10/22 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -135,7 +137,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '11/20 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '11/22 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -159,7 +161,7 @@ landingzones_delete_line_ps1="$(rg -n '"\$prefix-landingzones"' "${PROJECT_DIR}/
   exit 1
 }
 
-printf '12/20 Confirm central monitoring defaults create no metered resources...\n'
+printf '12/22 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -169,23 +171,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "13/20 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "13/22 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '14/20 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '14/22 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '15/20 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '15/22 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '16/20 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '16/22 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -208,7 +210,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '17/20 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '17/22 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -257,11 +259,45 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '18/20 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '18/22 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done
-if rg -n 'declare -A|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}' "${PROJECT_DIR}/scripts" -g '*.sh'; then
+# Bash 4+ constructs banned for macOS Bash 3.2 compatibility. Every banned
+# literal below is deliberately split across a quote boundary (for example
+# 'declare -'"A" and \bmap''file\b) so that this very definition line does
+# not itself contain any banned substring contiguously -- each quote/paste
+# boundary breaks up the literal text on disk even though bash concatenates
+# the pieces back into the correct pattern value at runtime. This lets the
+# scan below cover test.sh itself (unlike a `-g '!test.sh'` exclusion, which
+# would leave test.sh permanently unprotected against a future regression)
+# without the pattern definition line matching its own scan.
+banned_bash4_pattern='declare -'"A"'|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}|\bmap''file\b|\bread''array\b'
+# A real stock Bash 3.2 interpreter is not available in every environment
+# (this sandbox only ships Bash 5.x), so `bash -n` above only proves each
+# script is Bash-5-syntax-valid; it does NOT execute the script under Bash
+# 3.2, so it cannot itself catch a missing Bash 4+ array-reading builtin
+# (syntactically valid in Bash 5, but absent as a command and only failing at
+# runtime on Bash < 4.0). When a real Bash 3.2 (or any Bash < 4.0) is present
+# on PATH, exercise the validator scripts under it directly as a
+# defense-in-depth check beyond the static banned-construct scan below.
+bash3_candidate=""
+for bash_bin in /usr/local/bin/bash /opt/homebrew/bin/bash /bin/bash; do
+  if [[ -x "${bash_bin}" ]] && "${bash_bin}" -c '[[ "${BASH_VERSINFO[0]}" -lt 4 ]]' 2>/dev/null; then
+    bash3_candidate="${bash_bin}"
+    break
+  fi
+done
+if [[ -n "${bash3_candidate}" ]]; then
+  printf '  Found a Bash < 4.0 interpreter (%s); executing tests/validate-control-catalog.sh under it...\n' "${bash3_candidate}"
+  if ! "${bash3_candidate}" "${PROJECT_DIR}/tests/validate-control-catalog.sh" >/dev/null; then
+    printf 'ERROR: tests/validate-control-catalog.sh failed when executed directly under %s.\n' "${bash3_candidate}" >&2
+    exit 1
+  fi
+else
+  printf '  (No Bash < 4.0 interpreter found on PATH; relying on the static banned-construct scan below plus `bash -n` syntax checks.)\n'
+fi
+if rg -n "${banned_bash4_pattern}" "${PROJECT_DIR}/scripts" "${PROJECT_DIR}/tests" -g '*.sh'; then
   printf 'ERROR: A script uses a Bash 4+ feature unavailable in stock macOS Bash 3.2.\n' >&2
   exit 1
 fi
@@ -287,10 +323,16 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '19/20 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '19/22 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+"${SCRIPT_DIR}/validate-control-catalog.sh"
+
+printf '20/22 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+"${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
+
+printf '21/22 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '20/20 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '22/22 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
