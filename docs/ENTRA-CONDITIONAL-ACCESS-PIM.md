@@ -11,8 +11,10 @@ The normal repository deployment applies nothing from this folder.
 Conditional Access, directory-role PIM, and Owner activation settings remain
 declarative report-only inputs. The sole deployable artifact is the separately
 invoked, disabled-by-default Azure RBAC Owner eligibility request documented in
-`AZURE-RBAC-PIM.md`; no repository script calls it. This repository never calls
-Microsoft Graph, never modifies Entra ID, and never enables Conditional Access.
+`AZURE-RBAC-PIM.md`; only its isolated, explicitly invoked operator workflows
+call it. Those workflows perform a read-only Entra security-group check and ARM
+state inventory before what-if. This repository never modifies Entra ID and
+never enables Conditional Access.
 
 ## Why this is separate from Azure Policy
 

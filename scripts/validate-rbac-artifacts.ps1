@@ -140,6 +140,7 @@ try {
     }
     $requestIdHasDefault = $null -ne $compiledEligibility.parameters.requestId.PSObject.Properties['defaultValue']
     $requestTypeHasDefault = $null -ne $compiledEligibility.parameters.requestType.PSObject.Properties['defaultValue']
+    $workflowTokenHasDefault = $null -ne $compiledEligibility.parameters.operatorWorkflowVerificationToken.PSObject.Properties['defaultValue']
     $allowedRequestTypes = @($compiledEligibility.parameters.requestType.allowedValues) -join ','
     $allowedDurations = @($compiledEligibility.parameters.eligibleOwnerAssignmentDuration.allowedValues) -join ','
     $oneShotRequest = @($oneShotRequests) | Select-Object -First 1
@@ -155,6 +156,8 @@ try {
         $compiledEligibility.parameters.eligibleOwnerAssignmentStartDateTime.defaultValue -ne '' -or
         $compiledEligibility.parameters.eligibleOwnerAssignmentDuration.defaultValue -ne 'P90D' -or
         $allowedDurations -ne 'P30D,P90D,P180D,P365D' -or
+        $compiledEligibility.parameters.operatorWorkflowVerificationToken.type -ne 'securestring' -or
+        $workflowTokenHasDefault -or
         $compiledEligibility.variables.ownerRoleDefinitionId -ne $ownerRoleDefinitionId -or
         $compiledEligibility.variables.baseRequestProperties.principalId -ne "[variables('validatedPrincipalId')]" -or
         $compiledEligibility.variables.baseRequestProperties.roleDefinitionId -ne "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('ownerRoleDefinitionId'))]" -or
@@ -170,6 +173,20 @@ try {
         $oneShotRequest.condition -ne "[parameters('submitEligibilityRequest')]" -or
         $oneShotRequest.properties -ne "[union(variables('baseRequestProperties'), variables('scheduleProperties'), variables('targetScheduleProperties'))]") {
         Stop-Validation 'One-shot Owner eligibility artifact must require a caller request ID, explicit opt-in and lifecycle action, group input, and a finite schedule.'
+    }
+
+    if (
+        [string]$compiledEligibility.variables.requestIdInputIsValid -notmatch 'requestIdResidualCharacters' -or
+        [string]$compiledEligibility.variables.principalInputIsValid -notmatch 'principalResidualCharacters' -or
+        [string]$compiledEligibility.variables.targetScheduleGuidIsCanonical -notmatch 'targetScheduleResidualCharacters' -or
+        [string]$compiledEligibility.variables.startTimeInputIsRfc3339Utc -notmatch 'startTimeBaseResidualCharacters' -or
+        [string]$compiledEligibility.variables.startTimeInputIsRfc3339Utc -notmatch 'startTimeSuffixResidualCharacters' -or
+        [string]$compiledEligibility.variables.targetScheduleInputIsValid -cne "[if(equals(parameters('requestType'), 'AdminAssign'), empty(parameters('targetRoleEligibilityScheduleId')), variables('targetScheduleGuidIsCanonical'))]" -or
+        [string]$compiledEligibility.variables.scheduleInputIsValid -cne "[if(equals(parameters('requestType'), 'AdminRemove'), empty(parameters('eligibleOwnerAssignmentStartDateTime')), variables('startTimeInputIsRfc3339Utc'))]" -or
+        [string]$compiledEligibility.variables.workflowMarkerIsValid -cne "[equals(parameters('operatorWorkflowVerificationToken'), variables('expectedOperatorWorkflowVerificationToken'))]" -or
+        [string]$compiledEligibility.variables.executionInputsAreValid -cne "[or(not(parameters('submitEligibilityRequest')), and(and(and(and(and(variables('requestIdInputIsValid'), variables('principalInputIsValid')), variables('targetScheduleInputIsValid')), variables('scheduleInputIsValid')), not(empty(trim(parameters('eligibleOwnerAssignmentJustification'))))), variables('workflowMarkerIsValid')))]"
+    ) {
+        Stop-Validation 'One-shot Owner eligibility compiled input guards were weakened or replaced.'
     }
 
     $oneShotForbiddenResources = Find-JsonObjects -Node $compiledEligibility -Predicate {
@@ -240,7 +257,8 @@ try {
         $eligibilityParameters.parameters.targetRoleEligibilityScheduleId.value -ne '' -or
         $eligibilityParameters.parameters.eligibleOwnerAssignmentStartDateTime.value -ne 'REPLACE_WITH_ELIGIBLE_OWNER_START_DATE_TIME_UTC' -or
         $eligibilityParameters.parameters.eligibleOwnerAssignmentDuration.value -ne 'P90D' -or
-        $eligibilityParameters.parameters.eligibleOwnerAssignmentJustification.value -ne 'REPLACE_WITH_ELIGIBLE_OWNER_REQUEST_JUSTIFICATION') {
+        $eligibilityParameters.parameters.eligibleOwnerAssignmentJustification.value -ne 'REPLACE_WITH_ELIGIBLE_OWNER_REQUEST_JUSTIFICATION' -or
+        $eligibilityParameters.parameters.operatorWorkflowVerificationToken.value -ne 'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST') {
         Stop-Validation 'One-shot Owner eligibility parameter template must stay disabled and retain explicit tenant-independent placeholders.'
     }
 
@@ -249,6 +267,51 @@ try {
         if ($pimGuidance -notmatch [regex]::Escape($requiredGuidance)) {
             Stop-Validation "PIM runbook is missing one-shot lifecycle guidance: $requiredGuidance"
         }
+    }
+
+    $ownerOperatorBash = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/owner-eligibility-request.sh') -Raw
+    $ownerOperatorPowerShell = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/owner-eligibility-request.ps1') -Raw
+    foreach ($requiredPattern in @(
+        'az ad group show',
+        'securityEnabled == true',
+        'roleEligibilitySchedules',
+        'roleEligibilityScheduleRequests',
+        'atScope()',
+        'deployment sub what-if',
+        'deployment sub create',
+        'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION',
+        'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'
+    )) {
+        if (-not $ownerOperatorBash.Contains($requiredPattern)) {
+            Stop-Validation "Bash Owner eligibility workflow is missing required fail-closed control: $requiredPattern"
+        }
+    }
+    foreach ($requiredPattern in @(
+        "'ad', 'group', 'show'",
+        'securityEnabledProperty.Value -ne $true',
+        'roleEligibilitySchedules',
+        'roleEligibilityScheduleRequests',
+        'atScope()',
+        'deployment sub what-if',
+        'deployment sub create',
+        'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION',
+        'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'
+    )) {
+        if (-not $ownerOperatorPowerShell.Contains($requiredPattern)) {
+            Stop-Validation "PowerShell Owner eligibility workflow is missing required fail-closed control: $requiredPattern"
+        }
+    }
+    $bashGroupCheckIndex = $ownerOperatorBash.IndexOf('securityEnabled == true', [System.StringComparison]::Ordinal)
+    $bashInventoryIndex = $ownerOperatorBash.IndexOf('schedules_url=', [System.StringComparison]::Ordinal)
+    $bashWhatIfIndex = $ownerOperatorBash.IndexOf('az deployment sub what-if', [System.StringComparison]::Ordinal)
+    if ($bashGroupCheckIndex -lt 0 -or $bashGroupCheckIndex -gt $bashInventoryIndex -or $bashGroupCheckIndex -gt $bashWhatIfIndex) {
+        Stop-Validation 'Bash Owner eligibility workflow must verify the security-enabled group before state inventory or what-if.'
+    }
+    $powerShellGroupCheckIndex = $ownerOperatorPowerShell.IndexOf('securityEnabledProperty.Value -ne $true', [System.StringComparison]::Ordinal)
+    $powerShellInventoryIndex = $ownerOperatorPowerShell.IndexOf('$schedulesUrl =', [System.StringComparison]::Ordinal)
+    $powerShellWhatIfIndex = $ownerOperatorPowerShell.IndexOf('& az deployment sub what-if', [System.StringComparison]::Ordinal)
+    if ($powerShellGroupCheckIndex -lt 0 -or $powerShellGroupCheckIndex -gt $powerShellInventoryIndex -or $powerShellGroupCheckIndex -gt $powerShellWhatIfIndex) {
+        Stop-Validation 'PowerShell Owner eligibility workflow must verify the security-enabled group before state inventory or what-if.'
     }
 
     $requirementsPath = Join-Path $ProjectDir 'identity/azure-rbac/owner-activation-requirements.template.json'

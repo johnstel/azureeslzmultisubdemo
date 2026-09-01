@@ -25,6 +25,9 @@
     },
     "eligibleOwnerAssignmentJustification": {
       "value": "REPLACE_WITH_ELIGIBLE_OWNER_REQUEST_JUSTIFICATION"
+    },
+    "operatorWorkflowVerificationToken": {
+      "value": "UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST"
     }
   }
 }

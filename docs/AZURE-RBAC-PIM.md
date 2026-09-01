@@ -6,20 +6,25 @@ deployment creates neither permanent Owner nor a PIM eligibility request for
 the platform team, an individual user, a service principal, or a managed
 identity.
 
-The implementation has two deliberately separate parts:
+The implementation has three deliberately separate parts:
 
 - `identity/azure-rbac/owner-eligibility-request.bicep` is an explicit,
   subscription-scoped, one-shot lifecycle artifact for
   `Microsoft.Authorization/roleEligibilityScheduleRequests@2020-10-01`. It is
   not referenced by `main.bicep` or any normal deployment script.
+- `scripts/owner-eligibility-request.sh` and
+  `scripts/owner-eligibility-request.ps1` are the only supported entry points.
+  They validate the local inputs, verify the group and current PIM state
+  read-only, and run what-if before any explicitly confirmed submission.
 - `identity/azure-rbac/owner-activation-requirements.template.json` records the
   mandatory PIM activation baseline as a static, tenant-independent,
   report-only artifact.
 
-Neither artifact nor either validator calls Microsoft Graph, Microsoft Entra
-ID, or Azure. An authorized operator may submit the one-shot artifact only
-through a separately reviewed subscription deployment after completing the
-precheck and approval workflow below.
+The Bicep and JSON artifacts and both offline validators make no Microsoft
+Graph, Microsoft Entra ID, or Azure calls. The operator workflows use Azure CLI
+for read-only subscription, Entra group, eligibility-schedule, and request
+checks, then run subscription what-if. They create a request only with all
+separate execution confirmations described below.
 
 ## Safe defaults and scope
 
@@ -27,13 +32,19 @@ The normal main parameter templates contain no Owner eligibility parameters.
 Therefore safe demo defaults, ordinary redeployments, and the guarded main
 deployment scripts cannot submit or replay a PIM request.
 
-The separate parameter template keeps `submitEligibilityRequest=false` and
-contains only `REPLACE_WITH_*` placeholders. The Bicep artifact also requires a
-caller-supplied 36-character request GUID and a lifecycle action with no
-default. One invocation targets one subscription and one operation. For
-`AdminAssign` and `AdminUpdate`, it uses a finite `AfterDuration` schedule of
-`P30D`, `P90D`, `P180D`, or `P365D`. It never creates an active
-`roleAssignmentScheduleRequests` resource.
+The separate parameter template keeps `submitEligibilityRequest=false`,
+contains `REPLACE_WITH_*` placeholders, and contains an intentionally unusable
+workflow-token placeholder. Do not edit that token. The supported workflow
+replaces it only on the Azure CLI command line after successful live checks.
+The token is a safety marker, not proof that the object is a group.
+
+The one-shot inputs require canonical GUIDs for the request, group object, and
+existing target schedule when applicable. `AdminAssign` and `AdminUpdate`
+require an RFC 3339 UTC start ending in `Z`; `AdminRemove` requires an empty
+start. Eligibility uses one of `P30D`, `P90D`, `P180D`, or `P365D`. The
+artifact never creates an active `roleAssignmentScheduleRequests` resource.
+Direct raw Bicep or `az deployment sub` invocation is unsupported, because it
+bypasses the live group and PIM-state preflight.
 
 `deployRoleAssignments` remains a separate opt-in. It controls the permanent,
 group-based Management Group Contributor, Resource Policy Contributor, Reader,
@@ -49,10 +60,11 @@ repository:
    Entra ID Governance licensing, and every user who can activate through the
    group has the required license.
 2. `subscriptionPrivilegedAccessGroupObjectId` identifies an existing
-   Microsoft Entra **security group**. The offline validator checks only
-   parameter wiring; it deliberately does not query the directory. The
-   schedule-request API infers the principal type from that object ID; its
-   `principalType` field is response-only and is not written by Bicep.
+   security-enabled Microsoft Entra **group**. The supported operator workflow
+   calls `az ad group show`, requires the returned ID to match exactly, and
+   requires `securityEnabled=true` before it inventories PIM state or runs
+   what-if. The schedule-request API's `principalType` field is response-only,
+   so raw Bicep cannot enforce this control.
 3. Owner role settings are configured and reviewed independently at **both**
    subscriptions. Role settings are per role and per resource and do not
    inherit from the subscription to child scopes.
@@ -102,27 +114,68 @@ one operation. Generate a **fresh request GUID** for each subscription and each
 `AdminAssign`, `AdminUpdate`, or `AdminRemove` operation. **Never reuse** a
 request GUID for redeployment, retry, another action, or another subscription.
 
-1. In Microsoft Entra PIM for the target Azure subscription, inspect **existing
-   eligibility** for the privileged group and Owner role. Use the portal or an
-   independently approved read-only inventory process. Do not submit
-   `AdminAssign` if a matching eligibility or pending request already exists.
-2. Record the existing `roleEligibilityScheduleId` when updating or removing
+1. Record the existing `roleEligibilityScheduleId` when updating or removing
    eligibility. This schedule ID is not the prior request ID.
-3. Copy
+2. Copy
    `identity/azure-rbac/owner-eligibility-request.parameters.template.json` to
    a gitignored `*.local.json` file.
-4. Replace every placeholder, generate a new GUID outside Bicep, select the
+3. Replace every `REPLACE_WITH_*` placeholder, generate a new GUID outside
+   Bicep, select the
    lifecycle action, and keep `submitEligibilityRequest=false` during local
-   preparation.
-5. Build the Bicep locally and run both offline validators.
-6. Set `submitEligibilityRequest=true` only in the prepared local file and run
-   a subscription-scope what-if against exactly one intended sandbox
-   subscription. What-if does not submit the request. Confirm the preview
-   contains one eligible Owner request and no active or permanent Owner
-   assignment.
-7. Obtain approval from that exact preview, then submit the unchanged reviewed
-   request exactly once through a separately controlled subscription
-   deployment. Use a unique deployment name as well as the fresh request GUID.
+   preparation. Leave `operatorWorkflowVerificationToken` at its supplied
+   `UNSUPPORTED_OUTSIDE_...` value.
+4. Build the Bicep locally and run both offline validators.
+5. Set `submitEligibilityRequest=true` only in the prepared local file. Run one
+   supported operator workflow against exactly one intended subscription:
+
+   ```powershell
+   .\scripts\owner-eligibility-request.ps1 `
+     -SubscriptionId '<subscription-guid>' `
+     -ParameterFile '.\identity\azure-rbac\owner-eligibility-request.parameters.local.json'
+   ```
+
+   ```bash
+   ./scripts/owner-eligibility-request.sh \
+     --subscription-id '<subscription-guid>' \
+     --parameter-file 'identity/azure-rbac/owner-eligibility-request.parameters.local.json'
+   ```
+
+   Before running it, select an Azure CLI context in the same tenant as the
+   target subscription. The workflow compares the active-context tenant with
+   the target subscription tenant and fails before the Entra lookup if they do
+   not match; it never changes the active context automatically.
+
+   The process fails closed unless the subscription is enabled, the exact
+   object is a security-enabled group, the request ID is unused, no matching
+   request is pending or in an unknown state, and the lifecycle state is
+   unambiguous. `AdminAssign` requires no existing matching eligibility;
+   `AdminUpdate` and `AdminRemove` require exactly one matching supplied target
+   schedule. It follows ARM pagination before deciding. If all checks pass, it
+   runs what-if and stops without submitting.
+6. Confirm the preview contains one eligible Owner request and no active or
+   permanent Owner assignment. Obtain independent approval for that exact file,
+   request ID, group, subscription, and preview.
+7. To submit, run the same workflow with its separate execute controls. It
+   repeats the read-only preflight and what-if in the same process, then
+   requires the request ID to be typed exactly:
+
+   ```powershell
+   $env:ESLZ_OWNER_ELIGIBILITY_CONFIRMATION = 'SUBMIT-OWNER-ELIGIBILITY'
+   .\scripts\owner-eligibility-request.ps1 `
+     -SubscriptionId '<subscription-guid>' `
+     -ParameterFile '.\identity\azure-rbac\owner-eligibility-request.parameters.local.json' `
+     -Execute
+   Remove-Item Env:\ESLZ_OWNER_ELIGIBILITY_CONFIRMATION
+   ```
+
+   ```bash
+   ESLZ_OWNER_ELIGIBILITY_CONFIRMATION='SUBMIT-OWNER-ELIGIBILITY' \
+     ./scripts/owner-eligibility-request.sh \
+       --subscription-id '<subscription-guid>' \
+       --parameter-file 'identity/azure-rbac/owner-eligibility-request.parameters.local.json' \
+       --execute
+   ```
+
 8. Verify the resulting PIM state and audit record. If the deployment result is
    ambiguous, repeat the existing-eligibility precheck before deciding what to
    do; do not retry with the same request GUID.
@@ -149,14 +202,16 @@ time-bound role assignments:
    subscriptions.
 4. Grant the deployment principal narrowly scoped, time-bound bootstrap
    authority.
-5. Complete the existing-eligibility precheck at each subscription.
+5. Prepare to run the supported operator preflight at each subscription.
 6. Prepare separate local one-shot parameter files with
    `submitEligibilityRequest=false` and a fresh request GUID for each
    subscription.
 7. Run both offline validators, then set `submitEligibilityRequest=true` in
-   each local file and run a subscription-scope what-if for each request.
-8. Obtain approval from each exact preview, submit the unchanged request once,
-   and verify both assignments appear as **Eligible time-bound**.
+   each local file and use the supported Bash or PowerShell workflow to verify
+   the group and PIM state and run what-if.
+8. Obtain approval from each exact preview, use the same workflow's separately
+   confirmed execute mode once, and verify both assignments appear as
+   **Eligible time-bound**.
 9. Test activation and approval, and inspect PIM audit history and
    notifications.
 10. Remove temporary bootstrap access.
@@ -201,8 +256,11 @@ The validators compile both Bicep entry points locally and prove that:
 - repeatable `main.bicep` contains no eligibility schedule request or PIM
   request parameter;
 - the one-shot artifact requires explicit opt-in, a caller-supplied request
-  GUID, a lifecycle action, a group, justification, and a finite schedule for
-  assignment or update;
+  GUID, a lifecycle action, canonical group/target GUID shapes, an RFC 3339 UTC
+  start where applicable, justification, and a finite schedule;
+- both supported operator workflows structurally retain the security-enabled
+  group check before PIM inventory and what-if, plus the layered submission
+  controls;
 - the separate parameter template defaults to disabled and contains no tenant
   values;
 - the static activation baseline requires approval, MFA, justification,

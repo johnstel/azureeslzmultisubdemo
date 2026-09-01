@@ -85,12 +85,14 @@ eligibility request, so normal redeployment cannot replay a one-time PIM
 request. The deployment principal needs enough existing access to create the
 ordinary assignments; the template never bootstraps its own authority.
 
-PIM-ready Owner is handled separately by the explicit one-shot
-`identity/azure-rbac/owner-eligibility-request.bicep` artifact. It requires a
-fresh caller-supplied request GUID, opt-in, an existing privileged-access group,
-and a finite schedule. Approval, MFA, activation justification, four-hour
-activation duration, and notification expectations remain a static report-only
-contract in
+PIM-ready Owner is handled separately by the one-shot Bash and PowerShell
+operator workflows in `scripts/owner-eligibility-request.*`. They require a
+fresh caller-supplied request GUID and finite schedule, verify the exact object
+is an existing security-enabled group, check current eligibility and pending
+requests, and run what-if before stopping by default. Direct use of the backing
+Bicep artifact is unsupported. Approval, MFA, activation justification,
+four-hour activation duration, and notification expectations remain a static
+report-only contract in
 `identity/azure-rbac/owner-activation-requirements.template.json`; configure
 and verify those PIM role settings separately at both subscriptions before
 opting in. See [PIM-ready Azure RBAC](docs/AZURE-RBAC-PIM.md).
@@ -102,11 +104,12 @@ privileged-role activation. `identity/` contains report-only Conditional Access
 and PIM activation requirements for later, separately reviewed use. The
 directory-role artifacts use Microsoft Graph concepts; the Azure RBAC Owner
 requirements govern the separately opt-in ARM eligibility schedule. This
-repository never calls
-Microsoft Graph, never modifies Entra ID, and never enables Conditional
-Access. Every artifact defaults to report-only/eligible; directory controls
-require a real emergency-access exclusion, while the Azure RBAC contract keeps
-emergency access entirely customer-managed and outside the repository. See the
+repository never modifies Entra ID or enables Conditional Access. The isolated
+Owner operator workflow performs one read-only Entra group lookup; normal
+deployment and offline validators do not. Every artifact defaults to
+report-only/eligible; directory controls require a real emergency-access
+exclusion, while the Azure RBAC contract keeps emergency access entirely
+customer-managed and outside the repository. See the
 [Entra Conditional Access and PIM runbook](docs/ENTRA-CONDITIONAL-ACCESS-PIM.md)
 for licensing, required directory roles, workload-identity guidance, rollout
 order, monitoring, and rollback. Validate these artifacts locally with:
@@ -402,12 +405,14 @@ modules/
   central-monitoring-sentinel.bicep
 parameters/
 scripts/
+  owner-eligibility-request.ps1
   preflight.ps1
   what-if.ps1
   deploy.ps1
   teardown.ps1
   validate-identity-artifacts.ps1
   validate-rbac-artifacts.ps1
+  owner-eligibility-request.sh
   preflight.sh
   what-if.sh
   deploy.sh
@@ -423,8 +428,10 @@ tests/
 
 - No policy is assigned at the tenant root.
 - No subscription or Entra identity is created.
-- Tests and static validators are offline; preflight performs read-only Azure
-  checks and never changes Azure or Entra.
+- Tests and static validators are offline; normal preflight performs read-only
+  Azure checks and never changes Azure or Entra. The separate Owner workflow
+  performs read-only Azure/Entra checks and what-if by default, and requires
+  layered explicit confirmation before its one-time submission mode.
 - Deny assignments are non-enforcing by default.
 - Ordinary RBAC and evidence resources are independently opt-in; eligible Owner
   uses a separate one-shot artifact that is never called by `main.bicep`.

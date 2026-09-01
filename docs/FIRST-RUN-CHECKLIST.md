@@ -167,16 +167,21 @@ deployment.
 - [ ] Owner PIM settings at both subscriptions require approval, MFA,
       justification, a four-hour activation maximum, and notifications.
 - [ ] The deployment principal has narrowly scoped, time-bound bootstrap access.
-- [ ] Existing Owner eligibility and pending requests were checked separately at
-      each target subscription.
 - [ ] One-shot local parameters contain a fresh request GUID, privileged group,
       `AdminAssign`, finite schedule, and justification while
       `submitEligibilityRequest=false`.
+- [ ] The workflow-token placeholder was not edited and raw Bicep invocation
+      was not used.
 - [ ] `submitEligibilityRequest=true` is used only in the prepared local file
-      for a subscription-scope what-if; what-if submits no request.
+      with `scripts/owner-eligibility-request.ps1` or `.sh`.
+- [ ] The supported workflow verified an enabled subscription, the exact
+      security-enabled Entra group, existing Owner eligibility, unused request
+      ID, and no pending or unknown-state matching request.
 - [ ] Each one-shot what-if shows exactly one eligible Owner
       request and no active or permanent Owner assignment.
 - [ ] Administrator approved that exact preview before one-time submission.
+- [ ] One-time submission used the supported workflow's execute flag,
+      environment confirmation, and typed request GUID.
 - [ ] A distinct request GUID is used for each subscription and is never reused.
 - [ ] Both PIM activations were tested before any role-assignment restriction
       policy was enforced.

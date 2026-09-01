@@ -16,6 +16,15 @@ function Stop-Test {
     throw $Message
 }
 
+function ConvertTo-TestMessage {
+    param($Output)
+
+    $text = (@($Output) | ForEach-Object { [string]$_ }) -join "`n"
+    $text = $text -replace "$([char]27)\[[0-9;]*[A-Za-z]", ''
+    $text = (($text -split "`r?`n") | ForEach-Object { $_ -replace '^\s*\|\s?', '' }) -join ' '
+    return ($text -replace '\s+', ' ').Trim()
+}
+
 function Find-JsonObjects {
     param(
         [Parameter(Mandatory = $true)]
@@ -157,8 +166,9 @@ try {
     if ($LASTEXITCODE -eq 0) {
         Stop-Test 'RBAC validator accepted a compiled permanent Owner assignment.'
     }
-    if (($rbacNegativeOutput -join [Environment]::NewLine) -notmatch 'permanent Owner role assignment') {
-        Stop-Test "RBAC validator rejected the permanent Owner fixture for the wrong reason: $($rbacNegativeOutput -join [Environment]::NewLine)"
+    $rbacNegativeMessage = ConvertTo-TestMessage $rbacNegativeOutput
+    if ($rbacNegativeMessage -notmatch 'permanent Owner role assignment') {
+        Stop-Test "RBAC validator rejected the permanent Owner fixture for the wrong reason: $rbacNegativeMessage"
     }
     $rbacMainRequestTemplate = Join-Path $TempDir 'main-one-shot-request.json'
     $rbacMainRequestJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
@@ -176,8 +186,9 @@ try {
     if ($LASTEXITCODE -eq 0) {
         Stop-Test 'RBAC validator accepted a one-time eligibility request in the repeatable main template.'
     }
-    if (($rbacMainRequestOutput -join [Environment]::NewLine) -notmatch 'one-time eligibility schedule request') {
-        Stop-Test "RBAC validator rejected the main eligibility fixture for the wrong reason: $($rbacMainRequestOutput -join [Environment]::NewLine)"
+    $rbacMainRequestMessage = ConvertTo-TestMessage $rbacMainRequestOutput
+    if ($rbacMainRequestMessage -notmatch 'one-time eligibility schedule request') {
+        Stop-Test "RBAC validator rejected the main eligibility fixture for the wrong reason: $rbacMainRequestMessage"
     }
     $rbacOwnerBindingTemplate = Join-Path $TempDir 'main-owner-role-binding.json'
     (Get-Content -LiteralPath $compiledTemplate -Raw).Replace(
@@ -190,8 +201,9 @@ try {
     if ($LASTEXITCODE -eq 0) {
         Stop-Test 'RBAC validator accepted an Owner role passed through a nested module binding.'
     }
-    if (($rbacOwnerBindingOutput -join [Environment]::NewLine) -notmatch 'Owner role definition reference') {
-        Stop-Test "RBAC validator rejected the Owner module binding for the wrong reason: $($rbacOwnerBindingOutput -join [Environment]::NewLine)"
+    $rbacOwnerBindingMessage = ConvertTo-TestMessage $rbacOwnerBindingOutput
+    if ($rbacOwnerBindingMessage -notmatch 'Owner role definition reference') {
+        Stop-Test "RBAC validator rejected the Owner module binding for the wrong reason: $rbacOwnerBindingMessage"
     }
 
     $rbacExtraResourceTemplate = Join-Path $TempDir 'owner-request-with-deployment-script.json'
@@ -209,9 +221,178 @@ try {
     if ($LASTEXITCODE -eq 0) {
         Stop-Test 'RBAC validator accepted an extra automation resource in the one-shot artifact.'
     }
-    if (($rbacExtraResourceOutput -join [Environment]::NewLine) -notmatch 'One-shot Owner eligibility artifact') {
-        Stop-Test "RBAC validator rejected the one-shot extra resource for the wrong reason: $($rbacExtraResourceOutput -join [Environment]::NewLine)"
+    $rbacExtraResourceMessage = ConvertTo-TestMessage $rbacExtraResourceOutput
+    if ($rbacExtraResourceMessage -notmatch 'One-shot Owner eligibility artifact') {
+        Stop-Test "RBAC validator rejected the one-shot extra resource for the wrong reason: $rbacExtraResourceMessage"
     }
+    foreach ($guardName in @('targetScheduleInputIsValid', 'scheduleInputIsValid', 'executionInputsAreValid')) {
+        $rbacGuardTemplate = Join-Path $TempDir "owner-request-$guardName-true.json"
+        $rbacGuardJson = Get-Content -LiteralPath $compiledEligibilityTemplate -Raw | ConvertFrom-Json
+        $rbacGuardJson.variables.$guardName = $true
+        $rbacGuardJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacGuardTemplate
+        $rbacGuardOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+            -CompiledTemplate $compiledTemplate `
+            -CompiledEligibilityTemplate $rbacGuardTemplate 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Stop-Test "RBAC validator accepted $guardName replaced with true."
+        }
+        $rbacGuardMessage = ConvertTo-TestMessage $rbacGuardOutput
+        if ($rbacGuardMessage -notmatch 'compiled input guards') {
+            Stop-Test "RBAC validator rejected the $guardName mutation for the wrong reason: $rbacGuardMessage"
+        }
+    }
+
+    $ownerRequestId = '22222222-2222-4222-8222-222222222222'
+    $ownerGroupId = '33333333-3333-4333-8333-333333333333'
+    $ownerSubscriptionId = '11111111-1111-4111-8111-111111111111'
+    $ownerParameterFile = Join-Path $TempDir 'owner-valid.parameters.json'
+    $ownerParameters = Get-Content -LiteralPath (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.parameters.template.json') -Raw | ConvertFrom-Json
+    $ownerParameters.parameters.submitEligibilityRequest.value = $true
+    $ownerParameters.parameters.requestId.value = $ownerRequestId
+    $ownerParameters.parameters.subscriptionPrivilegedAccessGroupObjectId.value = $ownerGroupId
+    $ownerParameters.parameters.eligibleOwnerAssignmentStartDateTime.value = '2030-01-02T03:04:05Z'
+    $ownerParameters.parameters.eligibleOwnerAssignmentJustification.value = 'Approved sandbox Owner eligibility demonstration'
+    $ownerParameters | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ownerParameterFile
+
+    $ownerAzLog = Join-Path $TempDir 'owner-ps-az-calls.log'
+    $ownerTestWrapper = Join-Path $TempDir 'invoke-owner-workflow-with-mock.ps1'
+    @'
+$ErrorActionPreference = 'Stop'
+function global:az {
+    $arguments = @($args)
+    $global:LASTEXITCODE = 0
+    Add-Content -LiteralPath $env:OWNER_AZ_CALL_LOG -Value ($arguments -join ' ')
+    if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'show') {
+        [pscustomobject]@{
+            id = $env:MOCK_SUBSCRIPTION_ID
+            state = 'Enabled'
+            tenantId = '44444444-4444-4444-8444-444444444444'
+        } | ConvertTo-Json -Compress
+        return
+    }
+    if ($arguments[0] -eq 'ad' -and $arguments[1] -eq 'group' -and $arguments[2] -eq 'show') {
+        if (($arguments -join ' ') -cne "ad group show --group $env:MOCK_GROUP_ID --output json") {
+            throw "Unsupported arguments passed to az ad group show: $($arguments -join ' ')"
+        }
+        [pscustomobject]@{
+            id = $env:MOCK_GROUP_ID
+            securityEnabled = if ($env:MOCK_SECURITY_AS_STRING -eq 'true') {
+                'true'
+            }
+            else {
+                $env:MOCK_SECURITY_ENABLED -ne 'false'
+            }
+        } | ConvertTo-Json -Compress
+        return
+    }
+    if ($arguments[0] -eq 'rest') {
+        $urlIndex = [Array]::IndexOf($arguments, '--url')
+        $url = [string]$arguments[$urlIndex + 1]
+        if ($url.Contains('roleEligibilitySchedules?')) {
+            [pscustomobject]@{ value = @() } | ConvertTo-Json -Compress
+            return
+        }
+        if ($url.Contains('roleEligibilityScheduleRequests?') -and $url.Contains('page=2')) {
+            [pscustomobject]@{
+                value = @(
+                    [pscustomobject]@{
+                        name = '66666666-6666-4666-8666-666666666666'
+                        id = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/66666666-6666-4666-8666-666666666666"
+                        properties = [pscustomobject]@{
+                            scope = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID"
+                            principalId = $env:MOCK_GROUP_ID
+                            roleDefinitionId = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+                            status = 'PendingApproval'
+                        }
+                    }
+                )
+            } | ConvertTo-Json -Compress -Depth 10
+            return
+        }
+        if ($url.Contains('roleEligibilityScheduleRequests?')) {
+            if ($env:MOCK_MALFORMED_REQUESTS -eq 'true') {
+                [pscustomobject]@{ value = $false } | ConvertTo-Json -Compress
+                return
+            }
+            [pscustomobject]@{
+                value = @(
+                    [pscustomobject]@{
+                        name = '55555555-5555-4555-8555-555555555555'
+                        id = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/55555555-5555-4555-8555-555555555555"
+                        properties = [pscustomobject]@{
+                            scope = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID"
+                            principalId = $env:MOCK_GROUP_ID
+                            roleDefinitionId = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+                            status = 'Provisioned'
+                        }
+                    }
+                )
+                nextLink = "https://management.azure.com/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleEligibilityScheduleRequests?api-version=2020-10-01&%24filter=atScope()&page=2"
+            } | ConvertTo-Json -Compress -Depth 10
+            return
+        }
+    }
+    if ($arguments[0] -eq 'deployment' -and $arguments[1] -eq 'sub' -and $arguments[2] -eq 'what-if') {
+        '{"status":"previewed"}'
+        return
+    }
+    throw "Unexpected az arguments: $($arguments -join ' ')"
+}
+
+& $env:OWNER_OPERATOR_PATH `
+    -SubscriptionId $env:MOCK_SUBSCRIPTION_ID `
+    -ParameterFile $env:OWNER_PARAMETER_FILE
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $ownerTestWrapper
+
+    New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+    $env:OWNER_AZ_CALL_LOG = $ownerAzLog
+    $env:MOCK_SUBSCRIPTION_ID = $ownerSubscriptionId
+    $env:MOCK_GROUP_ID = $ownerGroupId
+    $env:MOCK_SECURITY_ENABLED = 'true'
+    $env:MOCK_SECURITY_AS_STRING = 'false'
+    $env:MOCK_MALFORMED_REQUESTS = 'false'
+    $env:OWNER_OPERATOR_PATH = Join-Path $ProjectDir 'scripts/owner-eligibility-request.ps1'
+    $env:OWNER_PARAMETER_FILE = $ownerParameterFile
+    $ownerPagedOutput = & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+    $ownerPagedExitCode = $LASTEXITCODE
+    if ($ownerPagedExitCode -eq 0) {
+        Stop-Test 'PowerShell Owner eligibility workflow ignored a pending matching request on a later ARM page.'
+    }
+    $ownerPagedCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+    $ownerPagedMessage = ConvertTo-TestMessage $ownerPagedOutput
+    if (
+        $ownerPagedCalls -notmatch 'page=2' -or
+        $ownerPagedCalls -match 'deployment sub what-if' -or
+        $ownerPagedMessage -notmatch 'pending or has an unknown'
+    ) {
+        Stop-Test "PowerShell Owner eligibility workflow did not fail closed after paginated pending-request inventory. Output: $ownerPagedMessage"
+    }
+
+    foreach ($malformedCase in @('string-security-enabled', 'malformed-requests')) {
+        New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+        $env:MOCK_SECURITY_AS_STRING = if ($malformedCase -eq 'string-security-enabled') { 'true' } else { 'false' }
+        $env:MOCK_MALFORMED_REQUESTS = if ($malformedCase -eq 'malformed-requests') { 'true' } else { 'false' }
+        $malformedOutput = & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+        $malformedExitCode = $LASTEXITCODE
+        $malformedCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+        if ($malformedExitCode -eq 0 -or $malformedCalls -match 'deployment sub what-if') {
+            Stop-Test "PowerShell Owner eligibility workflow did not fail closed for $malformedCase. Output: $(ConvertTo-TestMessage $malformedOutput)"
+        }
+    }
+    foreach ($environmentName in @(
+        'OWNER_AZ_CALL_LOG',
+        'MOCK_SUBSCRIPTION_ID',
+        'MOCK_GROUP_ID',
+        'MOCK_SECURITY_ENABLED',
+        'MOCK_SECURITY_AS_STRING',
+        'MOCK_MALFORMED_REQUESTS',
+        'OWNER_OPERATOR_PATH',
+        'OWNER_PARAMETER_FILE'
+    )) {
+        Remove-Item "Env:\$environmentName" -ErrorAction SilentlyContinue
+    }
+
     if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/deploy.ps1') -Raw) -notmatch 'DEPLOY-ESLZ-DEMO') {
         Stop-Test 'PowerShell deployment confirmation guard is missing.'
     }

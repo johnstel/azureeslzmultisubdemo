@@ -39,15 +39,34 @@ param eligibleOwnerAssignmentDuration string = 'P90D'
 @minLength(1)
 param eligibleOwnerAssignmentJustification string
 
+@description('Non-security marker supplied by the supported operator workflow after live read-only verification. The marker does not prove principal type; direct raw Bicep use is unsupported.')
+@secure()
+param operatorWorkflowVerificationToken string
+
 var ownerRoleDefinitionId = '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+var requestIdResidualCharacters = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(requestId), '-', ''), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', '')
+var requestIdInputIsValid = length(requestId) == 36 && requestId == '${take(requestId, 8)}-${take(skip(requestId, 9), 4)}-${take(skip(requestId, 14), 4)}-${take(skip(requestId, 19), 4)}-${take(skip(requestId, 24), 12)}' && empty(requestIdResidualCharacters)
+var principalResidualCharacters = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(subscriptionPrivilegedAccessGroupObjectId), '-', ''), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', '')
+var principalInputIsValid = length(subscriptionPrivilegedAccessGroupObjectId) == 36 && subscriptionPrivilegedAccessGroupObjectId == '${take(subscriptionPrivilegedAccessGroupObjectId, 8)}-${take(skip(subscriptionPrivilegedAccessGroupObjectId, 9), 4)}-${take(skip(subscriptionPrivilegedAccessGroupObjectId, 14), 4)}-${take(skip(subscriptionPrivilegedAccessGroupObjectId, 19), 4)}-${take(skip(subscriptionPrivilegedAccessGroupObjectId, 24), 12)}' && empty(principalResidualCharacters)
+var targetScheduleResidualCharacters = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(targetRoleEligibilityScheduleId), '-', ''), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', '')
+var targetScheduleGuidIsCanonical = length(targetRoleEligibilityScheduleId) == 36 && targetRoleEligibilityScheduleId == '${take(targetRoleEligibilityScheduleId, 8)}-${take(skip(targetRoleEligibilityScheduleId, 9), 4)}-${take(skip(targetRoleEligibilityScheduleId, 14), 4)}-${take(skip(targetRoleEligibilityScheduleId, 19), 4)}-${take(skip(targetRoleEligibilityScheduleId, 24), 12)}' && empty(targetScheduleResidualCharacters)
 var targetScheduleInputIsValid = requestType == 'AdminAssign'
   ? empty(targetRoleEligibilityScheduleId)
-  : !empty(targetRoleEligibilityScheduleId)
-var scheduleInputIsValid = requestType == 'AdminRemove' || !empty(trim(eligibleOwnerAssignmentStartDateTime))
-var executionInputsAreValid = !submitEligibilityRequest || (targetScheduleInputIsValid && scheduleInputIsValid && !empty(trim(eligibleOwnerAssignmentJustification)))
+  : targetScheduleGuidIsCanonical
+var startTimeBase = take(eligibleOwnerAssignmentStartDateTime, 19)
+var startTimeSuffix = skip(eligibleOwnerAssignmentStartDateTime, 19)
+var startTimeBaseResidualCharacters = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(startTimeBase, '-', ''), 'T', ''), ':', ''), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', '')
+var startTimeSuffixResidualCharacters = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(startTimeSuffix, '.', ''), 'Z', ''), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', '')
+var startTimeInputIsRfc3339Utc = length(eligibleOwnerAssignmentStartDateTime) >= 20 && startTimeBase == '${take(eligibleOwnerAssignmentStartDateTime, 4)}-${take(skip(eligibleOwnerAssignmentStartDateTime, 5), 2)}-${take(skip(eligibleOwnerAssignmentStartDateTime, 8), 2)}T${take(skip(eligibleOwnerAssignmentStartDateTime, 11), 2)}:${take(skip(eligibleOwnerAssignmentStartDateTime, 14), 2)}:${take(skip(eligibleOwnerAssignmentStartDateTime, 17), 2)}' && empty(startTimeBaseResidualCharacters) && (startTimeSuffix == 'Z' || (startsWith(startTimeSuffix, '.') && endsWith(startTimeSuffix, 'Z') && length(replace(replace(startTimeSuffix, '.', ''), 'Z', '')) > 0 && empty(startTimeSuffixResidualCharacters)))
+var scheduleInputIsValid = requestType == 'AdminRemove'
+  ? empty(eligibleOwnerAssignmentStartDateTime)
+  : startTimeInputIsRfc3339Utc
+var expectedOperatorWorkflowVerificationToken = 'verified:${requestId}:${subscriptionPrivilegedAccessGroupObjectId}:${requestType}:${subscription().subscriptionId}'
+var workflowMarkerIsValid = operatorWorkflowVerificationToken == expectedOperatorWorkflowVerificationToken
+var executionInputsAreValid = !submitEligibilityRequest || (requestIdInputIsValid && principalInputIsValid && targetScheduleInputIsValid && scheduleInputIsValid && !empty(trim(eligibleOwnerAssignmentJustification)) && workflowMarkerIsValid)
 var validatedPrincipalId = executionInputsAreValid
   ? subscriptionPrivilegedAccessGroupObjectId
-  : fail('AdminAssign requires no target schedule ID; AdminUpdate/AdminRemove require one. AdminAssign/AdminUpdate also require a UTC start, and every operation requires justification.')
+  : fail('Owner eligibility request inputs are invalid or were not supplied through the verified operator workflow.')
 var baseRequestProperties = {
   principalId: validatedPrincipalId
   roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', ownerRoleDefinitionId)

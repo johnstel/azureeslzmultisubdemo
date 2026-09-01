@@ -840,8 +840,7 @@ Complete every prerequisite and bootstrap step in
 verification, emergency-access testing, Owner activation settings at both
 subscriptions, and narrowly scoped deployment-principal access.
 
-Before `AdminAssign`, inspect existing eligibility and pending requests for the
-same group, Owner role, and target subscription. Copy
+Copy
 `identity/azure-rbac/owner-eligibility-request.parameters.template.json` to a
 gitignored `*.local.json` file. Populate a fresh request GUID, lifecycle action,
 privileged group, start date/time, finite duration, and justification, but keep
@@ -856,12 +855,22 @@ validator:
 ./scripts/validate-rbac-artifacts.sh
 ```
 
-Set `submitEligibilityRequest=true` in the local file and run a
-subscription-scope what-if against one intended sandbox subscription. What-if
-does not submit the request. The preview must show one eligible Owner
-`roleEligibilityScheduleRequests` resource and no Owner `roleAssignments` or
-`roleAssignmentScheduleRequests` resource. Obtain approval from that exact
-preview, then submit the unchanged request exactly once.
+Do not edit `operatorWorkflowVerificationToken` or invoke the Bicep directly.
+Set `submitEligibilityRequest=true` in the local file, then use
+`scripts/owner-eligibility-request.ps1` or
+`scripts/owner-eligibility-request.sh`. Supply the target subscription GUID and
+local parameter-file path. This supported process verifies the exact object is
+a security-enabled Entra group, checks existing eligibility and pending
+requests, and runs subscription what-if before stopping without submission.
+The preview must show one eligible Owner `roleEligibilityScheduleRequests`
+resource and no Owner `roleAssignments` or
+`roleAssignmentScheduleRequests` resource.
+
+Obtain approval from that exact preview. Submission requires running the same
+workflow with `-Execute` or `--execute`, setting
+`ESLZ_OWNER_ELIGIBILITY_CONFIRMATION=SUBMIT-OWNER-ELIGIBILITY`, and typing the
+request GUID exactly. The workflow repeats preflight and what-if before
+submitting once.
 
 Repeat for the other subscription with a different fresh request GUID. Never
 reuse a request GUID for a retry, update, removal, or another subscription.

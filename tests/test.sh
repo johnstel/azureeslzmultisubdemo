@@ -165,6 +165,211 @@ if ! printf '%s' "${rbac_validation_output}" | grep -qF 'One-shot Owner eligibil
   printf 'ERROR: RBAC validator rejected the one-shot extra resource for the wrong reason: %s\n' "${rbac_validation_output}" >&2
   exit 1
 fi
+for guard_name in targetScheduleInputIsValid scheduleInputIsValid executionInputsAreValid; do
+  rbac_guard_fixture="${TEMP_DIR}/owner-request-${guard_name}-true.json"
+  jq --arg guard "${guard_name}" '.variables[$guard] = true' \
+    "${TEMP_DIR}/owner-eligibility-request.json" > "${rbac_guard_fixture}"
+  if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+    --compiled-template "${TEMP_DIR}/main.json" \
+    --compiled-eligibility-template "${rbac_guard_fixture}" 2>&1)"; then
+    printf 'ERROR: RBAC validator accepted %s replaced with true.\n' "${guard_name}" >&2
+    exit 1
+  fi
+  if ! printf '%s' "${rbac_validation_output}" | grep -qF 'compiled input guards'; then
+    printf 'ERROR: RBAC validator rejected the %s mutation for the wrong reason: %s\n' "${guard_name}" "${rbac_validation_output}" >&2
+    exit 1
+  fi
+done
+
+owner_mock_bin="${TEMP_DIR}/owner-mockbin"
+owner_az_log="${TEMP_DIR}/owner-az-calls.log"
+mkdir -p "${owner_mock_bin}"
+cat > "${owner_mock_bin}/az" <<'MOCKOWNERAZ'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${OWNER_AZ_CALL_LOG}"
+if [[ "$1" == 'account' && "$2" == 'show' ]]; then
+  printf '{"id":"%s","state":"Enabled","tenantId":"44444444-4444-4444-8444-444444444444"}\n' "${MOCK_SUBSCRIPTION_ID}"
+  exit 0
+fi
+if [[ "$1" == 'ad' && "$2" == 'group' && "$3" == 'show' ]]; then
+  [[ "$*" == "ad group show --group ${MOCK_GROUP_ID} --output json" ]] || exit 64
+  if [[ "${MOCK_SECURITY_AS_STRING:-false}" == 'true' ]]; then
+    printf '{"id":"%s","securityEnabled":"true"}\n' "${MOCK_GROUP_ID}"
+  else
+    printf '{"id":"%s","securityEnabled":%s}\n' "${MOCK_GROUP_ID}" "${MOCK_SECURITY_ENABLED:-true}"
+  fi
+  exit 0
+fi
+if [[ "$1" == 'rest' ]]; then
+  if [[ "$*" == *'roleEligibilitySchedules?'* ]]; then
+    if [[ "${MOCK_EXISTING_SCHEDULE:-false}" == 'true' ]]; then
+      printf '{"value":[{"name":"55555555-5555-4555-8555-555555555555","id":"/subscriptions/%s/providers/Microsoft.Authorization/roleEligibilitySchedules/55555555-5555-4555-8555-555555555555","properties":{"scope":"/subscriptions/%s","principalId":"%s","roleDefinitionId":"/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"}}]}\n' \
+        "${MOCK_SUBSCRIPTION_ID}" "${MOCK_SUBSCRIPTION_ID}" "${MOCK_GROUP_ID}" "${MOCK_SUBSCRIPTION_ID}"
+    else
+      printf '{"value":[]}\n'
+    fi
+    exit 0
+  fi
+  if [[ "$*" == *'roleEligibilityScheduleRequests?'* ]]; then
+    if [[ "${MOCK_MALFORMED_REQUESTS:-false}" == 'true' ]]; then
+      printf '{"value":false}\n'
+    elif [[ "${MOCK_PENDING_REQUEST:-false}" == 'true' ]]; then
+      printf '{"value":[{"name":"66666666-6666-4666-8666-666666666666","id":"/subscriptions/%s/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/66666666-6666-4666-8666-666666666666","properties":{"scope":"/subscriptions/%s","principalId":"%s","roleDefinitionId":"/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635","status":"PendingApproval"}}]}\n' \
+        "${MOCK_SUBSCRIPTION_ID}" "${MOCK_SUBSCRIPTION_ID}" "${MOCK_GROUP_ID}" "${MOCK_SUBSCRIPTION_ID}"
+    else
+      printf '{"value":[]}\n'
+    fi
+    exit 0
+  fi
+fi
+if [[ "$1" == 'deployment' && "$2" == 'sub' && "$3" == 'what-if' ]]; then
+  printf '{"status":"previewed"}\n'
+  exit 0
+fi
+if [[ "$1" == 'deployment' && "$2" == 'sub' && "$3" == 'create' ]]; then
+  printf '{"status":"submitted"}\n'
+  exit 0
+fi
+exit 1
+MOCKOWNERAZ
+chmod +x "${owner_mock_bin}/az"
+
+owner_subscription_id='11111111-1111-4111-8111-111111111111'
+owner_request_id='22222222-2222-4222-8222-222222222222'
+owner_group_id='33333333-3333-4333-8333-333333333333'
+owner_parameter_file="${TEMP_DIR}/owner-valid.parameters.json"
+jq \
+  --arg request_id "${owner_request_id}" \
+  --arg group_id "${owner_group_id}" '
+  .parameters.submitEligibilityRequest.value = true
+  | .parameters.requestId.value = $request_id
+  | .parameters.subscriptionPrivilegedAccessGroupObjectId.value = $group_id
+  | .parameters.eligibleOwnerAssignmentStartDateTime.value = "2030-01-02T03:04:05Z"
+  | .parameters.eligibleOwnerAssignmentJustification.value = "Approved sandbox Owner eligibility demonstration"
+' "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.parameters.template.json" > "${owner_parameter_file}"
+
+for invalid_case in request-id group-id target-schedule start-time calendar-date duration; do
+  invalid_owner_parameter_file="${TEMP_DIR}/owner-invalid-${invalid_case}.parameters.json"
+  case "${invalid_case}" in
+    request-id)
+      jq '.parameters.requestId.value = "not-a-canonical-request-guid-value-00"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    group-id)
+      jq '.parameters.subscriptionPrivilegedAccessGroupObjectId.value = "not-a-group-object-guid"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    target-schedule)
+      jq '
+        .parameters.requestType.value = "AdminUpdate"
+        | .parameters.targetRoleEligibilityScheduleId.value = "not-a-schedule-guid"
+      ' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    start-time)
+      jq '.parameters.eligibleOwnerAssignmentStartDateTime.value = "2030-01-02 03:04:05+00:00"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    calendar-date)
+      jq '.parameters.eligibleOwnerAssignmentStartDateTime.value = "2030-02-30T03:04:05Z"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    duration)
+      jq '.parameters.eligibleOwnerAssignmentDuration.value = "P999D"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+  esac
+  : > "${owner_az_log}"
+  if PATH="${owner_mock_bin}:${PATH}" \
+    OWNER_AZ_CALL_LOG="${owner_az_log}" \
+    MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+    MOCK_GROUP_ID="${owner_group_id}" \
+    "${PROJECT_DIR}/scripts/owner-eligibility-request.sh" \
+      --subscription-id "${owner_subscription_id}" \
+      --parameter-file "${invalid_owner_parameter_file}" >/dev/null 2>&1; then
+    printf 'ERROR: Owner eligibility workflow accepted invalid %s input.\n' "${invalid_case}" >&2
+    exit 1
+  fi
+  [[ ! -s "${owner_az_log}" ]] || {
+    printf 'ERROR: Owner eligibility workflow called Azure before rejecting invalid %s input.\n' "${invalid_case}" >&2
+    exit 1
+  }
+done
+
+: > "${owner_az_log}"
+if PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  "${PROJECT_DIR}/scripts/owner-eligibility-request.sh" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_parameter_file}" \
+    --execute >/dev/null 2>&1; then
+  printf 'ERROR: Owner eligibility workflow accepted --execute without its environment confirmation.\n' >&2
+  exit 1
+fi
+[[ ! -s "${owner_az_log}" ]] || {
+  printf 'ERROR: Owner eligibility workflow called Azure before enforcing its execution confirmation.\n' >&2
+  exit 1
+}
+
+: > "${owner_az_log}"
+PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  "${PROJECT_DIR}/scripts/owner-eligibility-request.sh" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_parameter_file}" >/dev/null
+rg -q -F 'ad group show' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not verify the Entra group.\n' >&2
+  exit 1
+}
+rg -q -F 'roleEligibilitySchedules?' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not inspect existing schedules.\n' >&2
+  exit 1
+}
+rg -q -F 'roleEligibilityScheduleRequests?' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not inspect existing requests.\n' >&2
+  exit 1
+}
+rg -q -F 'deployment sub what-if' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not run what-if.\n' >&2
+  exit 1
+}
+if rg -q -F 'deployment sub create' "${owner_az_log}"; then
+  printf 'ERROR: Owner eligibility preview submitted a request without --execute.\n' >&2
+  exit 1
+fi
+
+for blocked_state in non-security-group string-security-enabled existing-schedule pending-request malformed-requests; do
+  : > "${owner_az_log}"
+  mock_security_enabled='true'
+  mock_existing_schedule='false'
+  mock_pending_request='false'
+  mock_security_as_string='false'
+  mock_malformed_requests='false'
+  case "${blocked_state}" in
+    non-security-group) mock_security_enabled='false' ;;
+    string-security-enabled) mock_security_as_string='true' ;;
+    existing-schedule) mock_existing_schedule='true' ;;
+    pending-request) mock_pending_request='true' ;;
+    malformed-requests) mock_malformed_requests='true' ;;
+  esac
+  if PATH="${owner_mock_bin}:${PATH}" \
+    OWNER_AZ_CALL_LOG="${owner_az_log}" \
+    MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+    MOCK_GROUP_ID="${owner_group_id}" \
+    MOCK_SECURITY_ENABLED="${mock_security_enabled}" \
+    MOCK_SECURITY_AS_STRING="${mock_security_as_string}" \
+    MOCK_EXISTING_SCHEDULE="${mock_existing_schedule}" \
+    MOCK_PENDING_REQUEST="${mock_pending_request}" \
+    MOCK_MALFORMED_REQUESTS="${mock_malformed_requests}" \
+    "${PROJECT_DIR}/scripts/owner-eligibility-request.sh" \
+      --subscription-id "${owner_subscription_id}" \
+      --parameter-file "${owner_parameter_file}" >/dev/null 2>&1; then
+    printf 'ERROR: Owner eligibility workflow accepted blocked state: %s.\n' "${blocked_state}" >&2
+    exit 1
+  fi
+  if rg -q -F 'deployment sub what-if' "${owner_az_log}"; then
+    printf 'ERROR: Owner eligibility workflow previewed after blocked state: %s.\n' "${blocked_state}" >&2
+    exit 1
+  fi
+done
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.sh"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"

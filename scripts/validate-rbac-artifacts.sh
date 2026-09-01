@@ -123,6 +123,8 @@ jq -e --arg owner "${owner_role_definition_id}" '
   and .parameters.eligibleOwnerAssignmentStartDateTime.defaultValue == ""
   and .parameters.eligibleOwnerAssignmentDuration.defaultValue == "P90D"
   and .parameters.eligibleOwnerAssignmentDuration.allowedValues == ["P30D", "P90D", "P180D", "P365D"]
+  and .parameters.operatorWorkflowVerificationToken.type == "securestring"
+  and (.parameters.operatorWorkflowVerificationToken | has("defaultValue") | not)
   and .variables.ownerRoleDefinitionId == $owner
   and .variables.baseRequestProperties.principalId == "[variables('\''validatedPrincipalId'\'')]"
   and .variables.baseRequestProperties.roleDefinitionId == "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', variables('\''ownerRoleDefinitionId'\''))]"
@@ -145,6 +147,19 @@ jq -e --arg owner "${owner_role_definition_id}" '
       )] | length) == 1
 ' "${COMPILED_ELIGIBILITY_TEMPLATE}" >/dev/null \
   || fail 'One-shot Owner eligibility artifact must require a caller request ID, explicit opt-in and lifecycle action, group input, and a finite schedule.'
+
+jq -e '
+  (.variables.requestIdInputIsValid | contains("requestIdResidualCharacters"))
+  and (.variables.principalInputIsValid | contains("principalResidualCharacters"))
+  and (.variables.targetScheduleGuidIsCanonical | contains("targetScheduleResidualCharacters"))
+  and (.variables.startTimeInputIsRfc3339Utc | contains("startTimeBaseResidualCharacters"))
+  and (.variables.startTimeInputIsRfc3339Utc | contains("startTimeSuffixResidualCharacters"))
+  and .variables.targetScheduleInputIsValid == "[if(equals(parameters('\''requestType'\''), '\''AdminAssign'\''), empty(parameters('\''targetRoleEligibilityScheduleId'\'')), variables('\''targetScheduleGuidIsCanonical'\''))]"
+  and .variables.scheduleInputIsValid == "[if(equals(parameters('\''requestType'\''), '\''AdminRemove'\''), empty(parameters('\''eligibleOwnerAssignmentStartDateTime'\'')), variables('\''startTimeInputIsRfc3339Utc'\''))]"
+  and .variables.workflowMarkerIsValid == "[equals(parameters('\''operatorWorkflowVerificationToken'\''), variables('\''expectedOperatorWorkflowVerificationToken'\''))]"
+  and .variables.executionInputsAreValid == "[or(not(parameters('\''submitEligibilityRequest'\'')), and(and(and(and(and(variables('\''requestIdInputIsValid'\''), variables('\''principalInputIsValid'\'')), variables('\''targetScheduleInputIsValid'\'')), variables('\''scheduleInputIsValid'\'')), not(empty(trim(parameters('\''eligibleOwnerAssignmentJustification'\''))))), variables('\''workflowMarkerIsValid'\'')))]"
+' "${COMPILED_ELIGIBILITY_TEMPLATE}" >/dev/null \
+  || fail 'One-shot Owner eligibility compiled input guards were weakened or replaced.'
 
 one_shot_forbidden_count="$(jq '
   [..
@@ -211,6 +226,7 @@ jq -e '
   and .parameters.eligibleOwnerAssignmentStartDateTime.value == "REPLACE_WITH_ELIGIBLE_OWNER_START_DATE_TIME_UTC"
   and .parameters.eligibleOwnerAssignmentDuration.value == "P90D"
   and .parameters.eligibleOwnerAssignmentJustification.value == "REPLACE_WITH_ELIGIBLE_OWNER_REQUEST_JUSTIFICATION"
+  and .parameters.operatorWorkflowVerificationToken.value == "UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST"
 ' "${eligibility_parameter_template}" >/dev/null \
   || fail 'One-shot Owner eligibility parameter template must stay disabled and retain explicit tenant-independent placeholders.'
 
@@ -225,6 +241,51 @@ for required_guidance in \
   rg -qi "${required_guidance}" "${pim_guidance}" \
     || fail "PIM runbook is missing one-shot lifecycle guidance: ${required_guidance}"
 done
+
+owner_operator_bash="${PROJECT_DIR}/scripts/owner-eligibility-request.sh"
+owner_operator_powershell="${PROJECT_DIR}/scripts/owner-eligibility-request.ps1"
+[[ -f "${owner_operator_bash}" && -f "${owner_operator_powershell}" ]] \
+  || fail 'Both Bash and PowerShell Owner eligibility operator workflows are required.'
+
+for required_pattern in \
+  'az ad group show' \
+  'securityEnabled == true' \
+  'roleEligibilitySchedules' \
+  'roleEligibilityScheduleRequests' \
+  'atScope()' \
+  'deployment sub what-if' \
+  'deployment sub create' \
+  'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION' \
+  'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'; do
+  rg -q -F "${required_pattern}" "${owner_operator_bash}" \
+    || fail "Bash Owner eligibility workflow is missing required fail-closed control: ${required_pattern}"
+done
+
+for required_pattern in \
+  "'ad', 'group', 'show'" \
+  'securityEnabledProperty.Value -ne $true' \
+  'roleEligibilitySchedules' \
+  'roleEligibilityScheduleRequests' \
+  'atScope()' \
+  'deployment sub what-if' \
+  'deployment sub create' \
+  'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION' \
+  'UNSUPPORTED_OUTSIDE_SCRIPTS_OWNER_ELIGIBILITY_REQUEST'; do
+  rg -q -F "${required_pattern}" "${owner_operator_powershell}" \
+    || fail "PowerShell Owner eligibility workflow is missing required fail-closed control: ${required_pattern}"
+done
+
+bash_group_check_line="$(rg -n -F 'securityEnabled == true' "${owner_operator_bash}" | head -n 1 | cut -d: -f1)"
+bash_inventory_line="$(rg -n -F 'schedules_url=' "${owner_operator_bash}" | head -n 1 | cut -d: -f1)"
+bash_what_if_line="$(rg -n -F 'az deployment sub what-if' "${owner_operator_bash}" | head -n 1 | cut -d: -f1)"
+[[ "${bash_group_check_line}" -lt "${bash_inventory_line}" && "${bash_group_check_line}" -lt "${bash_what_if_line}" ]] \
+  || fail 'Bash Owner eligibility workflow must verify the security-enabled group before state inventory or what-if.'
+
+powershell_group_check_line="$(rg -n -F 'securityEnabledProperty.Value -ne $true' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
+powershell_inventory_line="$(rg -n -F '$schedulesUrl =' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
+powershell_what_if_line="$(rg -n -F '& az deployment sub what-if' "${owner_operator_powershell}" | head -n 1 | cut -d: -f1)"
+[[ "${powershell_group_check_line}" -lt "${powershell_inventory_line}" && "${powershell_group_check_line}" -lt "${powershell_what_if_line}" ]] \
+  || fail 'PowerShell Owner eligibility workflow must verify the security-enabled group before state inventory or what-if.'
 
 requirements_file="${PROJECT_DIR}/identity/azure-rbac/owner-activation-requirements.template.json"
 [[ -f "${requirements_file}" ]] || fail "Missing static Owner activation requirements: ${requirements_file}"
