@@ -1,19 +1,67 @@
 {
   "trimmedRequiredStrings": [
-    { "value": "valid", "valid": true },
-    { "value": "", "valid": false },
-    { "value": " valid", "valid": false },
-    { "value": "valid ", "valid": false },
-    { "value": "   ", "valid": false }
+    {
+      "value": "valid",
+      "valid": true
+    },
+    {
+      "value": "",
+      "valid": false
+    },
+    {
+      "value": " valid",
+      "valid": false
+    },
+    {
+      "value": "valid ",
+      "valid": false
+    },
+    {
+      "value": "   ",
+      "valid": false
+    }
   ],
   "rfc3339UtcTimestamps": [
-    { "value": "2026-12-31T23:59:59Z", "valid": true },
-    { "value": "2024-02-29T00:00:00Z", "valid": true },
-    { "value": "2025-02-29T00:00:00Z", "valid": false },
-    { "value": "2026-12-31TZ", "valid": false },
-    { "value": "2026-02-30T23:59:59Z", "valid": false },
-    { "value": "2026-12-31t23:59:59z", "valid": false },
-    { "value": "2026-12-31T24:00:00Z", "valid": false }
+    {
+      "value": "2026-12-31T23:59:59Z",
+      "valid": true
+    },
+    {
+      "value": "2024-02-29T00:00:00Z",
+      "valid": true
+    },
+    {
+      "value": "2025-02-29T00:00:00Z",
+      "valid": false
+    },
+    {
+      "value": "2026-04-30T23:59:59Z",
+      "valid": true
+    },
+    {
+      "value": "2025-02-28T23:59:59Z",
+      "valid": true
+    },
+    {
+      "value": "2024-02-29T12:34:56Z",
+      "valid": true
+    },
+    {
+      "value": "2026-12-31TZ",
+      "valid": false
+    },
+    {
+      "value": "2026-02-30T23:59:59Z",
+      "valid": false
+    },
+    {
+      "value": "2026-12-31t23:59:59z",
+      "valid": false
+    },
+    {
+      "value": "2026-12-31T24:00:00Z",
+      "valid": false
+    }
   ],
   "policyAssignmentScopeContracts": [
     {
@@ -59,28 +107,52 @@
   ],
   "policyDefinitionReferenceContracts": [
     {
-      "allowed": ["public-management-ingress", "require-subnet-nsg"],
-      "provided": ["public-management-ingress"],
+      "allowed": [
+        "public-management-ingress",
+        "require-subnet-nsg"
+      ],
+      "provided": [
+        "public-management-ingress"
+      ],
       "valid": true
     },
     {
       "allowed": [],
-      "provided": ["public-management-ingress"],
+      "provided": [
+        "public-management-ingress"
+      ],
       "valid": false
     },
     {
-      "allowed": ["public-management-ingress"],
-      "provided": ["public-management-ingress", "require-subnet-nsg"],
+      "allowed": [
+        "public-management-ingress"
+      ],
+      "provided": [
+        "public-management-ingress",
+        "require-subnet-nsg"
+      ],
       "valid": false
     },
     {
-      "allowed": ["public-management-ingress", "require-subnet-nsg"],
-      "provided": ["public-management-ingress", " "],
+      "allowed": [
+        "public-management-ingress",
+        "require-subnet-nsg"
+      ],
+      "provided": [
+        "public-management-ingress",
+        " "
+      ],
       "valid": false
     },
     {
-      "allowed": ["public-management-ingress", "require-subnet-nsg"],
-      "provided": ["public-management-ingress", "PUBLIC-MANAGEMENT-INGRESS"],
+      "allowed": [
+        "public-management-ingress",
+        "require-subnet-nsg"
+      ],
+      "provided": [
+        "public-management-ingress",
+        "PUBLIC-MANAGEMENT-INGRESS"
+      ],
       "valid": false
     }
   ]

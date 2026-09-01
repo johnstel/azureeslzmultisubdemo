@@ -679,7 +679,7 @@ try {
         $subscriptionExemption.properties.parameters.exemptionCategory.value -ne 'Mitigated' -or
         (Compare-Object @($resourceGroupExemption.properties.parameters.allowedPolicyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg')) -or
         (Compare-Object @($resourceGroupExemption.properties.parameters.policyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg'))) {
-        Stop-Test 'Exemption categories or policyDefinitionReferenceIds are invalid.'
+        Stop-Test 'Exemption categories, policyDefinitionReferenceIds, or allowedPolicyDefinitionReferenceIds are invalid.'
     }
 
     $exemptionModuleTemplate = $managementGroupExemption.properties.template
