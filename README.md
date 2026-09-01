@@ -393,6 +393,7 @@ modules/
   policy-library.bicep
   policy-initiative.bicep
   policy-assignment.bicep
+  remediating-policy-assignment.bicep
   management-group-rbac.bicep
   subscription-rbac.bicep
   evidence-connectivity.bicep

@@ -40,6 +40,7 @@ if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   exit 1
 fi
 COMPILED_MAIN_TEMPLATE="${TEMP_DIR}/main.json" "${SCRIPT_DIR}/validate-policy-assignment.sh"
+"${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
 printf '3/23 Validate the ARM parameter template...\n'
 jq -e '
