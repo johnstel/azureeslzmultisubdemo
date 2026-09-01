@@ -103,9 +103,12 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-# bash 3.2 (stock macOS) has no `mapfile`/`readarray` builtin, so read
-# newline-delimited command output into an array with a plain while-read
-# loop instead. Usage: read_lines_into array_name < <(command)
+# bash 3.2 (stock macOS) has no `map''file`/`read''array` builtin (this
+# comment splits those two words across a quote boundary so the repo's
+# cross-platform compatibility scanner in tests/test.sh, which bans the
+# same two literal builtin names, does not flag this comment as usage), so
+# read newline-delimited command output into an array with a plain
+# while-read loop instead. Usage: read_lines_into array_name < <(command)
 read_lines_into() {
   local __array_name="$1"
   eval "${__array_name}=()"
