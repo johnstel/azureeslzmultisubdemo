@@ -1,0 +1,36 @@
+{
+  "displayName": "Demo - Require phishing-resistant MFA for privileged roles (report-only)",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "users": {
+      "includeRoles": [
+        "62e90394-69f5-4237-9190-012177145e10",
+        "e8611ab8-c189-46e8-94e1-60213ab1f814",
+        "194ae4cb-b126-40b2-bd5b-6091b380977d",
+        "b1be1c3e-b65d-4f19-8427-f6fa0d97feb9",
+        "9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3",
+        "158c047a-c907-4556-b7ef-446551a6b5f7"
+      ],
+      "excludeGroups": [
+        "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID"
+      ]
+    },
+    "applications": {
+      "includeApplications": ["All"]
+    },
+    "clientAppTypes": ["all"]
+  },
+  "grantControls": {
+    "operator": "OR",
+    "authenticationStrength": {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "displayName": "Phishing-resistant MFA"
+    }
+  },
+  "emergencyAccessExclusion": {
+    "required": true,
+    "placeholder": "REPLACE_WITH_EMERGENCY_ACCESS_GROUP_OBJECT_ID",
+    "description": "Object ID of the tenant's emergency-access (break-glass) group. Every break-glass account must sit in this group and remain excluded from this policy so a Conditional Access misconfiguration can never lock the tenant out. A future apply workflow must fail closed if this placeholder is still present."
+  },
+  "notes": "Report-only demo input for a Microsoft Graph conditionalAccessPolicies resource. conditions.users.includeRoles lists Microsoft Entra built-in directory role *template IDs* (GUIDs, documented in identity/schema/known-entra-ids.json) for Global Administrator, Privileged Role Administrator, Security Administrator, Conditional Access Administrator, Application Administrator, and Cloud Application Administrator; Microsoft Graph does not accept role display names or an 'All users' value here. grantControls.authenticationStrength references the built-in 'Phishing-resistant MFA' authenticationStrengthPolicy (id 00000000-0000-0000-0000-000000000004) as its own Graph relationship, not as a builtInControls entry. Not applied to any tenant by this repository. Before controlled deployment: (1) replace the emergency-access placeholder with a real, monitored break-glass group object ID, (2) confirm the tenant has an Entra ID P2 (or Microsoft Entra Suite / EMS E5 equivalent) license granting Conditional Access and Authentication Strengths, (3) review sign-in logs for the report-only period before switching state to 'enabled', (4) keep this exclusion group's sign-ins outside all other Conditional Access policies in this folder as well."
+}
