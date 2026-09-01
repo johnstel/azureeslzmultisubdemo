@@ -90,6 +90,9 @@
         "Standard_B2ms"
       ]
     },
+    "networkIngressPolicyEffect": {
+      "value": "Audit"
+    },
     "deployRoleAssignments": {
       "value": false
     },

@@ -56,6 +56,7 @@ param customerAllowedVmSkus = [
   'Standard_B2s'
   'Standard_B2ms'
 ]
+param networkIngressPolicyEffect = 'Audit'
 param deployRoleAssignments = false
 param deployEvidenceResources = false
 param evidenceLocation = 'eastus2'

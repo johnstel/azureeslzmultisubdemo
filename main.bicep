@@ -51,6 +51,14 @@ param readOnlyAuditorsGroupObjectId string
 ])
 param denyPolicyEnforcementMode string = 'DoNotEnforce'
 
+@description('Effect for workload public-management-ingress and subnet-NSG controls. Keep Audit until policy impact and exemptions are reviewed.')
+@allowed([
+  'Audit'
+  'Deny'
+  'Disabled'
+])
+param networkIngressPolicyEffect string = 'Audit'
+
 @description('Continental-US Azure regions allowed by the demo policy.')
 param allowedLocations array = [
   'centralus'
@@ -249,6 +257,97 @@ module rootDeploymentRestrictions 'modules/root-deployment-restrictions.bicep' =
     allowedVmSkus: customerAllowedVmSkus
     enforcementMode: denyPolicyEnforcementMode
   }
+}
+
+module networkIngressInitiative 'modules/policy-initiative.bicep' = {
+  name: 'network-ingress-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-network-ingress'
+    initiativeDisplayName: 'Demo - workload network ingress guardrails'
+    initiativeDescription: 'Audits public RDP/SSH NSG rules and workload subnets without NSGs; deny remains opt-in and non-enforcing by default.'
+    initiativeCategory: 'Network'
+    initiativeVersion: '1.0.0'
+    initiativeParameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Network ingress effect'
+          description: 'Audit is the safe default. Select Deny only after reviewing approved management paths and exemptions.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+    }
+    policyDefinitionGroups: [
+      {
+        name: 'workload-boundary'
+        displayName: 'Workload boundary'
+        category: 'Network'
+        description: 'Controls applied only to the selected Corp or Online workload branch.'
+      }
+    ]
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: policyLibrary.outputs.publicManagementIngressPolicyDefinitionId
+        policyDefinitionReferenceId: 'public-management-ingress'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'workload-boundary'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.requireSubnetNsgPolicyDefinitionId
+        policyDefinitionReferenceId: 'require-subnet-nsg'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'workload-boundary'
+        ]
+      }
+    ]
+  }
+}
+
+module networkIngressAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-network-ingress'
+  scope: managementGroup(workloadManagementGroupId)
+  params: {
+    assignmentName: 'demo-network-ingress'
+    displayName: 'Demo - workload network ingress guardrails'
+    description: 'Audits public management ingress and missing subnet NSGs in the selected workload branch.'
+    policyDefinitionId: networkIngressInitiative.outputs.policySetDefinitionId
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: networkIngressPolicyEffect
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Public inbound TCP access to SSH (22) or RDP (3389) is not approved. Use a private approved management path or obtain a governed exemption.'
+        policyDefinitionReferenceId: 'public-management-ingress'
+      }
+      {
+        message: 'Workload subnets require an NSG association. Document platform constraints and obtain a governed exemption when an NSG is unsupported.'
+        policyDefinitionReferenceId: 'require-subnet-nsg'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
 }
 
 module expensiveResourcesAssignment 'modules/policy-assignment.bicep' = {

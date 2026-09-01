@@ -60,6 +60,7 @@ root:
 | Demo root | Customer deployment-restrictions initiative: `eastus`/`eastus2`, approved resource types and VM SKUs, managed disks, and public IP creation | Deny members in `DoNotEnforce`; audit members remain Audit |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
+| Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -75,6 +76,16 @@ resource-type default includes this project's evidence resources and child
 types needed for diagnostics, VM extensions, private endpoints, backup, and
 Azure Policy remediation. Keep `denyPolicyEnforcementMode` set to
 `DoNotEnforce` until those lists and a what-if/policy impact report are approved.
+
+The workload network-ingress initiative recognizes `*`, `Internet`,
+`0.0.0.0/0`, and arbitrary public IPv4 host/CIDR source values in singular and
+array NSG aliases. Private, non-routable/reserved IPv4 ranges and supported
+Azure service tags are not treated as public. TCP or any-protocol destination
+ranges are parsed so ranges containing `22` or `3389` are detected alongside
+exact and wildcard ports. It is not assigned to Platform or Connectivity.
+Exceptional public paths or special-purpose workload subnets must use a
+documented, time-bound Azure Policy exemption. The existing demo-root
+public-IP audit remains the only public-IP resource control.
 
 ### Reusable initiative composition
 
@@ -402,6 +413,8 @@ modules/
   policy-library.bicep
   policy-initiative.bicep
   policy-assignment.bicep
+  remediating-policy-assignment.bicep
+  remediating-policy-rbac.bicep
   management-group-rbac.bicep
   subscription-rbac.bicep
   evidence-connectivity.bicep
