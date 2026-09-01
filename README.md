@@ -67,6 +67,22 @@ governed separately by workload tag policy. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
 policy impact.
 
+### Reusable initiative composition
+
+`modules/policy-initiative.bicep` creates a custom initiative at its caller's
+management-group scope. It accepts initiative parameter definitions, typed
+policy references and groups, rejects empty or case-insensitively duplicate
+reference IDs, records v2 Bicep-managed metadata, and exposes deterministic
+definition outputs for later assignment modules.
+
+`examples/initiative-composition.bicep` is a compile-time example scoped only
+to a supplied dedicated demo-root management group. It combines the verified
+built-in allowed-locations definition with the in-repository public-IP audit
+definition, passes audit-first initiative parameters through to the built-in,
+and creates no assignment or metered resource. The example is not called by
+`main.bicep`; domain initiatives remain explicit future work driven by the
+authoritative [`policy/control-catalog.json`](policy/control-catalog.json).
+
 ## Least-privilege RBAC model
 
 Bicep does not create Microsoft Entra identities. Supply the object IDs of five
@@ -370,9 +386,12 @@ identity/
     conditional-access-policy.schema.json
     pim-activation-policy.schema.json
     known-entra-ids.json
+examples/
+  initiative-composition.bicep
 modules/
   hierarchy.bicep
   policy-library.bicep
+  policy-initiative.bicep
   policy-assignment.bicep
   management-group-rbac.bicep
   subscription-rbac.bicep
