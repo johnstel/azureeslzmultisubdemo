@@ -61,6 +61,7 @@ root:
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
+| Landing Zones | Storage and Key Vault data-protection initiative: secure transfer, minimum TLS, public blob and network access, shared-key posture, Key Vault soft delete, deletion protection, RBAC authorization, firewall/public network access, private-link and diagnostics readiness, and service-specific customer-managed key audits | Audit assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -87,6 +88,44 @@ Exceptional public paths or special-purpose workload subnets must use a
 documented, time-bound Azure Policy exemption. The existing demo-root
 public-IP audit remains the only public-IP resource control.
 
+### Storage, Key Vault, and customer-managed keys
+
+The Landing Zones data-protection initiative composes verified built-in
+definitions for storage secure transfer, minimum TLS version, public blob
+access, network access, shared-key authorization, private-link readiness, and
+for Key Vault soft delete, deletion (purge) protection, RBAC authorization,
+firewall/public network access, private-link readiness, and resource-log
+readiness. `dataProtectionPolicyEffect` defaults to `Audit`; controls whose
+built-in supports only `Audit`/`Disabled` or `AuditIfNotExists`/`Disabled`
+follow that choice without ever being escalated to `Deny`. Purge protection is
+only ever audited or required, never disabled.
+
+The public-access and private-link controls audit configuration and readiness
+only. They do not deploy a private endpoint, private DNS zone, virtual
+network, or diagnostic setting, so a compliant result must not be reported as
+delivered private connectivity or delivered logging.
+
+Customer-managed key (CMK) coverage is service-specific and audit-first, not a
+blanket deny across every Azure service. The verified storage CMK built-in only
+confirms that encryption uses a Key Vault key source, so the in-repository
+`${namePrefix}-audit-storage-cmk-approved-key` definition adds the approved
+inventory check driven by the `approvedCustomerManagedKeyVaultUris` and
+`approvedCustomerManagedKeyNames` parameters. Both default to empty, which
+reports nothing. Before enabling CMK, the customer owns these dependencies:
+
+- **Identity:** a managed identity granted `get`, `wrapKey`, and `unwrapKey` on
+  the key. This repository never grants key access or changes data-plane
+  permissions.
+- **Key rotation:** a documented rotation process and the re-wrap behavior of
+  each service that consumes the key.
+- **Availability:** a deleted, disabled, expired, or purged key makes encrypted
+  data unreadable, so key lifecycle must be monitored.
+- **Recovery:** Key Vault soft delete and purge protection must stay enabled;
+  purge protection must never be disabled once enabled.
+- **Private network:** when vault public network access is restricted, the
+  consuming service needs approved private connectivity that the customer
+  deploys and operates.
+
 ### Reusable initiative composition
 
 `modules/policy-initiative.bicep` creates a custom initiative at its caller's
@@ -100,7 +139,8 @@ to a supplied dedicated demo-root management group. It combines the verified
 built-in allowed-locations definition with the in-repository public-IP audit
 definition, passes audit-first initiative parameters through to the built-in,
 and creates no assignment or metered resource. The example is not called by
-`main.bicep`; domain initiatives remain explicit future work driven by the
+`main.bicep`; the deployed domain initiatives (workload network ingress and
+Landing Zones data protection) are composed directly in `main.bicep` from the
 authoritative [`policy/control-catalog.json`](policy/control-catalog.json).
 
 ## Least-privilege RBAC model
@@ -281,6 +321,7 @@ For a first review, retain:
 
 ```json
 "denyPolicyEnforcementMode": { "value": "DoNotEnforce" },
+"dataProtectionPolicyEffect": { "value": "Audit" },
 "deployRoleAssignments": { "value": false },
 "deployEvidenceResources": { "value": false }
 ```
