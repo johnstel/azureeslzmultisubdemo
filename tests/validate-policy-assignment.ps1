@@ -478,6 +478,9 @@ try {
     $exemptionValidationDocument.Dispose()
 
     $mainJson = Get-Content -LiteralPath $CompiledMainTemplate -Raw | ConvertFrom-Json
+    if ($mainJson.resources -is [System.Management.Automation.PSCustomObject]) {
+        $mainJson.resources = @($mainJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
+    }
     $assignmentNames = @(
         'assign-allowed-locations'
         'assign-audit-public-ip'
