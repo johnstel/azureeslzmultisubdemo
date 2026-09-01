@@ -6,7 +6,9 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir = Split-Path -Parent $ScriptDir
-$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("azureeslz-test-" + [guid]::NewGuid().ToString('N'))
+$ArtifactsParent = Join-Path $ProjectDir '.test-artifacts'
+$TempDir = Join-Path $ArtifactsParent ("test-ps1-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $ArtifactsParent -Force | Out-Null
 New-Item -ItemType Directory -Path $TempDir | Out-Null
 
 function Stop-Test {
@@ -436,7 +438,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     Write-Host '19/22 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '20/22 Forced-fallback regression tests for the shared source-URL grammar (bash/python, bash/jq-fallback, pwsh/python, pwsh/native-fallback)...'
+    Write-Host '20/22 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -1095,5 +1097,8 @@ finally {
     }
     if (Test-Path -LiteralPath $TempDir) {
         Remove-Item -LiteralPath $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $ArtifactsParent) {
+        Remove-Item -LiteralPath $ArtifactsParent -ErrorAction SilentlyContinue
     }
 }

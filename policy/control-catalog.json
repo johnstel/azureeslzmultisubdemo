@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "catalogVersion": "1.0.0",
+  "catalogVersion": "1.1.0",
   "generatedOn": "2026-08-31",
   "purpose": "Authoritative v2 mapping from each customer requirement to its implementation mechanism (Azure Policy built-in/custom definition or initiative, Entra/PIM artifact, Defender CSPM/CIEM feature, shared-service architecture pattern, or manual evidence process) before v2 policy code is expanded. Sourced from public Microsoft Learn and the Azure/azure-policy GitHub repository; no tenant credentials were used.",
   "sourceIssue": "https://github.com/johnstel/azureeslzmultisubdemo/issues/3",
@@ -23,7 +23,9 @@
     "The Microsoft cloud security benchmark (REQ-BASE-01) initiative GUID is updated in place very frequently; always re-fetch the current metadata.version immediately before assignment rather than relying on the version recorded here. A separate, distinct \"Microsoft cloud security benchmark v2\" initiative also exists (GUID `e3ec7e09-768c-4b64-882c-fcada3772047`, 730 members); this catalog tracks v1 and v2 should be independently re-verified before any future switch.",
     "MCSB (REQ-BASE-01) and CIS (REQ-BASE-02) were checked for remediation-capable (DeployIfNotExists/Modify) policies using a reproducible per-member effect-mapping method (validating that each member's effect-named parameter references an existing top-level initiative parameter). CIS's 2 fixed/unmapped members (of 108 total) were both individually fetched and confirmed Audit-effect, so CIS's `remediationIdentityRequired: false` is fully evidence-backed. MCSB's 56 fixed/unmapped members (of 226 total) were each individually resolved to their source filename in the public Azure/azure-policy repository and every one follows the Azure Policy naming convention for a fixed, non-remediating effect (`_Audit`, `_Deny`, `_AuditDeny`, or `_AINE`/AuditIfNotExists) with none using the DeployIfNotExists/Modify remediation-policy naming convention -- an exhaustive 56-of-56 verification, so MCSB's `remediationIdentityRequired: false` is also fully evidence-backed. NIST SP 800-53 Rev. 5 (REQ-BASE-03) has 616 fixed/unmapped members (of 694 total) using opaque GUID reference IDs that cannot be corroborated by naming convention; this session independently resolved all 616 by shallow-cloning the public Azure/azure-policy repository and building a GUID-to-effect index from each member's own fixed effect (or its parameter's default when the effect itself is parameterized with no initiative-level override), yielding an exact, independently-verified breakdown of 481 Manual, 97 AuditIfNotExists, 34 Audit, 2 Modify, and 2 DeployIfNotExists. The 4 Modify/DeployIfNotExists members (the Guest Configuration prerequisite policies) each require only the Contributor role (`b24988ac-6180-42a0-ab88-20f7382dd24c`), independently confirmed from their own definition JSON -- so unlike MCSB/CIS, REQ-BASE-03's `enforcementPhase` is `deployifnotexists-opt-in` (not `audit-only`) and its `supportedEffects` includes `AuditIfNotExists`/`DeployIfNotExists`/`Modify`/`Manual` to reflect these fixed members, since assigning the initiative at all unavoidably enables the remediation-capable ones. A separate, newer \"NIST SP 800-53 R5.1.1\" initiative also exists (GUID `60205a79-6280-4e20-a147-e2011e09dc78`) for the updated revision. See each record's `notes` field for the full verification method and its limits.",
     "REQ-DEF-01 (\"Configure Microsoft Defender for Cloud plans\") is an all-or-nothing initiative: it exposes no assignment-time parameters, so assigning it enables all 12 member Defender plans immediately with no per-plan opt-out. It is **not safe** for this repository's audit-first/no-cost demo default profile and is documented for completeness only. Each plan must instead be independently enabled via its own verified, individually assignable policy definition (REQ-DEF-02 through REQ-DEF-04), which does expose its own `effect` parameter (`DeployIfNotExists`/`Disabled`) that can be explicitly overridden at assignment time. REQ-DEF-01's `roleDefinitionIds` remains a complete verified union (Owner + Security Admin) across all 12 members (`rolesVaryByMember: true`) for reference only.",
-    "REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`)."
+    "REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).",
+    "REQ-DEF-06 records Defender vulnerability assessment as a workload-specific paid-plan or feature dependency, not a universal policy assignment. Its no-cost default is Disabled; enabling it requires an independently verified workload-to-plan mapping and explicit cost approval.",
+    "REQ-BKP-03 and REQ-BKP-04 are customer-input and manual-evidence records, not deployment instructions. Safe defaults create no Recovery Services vault, Backup vault, backup policy, diagnostic setting, private endpoint, or protection relationship, and all remediation remains explicit opt-in."
   ],
   "controls": [
     {
@@ -960,18 +962,25 @@
         "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Network/ASC_All_Internet_traffic_should_be_routed_via_Azure_Firewall.json",
         "verificationMethod": "raw-json",
         "category": "Network",
-        "notes": "Still in Preview as of the verification date; preview built-ins are excluded from safe/default customer profiles per repository convention (never silently select preview definitions)."
+        "notes": "Still in Preview as of the verification date; preview built-ins are excluded from safe/default customer profiles per repository convention (never silently select preview definitions). The requiredParameters are stable customer architecture inputs, not assignment parameters exposed by this preview built-in: they identify the approved firewall resource/private IP, in-scope route tables and production/critical subnets, and the expected Internet prefixes/next-hop type used for issue #17 route validation."
       },
       "supportedEffects": [
         "AuditIfNotExists",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": [
+        "approvedFirewallResourceId",
+        "approvedFirewallPrivateIpAddress",
+        "approvedRouteTableResourceIds",
+        "approvedProductionCriticalSubnetResourceIds",
+        "approvedInternetRouteAddressPrefixes",
+        "approvedInternetRouteNextHopType"
+      ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Compiled ARM template (opt-in only) + policy compliance state; route-table architecture inputs documented separately from policy evidence (issue #17)."
+      "evidenceSource": "Compiled ARM template (opt-in only), policy compliance state, and customer-approved firewall and route-expectation inputs required by issue #17."
     },
     {
       "id": "REQ-LOG-01",
@@ -1308,7 +1317,7 @@
       "mechanism": {
         "kind": "service-specific-audit-policy",
         "builtIn": false,
-        "displayName": "Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) \u2014 not yet selected",
+        "displayName": "Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) — not yet selected",
         "definitionId": null,
         "sourceUrl": null,
         "verifiedOn": "2026-08-31",
@@ -1329,6 +1338,38 @@
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Per-service CMK configuration status; key rotation, availability, and recovery are customer-owned dependencies documented alongside the specific built-in chosen per service in issue #14.",
       "notes": "No single built-in initiative covers CMK across every Azure service (confirmed: no policySetDefinition matching 'customer-managed key' exists in the public Azure/azure-policy repository), so this record is intentionally honest that builtIn is false and no GUID is claimed until each service's built-in is individually verified in issue #14. Do not treat this record as azure-policy-backed until it is next decomposed per service."
+    },
+    {
+      "id": "REQ-DATA-10",
+      "domain": "data-protection",
+      "customerRequirement": "Audit and govern Storage account shared-key authorization posture without changing existing accounts by default.",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinitionSelection",
+        "builtIn": false,
+        "displayName": "Storage shared-key authorization posture policy — not yet selected",
+        "definitionId": null,
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": null,
+        "verificationMethod": "not-yet-selected",
+        "category": "Storage",
+        "notes": "No built-in definition ID is recorded because no candidate is evidenced by the repository sources used for this catalog. A future implementation must independently verify the exact definition, effects, version, and compatibility impact before selection."
+      },
+      "supportedEffects": [
+        "Audit",
+        "Deny",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "approvedStorageSharedKeyAuthorizationPosture"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Customer-approved shared-key posture and a future independently verified policy selection; safe defaults only document the gap and create or configure nothing.",
+      "notes": "Audit-first record only. The customer must choose whether shared-key authorization is permitted, restricted, or prohibited; enforcement remains unselected and disabled until compatibility and exception evidence is approved."
     },
     {
       "id": "REQ-BASE-01",
@@ -1397,7 +1438,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 108 total member policy references, computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01 (validating that each member's effect-named parameter actually references an existing top-level initiative parameter, not just counting top-level parameter names). Applying this method: 106 of 108 members are effect-mapped and 2 are fixed/unexposed at the initiative level -- policyDefinitionReferenceId 06a78e20-9358-41c9-923c-fb736d382a4d ('Audit VMs that do not use managed disks', file VMRequireManagedDisk_Audit.json) and b6e2945c-0b7b-40f5-9233-7a5323b5cdc6 (file NetworkWatcher_Enabled_Audit.json); both were fetched directly and confirmed fixed at a plain Audit effect. No DeployIfNotExists/Modify (remediation-capable) member exists in this initiative; remediationIdentityRequired is therefore false and no roleDefinitionIds are required.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB — avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 108 total member policy references, computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01 (validating that each member's effect-named parameter actually references an existing top-level initiative parameter, not just counting top-level parameter names). Applying this method: 106 of 108 members are effect-mapped and 2 are fixed/unexposed at the initiative level -- policyDefinitionReferenceId 06a78e20-9358-41c9-923c-fb736d382a4d ('Audit VMs that do not use managed disks', file VMRequireManagedDisk_Audit.json) and b6e2945c-0b7b-40f5-9233-7a5323b5cdc6 (file NetworkWatcher_Enabled_Audit.json); both were fetched directly and confirmed fixed at a plain Audit effect. No DeployIfNotExists/Modify (remediation-capable) member exists in this initiative; remediationIdentityRequired is therefore false and no roleDefinitionIds are required.",
       "rolesVaryByMember": false
     },
     {
@@ -1641,6 +1682,40 @@
       "notes": "Current replacement: 'Enable Azure Monitor for VMs with Azure Monitoring Agent (AMA)' initiative, GUID 924bfe3a-762f-40e7-86dd-5c8b95eb09e6 (verified via public secondary source; re-confirm raw JSON before use), plus the resource-diagnostics initiative in REQ-LOG-02."
     },
     {
+      "id": "REQ-DEF-06",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Optionally enable Defender vulnerability assessment only for explicitly approved workload types and their required Defender plan or feature dependency.",
+      "scope": "landingzones",
+      "classification": "defender-cspm-ciem",
+      "mechanism": {
+        "kind": "defenderFeatureDependency",
+        "builtIn": false,
+        "displayName": "Defender vulnerability-assessment mapping — plan and workload mechanism not yet selected",
+        "definitionId": null,
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": null,
+        "verificationMethod": "not-yet-selected",
+        "category": "Microsoft Defender for Cloud",
+        "notes": "Vulnerability assessment availability and charging depend on the selected workload and Defender plan/feature. No policy definition or universal plan dependency is asserted without reliable in-repository evidence."
+      },
+      "supportedEffects": [
+        "Disabled",
+        "Enabled (explicit opt-in only)"
+      ],
+      "requiredParameters": [
+        "enableDefenderVulnerabilityAssessment",
+        "approvedDefenderVulnerabilityAssessmentWorkloadTypes",
+        "approvedDefenderPlanResourceIds",
+        "defenderVulnerabilityAssessmentCostApprovalReference"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Customer workload inventory, independently verified plan/feature mapping, and explicit cost approval; the no-cost default remains Disabled.",
+      "notes": "This is an independent paid-feature dependency record, not an instruction to assign REQ-DEF-01 or enable any plan. A future implementation must map each approved workload type to its verified Defender prerequisite and preserve an explicit false/Disabled default."
+    },
+    {
       "id": "REQ-BKP-01",
       "domain": "backup",
       "customerRequirement": "Audit that virtual machines have Azure Backup coverage.",
@@ -1704,11 +1779,93 @@
       ],
       "remediationIdentityRequired": true,
       "dependencies": [
-        "REQ-BKP-01"
+        "REQ-BKP-01",
+        "REQ-BKP-03"
       ],
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
-      "notes": "Requires a customer-supplied, existing vault and backup policy resource ID; safe defaults create no vault and configure no backup (issue #19). The built-in JSON's then.details.roleDefinitionIds array (Virtual Machine Contributor, Backup Contributor) is reproduced verbatim above."
+      "notes": "Requires a customer-supplied existing vault, backup policy resource ID, and the approved integration/retention/placement contract in REQ-BKP-03 (issue #19). Safe defaults create no vault and configure no backup. The built-in JSON's then.details.roleDefinitionIds array (Virtual Machine Contributor, Backup Contributor) is reproduced verbatim above."
+    },
+    {
+      "id": "REQ-BKP-03",
+      "domain": "backup",
+      "customerRequirement": "Integrate protected workloads only with customer-approved existing Recovery Services or Backup vaults and policies that meet retention, regional, and workload-placement standards.",
+      "scope": "landingzones",
+      "classification": "shared-service-architecture",
+      "mechanism": {
+        "kind": "sharedServiceArchitecture",
+        "builtIn": false,
+        "displayName": "Approved backup vault, policy, retention, region, and workload-placement mapping",
+        "definitionId": null,
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": null,
+        "verificationMethod": "internal-design",
+        "category": "Backup",
+        "notes": "This shared-service contract covers both Recovery Services vault and Backup vault integrations. It does not claim a single built-in can validate every vault type, policy retention rule, region, and workload placement."
+      },
+      "supportedEffects": [
+        "Manual",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "approvedRecoveryServicesVaultResourceIds",
+        "approvedBackupVaultResourceIds",
+        "approvedBackupPolicyResourceIds",
+        "requiredBackupRetentionStandardsByWorkload",
+        "approvedBackupVaultRegions",
+        "approvedWorkloadBackupPlacementMap"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-BKP-01"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Customer-approved vault/policy resource IDs, retention standards, region allowlist, workload-placement map, and read-only architecture evidence.",
+      "notes": "Defaults create no vault or policy and protect no workload. REQ-BKP-02 remains the separately opt-in VM remediation path only when its existing-vault constraints and this customer-approved mapping are satisfied."
+    },
+    {
+      "id": "REQ-BKP-04",
+      "domain": "backup",
+      "customerRequirement": "Validate approved Recovery Services and Backup vault posture for diagnostics, private access, encryption, soft delete, and immutability.",
+      "scope": "landingzones",
+      "classification": "manual-evidence",
+      "mechanism": {
+        "kind": "controlSelectionAndManualEvidence",
+        "builtIn": false,
+        "displayName": "Backup vault security and resilience posture controls — not yet selected",
+        "definitionId": null,
+        "verifiedOn": "2026-08-31",
+        "sourceUrl": null,
+        "verificationMethod": "not-yet-selected",
+        "category": "Backup",
+        "notes": "No definition ID is asserted: the repository evidence does not establish one reliable built-in covering both vault resource types and all required posture properties. Future controls may be split after each exact definition is independently verified."
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled",
+        "Manual"
+      ],
+      "requiredParameters": [
+        "approvedRecoveryServicesVaultResourceIds",
+        "approvedBackupVaultResourceIds",
+        "effectiveCentralLogAnalyticsWorkspaceResourceId",
+        "requiredBackupVaultDiagnosticSettings",
+        "requiredBackupVaultPrivateAccessPosture",
+        "approvedBackupVaultPrivateEndpointResourceIds",
+        "requiredBackupVaultEncryptionPosture",
+        "requiredBackupVaultSoftDeleteState",
+        "requiredBackupVaultImmutabilityState"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [
+        "REQ-BKP-03",
+        "REQ-LOG-02"
+      ],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Read-only vault configuration and diagnostic evidence compared with customer-approved posture inputs; no remediation is selected or started.",
+      "notes": "Audit/manual evidence only until exact built-ins are verified and separately approved. Defaults configure no diagnostics, networking, encryption, soft delete, or immutability and incur no vault or monitoring changes."
     },
     {
       "id": "REQ-CIP-01",
@@ -1803,6 +1960,14 @@
     {
       "topic": "Tag requirement vs. tag inheritance",
       "note": "REQ-TAG-01..06 (require tag on resource group) and REQ-TAG-07..12 (inherit tag to child resources) are complementary, not duplicative: the first establishes the source of truth at the resource-group scope, and the second propagates it without overwriting existing values."
+    },
+    {
+      "topic": "Defender vulnerability assessment and Defender plans",
+      "note": "REQ-DEF-06 is an independently approved workload-specific feature dependency. It does not duplicate or implicitly enable REQ-DEF-01 through REQ-DEF-04; the selected workload-to-plan prerequisite and cost approval must be evidenced before any enablement."
+    },
+    {
+      "topic": "Backup coverage, integration, and vault posture",
+      "note": "REQ-BKP-01 audits VM coverage, REQ-BKP-02 is an explicit opt-in VM remediation, REQ-BKP-03 records approved vault/policy/retention/region/placement inputs, and REQ-BKP-04 records vault diagnostics/private-access/encryption/soft-delete/immutability evidence. They are complementary and safe defaults configure nothing."
     }
   ]
 }

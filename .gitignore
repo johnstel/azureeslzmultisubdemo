@@ -1,5 +1,5 @@
 parameters/demo.parameters.json
 *.local.json
 work/
+.test-artifacts/
 .DS_Store
-

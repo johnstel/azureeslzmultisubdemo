@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CATALOG="${CATALOG:-${PROJECT_DIR}/policy/control-catalog.json}"
-MATRIX="${PROJECT_DIR}/docs/CONTROL-MATRIX.md"
+MATRIX="${MATRIX:-${PROJECT_DIR}/docs/CONTROL-MATRIX.md}"
 
 command -v jq >/dev/null 2>&1 || {
   printf 'ERROR: jq is required for control-catalog validation.\n' >&2
@@ -26,10 +26,11 @@ fail() {
 printf '1/10 Validate catalog JSON syntax...\n'
 jq empty "${CATALOG}"
 
+if [[ "${SCHEMA_ONLY:-0}" != "1" ]]; then
 printf '2/10 Validate required top-level fields...\n'
 jq -e '
-  (.["$schema"] | type == "string") and
-  (.catalogVersion | type == "string") and
+  (.["$schema"] | type == "string" and length > 0) and
+  (.catalogVersion | type == "string" and length > 0) and
   (.generatedOn | type == "string") and
   (.classificationValues | type == "array" and length > 0) and
   (.enforcementPhaseValues | type == "array" and length > 0) and
@@ -106,6 +107,9 @@ jq -e '
     select(((.roleDefinitionIds | length) == 0) and (.rolesVaryByMember != true))
   ] | length == 0
 ' "${CATALOG}" >/dev/null || fail "A control record sets remediationIdentityRequired=true but has neither a populated roleDefinitionIds array nor rolesVaryByMember=true."
+else
+  printf '2-8/10 Skipped pre-schema catalog checks (SCHEMA_ONLY=1).\n'
+fi
 
 printf '9/10 Validate the catalog against policy/control-catalog.schema.json...\n'
 # SCHEMA_BACKEND selects which of the two schema-equivalent implementations
@@ -187,7 +191,22 @@ fi
 
 printf '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...\n'
 json_count="$(jq '.controls | length' "${CATALOG}")"
-matrix_count="$(rg -o '\*\*Total control records:\*\* ([0-9]+)' -r '$1' "${MATRIX}")"
+
+# Parse the four metadata records only from their exact keyed list-item shape.
+# A matching value elsewhere in prose must not satisfy a missing/stale header,
+# and duplicate keys are rejected rather than concatenated accidentally.
+parse_metadata() {
+  local key="$1" pattern="$2"
+  local values count
+  values="$(sed -n "${pattern}" "${MATRIX}")"
+  count="$(printf '%s\n' "${values}" | awk 'NF { count++ } END { print count + 0 }')"
+  [[ "${count}" -eq 1 ]] || fail "Matrix must contain exactly one '${key}' metadata record in its canonical keyed form (found ${count})."
+  printf '%s' "${values}"
+}
+matrix_catalog_version="$(parse_metadata 'Catalog version' 's/^- \*\*Catalog version:\*\* `\([^`][^`]*\)`$/\1/p')"
+matrix_generated_on="$(parse_metadata 'Generated on' 's/^- \*\*Generated on:\*\* `\([^`][^`]*\)`$/\1/p')"
+matrix_source_issue="$(parse_metadata 'Source issue' 's/^- \*\*Source issue:\*\* \(https:\/\/[^[:space:]]*\)$/\1/p')"
+matrix_count="$(parse_metadata 'Total control records' 's/^- \*\*Total control records:\*\* \([0-9][0-9]*\)$/\1/p')"
 [[ "${json_count}" == "${matrix_count}" ]] || fail "Catalog has ${json_count} control records but the matrix states ${matrix_count}."
 
 # Bidirectional ID-set comparison: parse the actual "| REQ-XXX-NN | ..." table
@@ -233,28 +252,20 @@ done < <(jq -r '
 ' "${CATALOG}")
 [[ "${mismatch}" -eq 0 ]] || exit 1
 
-# Validate catalog-level metadata (version/generated date/source issue) is
-# represented in the matrix header, not just the per-row content above.
+# Validate exact parsed catalog-level metadata, never arbitrary prose.
 catalog_version="$(jq -r '.catalogVersion' "${CATALOG}")"
 generated_on="$(jq -r '.generatedOn' "${CATALOG}")"
 source_issue="$(jq -r '.sourceIssue' "${CATALOG}")"
-rg -qF -- "**Catalog version:** \`${catalog_version}\`" "${MATRIX}" || fail "Matrix header does not state the current catalogVersion (${catalog_version})."
-rg -qF -- "**Generated on:** \`${generated_on}\`" "${MATRIX}" || fail "Matrix header does not state the current generatedOn date (${generated_on})."
-rg -qF -- "${source_issue}" "${MATRIX}" || fail "Matrix header does not reference the current sourceIssue (${source_issue})."
+[[ "${matrix_catalog_version}" == "${catalog_version}" ]] || fail "Matrix Catalog version metadata (${matrix_catalog_version}) does not match catalogVersion (${catalog_version})."
+[[ "${matrix_generated_on}" == "${generated_on}" ]] || fail "Matrix Generated on metadata (${matrix_generated_on}) does not match generatedOn (${generated_on})."
+[[ "${matrix_source_issue}" == "${source_issue}" ]] || fail "Matrix Source issue metadata (${matrix_source_issue}) does not match sourceIssue (${source_issue})."
 
 # Every declared classification value must be represented in the classification legend.
 while IFS= read -r classification; do
   rg -qF -- "\`${classification}\`" "${MATRIX}" || fail "Classification legend in the matrix is missing the declared classification value: ${classification}."
 done < <(jq -r '.classificationValues[]' "${CATALOG}")
 
-# Every top-level caution must be represented (as a normalized substring, since
-# the matrix may format the same caution with additional markdown emphasis).
 normalize() { tr -s '[:space:]`' ' ' | sed -e 's/^ *//' -e 's/ *$//'; }
-normalized_matrix="$(normalize < "${MATRIX}")"
-while IFS= read -r caution; do
-  normalized_caution="$(printf '%s' "${caution}" | normalize)"
-  [[ "${normalized_matrix}" == *"${normalized_caution}"* ]] || fail "Matrix does not represent a declared caution: ${caution}"
-done < <(jq -r '.cautions[]' "${CATALOG}")
 
 # Overlap-notes pairs are validated structurally and bidirectionally below
 # (exact {topic, note} multiset comparison), which subsumes a one-way
@@ -298,6 +309,26 @@ id_heading_pairs="$(awk '
   }
 ' "${MATRIX}")"
 
+# The only headings between the classification legend and overlap notes are
+# the known domain sections. Compare the complete heading multiset with the
+# domains actually present in the catalog. This rejects duplicate, empty,
+# extra, and stale domain sections, including sections with no control rows.
+matrix_domain_headings="$(awk '
+  /^## Classification legend$/ { in_domains = 1; next }
+  /^## Overlap notes/ { if (in_domains) exit }
+  in_domains && /^##[[:space:]]*$/ { print "<EMPTY>"; next }
+  in_domains && /^## / { print substr($0, 4) }
+' "${MATRIX}" | sort)"
+expected_domain_headings="$(
+  jq -r '[.controls[].domain] | unique[]' "${CATALOG}" |
+  while IFS= read -r domain; do
+    heading="$(domain_to_heading "${domain}")"
+    [[ -n "${heading}" ]] || fail "Catalog declares an unrecognized domain \"${domain}\" with no known matrix heading mapping."
+    printf '%s\n' "${heading}"
+  done | sort
+)"
+[[ "${matrix_domain_headings}" == "${expected_domain_headings}" ]] || fail "Matrix domain headings do not exactly match catalog domains (extra, empty, duplicate, stale, or missing section). Matrix: [$(printf '%s' "${matrix_domain_headings}" | tr '\n' ';')] Expected: [$(printf '%s' "${expected_domain_headings}" | tr '\n' ';')]"
+
 domain_mismatch=0
 while IFS=$'\t' read -r ctrl_id ctrl_domain; do
   expected_heading="$(domain_to_heading "${ctrl_domain}")"
@@ -318,8 +349,8 @@ matrix_cautions="$(awk '
   /^## / { if (flag) exit }
   flag && /^- / { sub(/^- /, ""); print }
 ' "${MATRIX}")"
-normalized_matrix_cautions="$(printf '%s\n' "${matrix_cautions}" | while IFS= read -r line; do [[ -n "${line}" ]] && printf '%s\n' "${line}" | normalize; done | sort -u)"
-normalized_json_cautions="$(jq -r '.cautions[]' "${CATALOG}" | while IFS= read -r line; do printf '%s\n' "${line}" | normalize; done | sort -u)"
+normalized_matrix_cautions="$(printf '%s\n' "${matrix_cautions}" | while IFS= read -r line; do [[ -n "${line}" ]] && printf '%s\n' "${line}" | normalize; done | sort)"
+normalized_json_cautions="$(jq -r '.cautions[]' "${CATALOG}" | while IFS= read -r line; do printf '%s\n' "${line}" | normalize; done | sort)"
 [[ "${normalized_matrix_cautions}" == "${normalized_json_cautions}" ]] || fail "The matrix's \"Important caveats\" bullets do not exactly match the JSON catalog's .cautions[] (an entry was added, removed, or reworded in only one place). Matrix: [$(printf '%s' "${normalized_matrix_cautions}" | tr '\n' ';')] JSON: [$(printf '%s' "${normalized_json_cautions}" | tr '\n' ';')]"
 
 # Exact bidirectional multiset comparison of Overlap-notes {topic, note}

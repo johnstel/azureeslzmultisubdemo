@@ -3,8 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TEMP_DIR="$(mktemp -d)"
-trap 'rm -rf "${TEMP_DIR}"' EXIT
+ARTIFACTS_PARENT="${PROJECT_DIR}/.test-artifacts"
+TEMP_DIR="${ARTIFACTS_PARENT}/test-sh-$$"
+mkdir -p "${TEMP_DIR}"
+trap 'rm -rf "${TEMP_DIR}"; rmdir "${ARTIFACTS_PARENT}" 2>/dev/null || true' EXIT
 
 command -v az >/dev/null 2>&1 || {
   printf 'ERROR: Azure CLI is required for Bicep validation.\n' >&2
@@ -324,7 +326,7 @@ fi
 printf '19/22 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '20/22 Forced-fallback regression tests for the shared source-URL grammar (bash/python, bash/jq-fallback, pwsh/python, pwsh/native-fallback)...\n'
+printf '20/22 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
 printf '21/22 Validate Entra Conditional Access and PIM demo artifacts...\n'

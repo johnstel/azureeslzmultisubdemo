@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$CatalogPathOverride,
+    [string]$MatrixPathOverride,
     [ValidateSet('auto', 'python', 'native')]
     [string]$SchemaBackend = 'auto',
     [switch]$SchemaOnly
@@ -17,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir = Split-Path -Parent $ScriptDir
 $CatalogPath = if ($CatalogPathOverride) { $CatalogPathOverride } else { Join-Path $ProjectDir 'policy/control-catalog.json' }
-$MatrixPath = Join-Path $ProjectDir 'docs/CONTROL-MATRIX.md'
+$MatrixPath = if ($MatrixPathOverride) { $MatrixPathOverride } else { Join-Path $ProjectDir 'docs/CONTROL-MATRIX.md' }
 
 function Stop-Test {
     param([string]$Message)
@@ -31,8 +32,9 @@ Write-Host '1/10 Validate catalog JSON syntax...'
 $catalogText = Get-Content -LiteralPath $CatalogPath -Raw
 $catalog = $catalogText | ConvertFrom-Json
 
+if (-not $SchemaOnly) {
 Write-Host '2/10 Validate required top-level fields...'
-foreach ($field in @('catalogVersion', 'generatedOn', 'classificationValues', 'enforcementPhaseValues', 'controls', 'overlapNotes')) {
+foreach ($field in @('$schema', 'catalogVersion', 'generatedOn', 'classificationValues', 'enforcementPhaseValues', 'controls', 'overlapNotes')) {
     if (-not (Get-Member -InputObject $catalog -Name $field -MemberType NoteProperty)) {
         Stop-Test "Catalog is missing required top-level field: $field"
     }
@@ -45,6 +47,14 @@ foreach ($field in @('classificationValues', 'enforcementPhaseValues', 'controls
 if (@($catalog.classificationValues).Count -eq 0) { Stop-Test 'classificationValues must not be empty.' }
 if (@($catalog.enforcementPhaseValues).Count -eq 0) { Stop-Test 'enforcementPhaseValues must not be empty.' }
 if (@($catalog.controls).Count -eq 0) { Stop-Test 'controls must not be empty.' }
+if ([string]::IsNullOrEmpty($catalog.'$schema')) { Stop-Test '$schema must not be empty.' }
+if ([string]::IsNullOrEmpty($catalog.catalogVersion)) { Stop-Test 'catalogVersion must not be empty.' }
+foreach ($value in @($catalog.classificationValues)) {
+    if ([string]::IsNullOrEmpty($value)) { Stop-Test 'classificationValues entries must be non-empty strings.' }
+}
+foreach ($value in @($catalog.enforcementPhaseValues)) {
+    if ([string]::IsNullOrEmpty($value)) { Stop-Test 'enforcementPhaseValues entries must be non-empty strings.' }
+}
 
 $classifications = @($catalog.classificationValues)
 $phases = @($catalog.enforcementPhaseValues)
@@ -60,10 +70,10 @@ foreach ($control in $controls) {
             Stop-Test "Control $($control.id) is missing required field: $field"
         }
     }
-    if ($classifications -notcontains $control.classification) {
+    if ($classifications -cnotcontains $control.classification) {
         Stop-Test "Control $($control.id) uses undeclared classification: $($control.classification)"
     }
-    if ($phases -notcontains $control.enforcementPhase) {
+    if ($phases -cnotcontains $control.enforcementPhase) {
         Stop-Test "Control $($control.id) uses undeclared enforcementPhase: $($control.enforcementPhase)"
     }
     if (@($control.supportedEffects).Count -eq 0) {
@@ -74,7 +84,7 @@ foreach ($control in $controls) {
             Stop-Test "Control $($control.id) mechanism is missing required field: $field"
         }
     }
-    if ($verificationMethods -notcontains $control.mechanism.verificationMethod) {
+    if ($verificationMethods -cnotcontains $control.mechanism.verificationMethod) {
         Stop-Test "Control $($control.id) mechanism uses undeclared verificationMethod: $($control.mechanism.verificationMethod)"
     }
 }
@@ -83,12 +93,12 @@ Write-Host '4/10 Validate no "unknown"/"n/a" version/GUID placeholders remain...
 foreach ($control in $controls) {
     $majorVersion = if (Get-Member -InputObject $control.mechanism -Name 'majorVersion' -MemberType NoteProperty) { $control.mechanism.majorVersion } else { $null }
     $verifiedVersion = if (Get-Member -InputObject $control.mechanism -Name 'verifiedVersion' -MemberType NoteProperty) { $control.mechanism.verifiedVersion } else { $null }
-    if ($majorVersion -in @('unknown', 'n/a') -or $verifiedVersion -in @('unknown', 'n/a')) {
+    if ($majorVersion -cin @('unknown', 'n/a') -or $verifiedVersion -cin @('unknown', 'n/a')) {
         Stop-Test "Control $($control.id) still uses the literal placeholder 'unknown' or 'n/a' for majorVersion/verifiedVersion; either verify a real version or omit the field entirely when it does not apply."
     }
     $sourceUrl = if (Get-Member -InputObject $control.mechanism -Name 'sourceUrl' -MemberType NoteProperty) { $control.mechanism.sourceUrl } else { $null }
     if ($sourceUrl -and
-        ($sourceUrl -match 'raw\.githubusercontent\.com') -and
+        ($sourceUrl -cmatch 'raw\.githubusercontent\.com') -and
         ($sourceUrl.EndsWith('/'))) {
         Stop-Test "Control $($control.id) points sourceUrl at a directory listing instead of a file."
     }
@@ -135,6 +145,12 @@ foreach ($control in $controls) {
             Stop-Test "Control $($control.id) sets remediationIdentityRequired=true but has neither roleDefinitionIds nor rolesVaryByMember=true."
         }
     }
+}
+} else {
+    Write-Host '2-8/10 Skipped pre-schema catalog checks (-SchemaOnly).'
+    $classifications = @($catalog.classificationValues)
+    $phases = @($catalog.enforcementPhaseValues)
+    $controls = @($catalog.controls)
 }
 
 Write-Host '9/10 Validate the catalog against policy/control-catalog.schema.json...'
@@ -192,11 +208,8 @@ with open(schema_path, encoding="utf-8") as f:
 # validation paths can never diverge.
 jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
 '@
-    $tmpPy = New-TemporaryFile
-    Set-Content -LiteralPath $tmpPy -Value $pyScript
-    & python3 $tmpPy $CatalogPath $SchemaPath
+    $pyScript | & python3 - $CatalogPath $SchemaPath
     $schemaExit = $LASTEXITCODE
-    Remove-Item -LiteralPath $tmpPy -ErrorAction SilentlyContinue
     if ($schemaExit -ne 0) { Stop-Test 'Catalog failed JSON Schema validation.' }
 } else {
     Write-Host '  (using the full schema-equivalent native-PowerShell re-implementation below.)'
@@ -289,6 +302,14 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         param($Value)
         return ($null -ne $Value) -and ($Value -is [array])
     }
+    function Test-UniqueStrings {
+        param($Values)
+        $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($value in @($Values)) {
+            if ($value -isnot [string] -or -not $seen.Add($value)) { return $false }
+        }
+        return $true
+    }
     # Returns the value coerced to an array ONLY for iteration purposes, after
     # the caller has already separately asserted Test-IsArray for type-strictness.
     function Get-ArrayItems {
@@ -311,7 +332,7 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
     $classificationValuesIsArray = Test-IsArray $classificationValuesRaw
     $classificationValues = Get-ArrayItems $classificationValuesRaw
     if (-not $classificationValuesIsArray -or $classificationValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid classificationValues') }
-    if (($classificationValues | Select-Object -Unique).Count -ne $classificationValues.Count) { $schemaErrors.Add('top-level: classificationValues entries are not unique') }
+    if (-not (Test-UniqueStrings $classificationValues)) { $schemaErrors.Add('top-level: classificationValues entries are not unique') }
     foreach ($value in $classificationValues) {
         if (-not (Test-NonEmptyString $value)) { $schemaErrors.Add('top-level: a classificationValues entry is not a non-empty string') }
     }
@@ -319,7 +340,7 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
     $phaseValuesIsArray = Test-IsArray $phaseValuesRaw
     $phaseValues = Get-ArrayItems $phaseValuesRaw
     if (-not $phaseValuesIsArray -or $phaseValues.Count -lt 1) { $schemaErrors.Add('top-level: missing/invalid enforcementPhaseValues') }
-    if (($phaseValues | Select-Object -Unique).Count -ne $phaseValues.Count) { $schemaErrors.Add('top-level: enforcementPhaseValues entries are not unique') }
+    if (-not (Test-UniqueStrings $phaseValues)) { $schemaErrors.Add('top-level: enforcementPhaseValues entries are not unique') }
     foreach ($value in $phaseValues) {
         if (-not (Test-NonEmptyString $value)) { $schemaErrors.Add('top-level: an enforcementPhaseValues entry is not a non-empty string') }
     }
@@ -343,12 +364,12 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
     foreach ($control in $controls) {
         $controlId = Get-Prop $control 'id'
         $cid = if ($controlId) { $controlId } else { '?' }
-        if (-not (Test-NonEmptyString $controlId) -or ($controlId -notmatch $idPattern)) { $schemaErrors.Add("${cid}: invalid or malformed id") }
+        if (-not (Test-NonEmptyString $controlId) -or ($controlId -cnotmatch $idPattern)) { $schemaErrors.Add("${cid}: invalid or malformed id") }
         if (-not (Test-NonEmptyString (Get-Prop $control 'domain'))) { $schemaErrors.Add("${cid}: missing/invalid domain") }
         if (-not (Test-NonEmptyString (Get-Prop $control 'customerRequirement'))) { $schemaErrors.Add("${cid}: missing/invalid customerRequirement") }
         if (-not (Test-NonEmptyString (Get-Prop $control 'scope'))) { $schemaErrors.Add("${cid}: missing/invalid scope") }
         $classification = Get-Prop $control 'classification'
-        if ($classificationEnum -notcontains $classification) { $schemaErrors.Add("${cid}: undeclared classification '$classification'") }
+        if ($classificationEnum -cnotcontains $classification) { $schemaErrors.Add("${cid}: undeclared classification '$classification'") }
         $mechanism = Get-Prop $control 'mechanism'
         if ($mechanism -isnot [PSCustomObject]) { $schemaErrors.Add("${cid}: missing mechanism object") }
         if (-not (Test-NonEmptyString (Get-Prop $mechanism 'kind'))) { $schemaErrors.Add("${cid}: mechanism.kind missing/invalid") }
@@ -357,18 +378,18 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         $verifiedOn = Get-Prop $mechanism 'verifiedOn'
         if (-not (Test-ValidCalendarDate $verifiedOn)) { $schemaErrors.Add("${cid}: mechanism.verifiedOn missing/invalid date") }
         $verificationMethod = Get-Prop $mechanism 'verificationMethod'
-        if ($verificationMethods -notcontains $verificationMethod) { $schemaErrors.Add("${cid}: undeclared mechanism.verificationMethod '$verificationMethod'") }
+        if ($verificationMethods -cnotcontains $verificationMethod) { $schemaErrors.Add("${cid}: undeclared mechanism.verificationMethod '$verificationMethod'") }
         $majorVersion = Get-Prop $mechanism 'majorVersion'
-        if ((Test-Prop $mechanism 'majorVersion') -and (-not (Test-NonEmptyString $majorVersion) -or $majorVersion -in @('unknown', 'n/a'))) { $schemaErrors.Add("${cid}: mechanism.majorVersion invalid or placeholder") }
+        if ((Test-Prop $mechanism 'majorVersion') -and (-not (Test-NonEmptyString $majorVersion) -or $majorVersion -cin @('unknown', 'n/a'))) { $schemaErrors.Add("${cid}: mechanism.majorVersion invalid or placeholder") }
         $verifiedVersion = Get-Prop $mechanism 'verifiedVersion'
-        if ((Test-Prop $mechanism 'verifiedVersion') -and (-not (Test-NonEmptyString $verifiedVersion) -or $verifiedVersion -in @('unknown', 'n/a'))) { $schemaErrors.Add("${cid}: mechanism.verifiedVersion invalid or placeholder") }
+        if ((Test-Prop $mechanism 'verifiedVersion') -and (-not (Test-NonEmptyString $verifiedVersion) -or $verifiedVersion -cin @('unknown', 'n/a'))) { $schemaErrors.Add("${cid}: mechanism.verifiedVersion invalid or placeholder") }
         $sourceUrl = Get-Prop $mechanism 'sourceUrl'
         # Uses "-ne $null" rather than truthiness so a falsy-but-not-null,
         # non-string sourceUrl (e.g. the boolean $false, or 0) is not silently
         # skipped by PowerShell's implicit boolean coercion of that value.
         if ((Test-Prop $mechanism 'sourceUrl') -and ($null -ne $sourceUrl) -and ($sourceUrl -isnot [string])) { $schemaErrors.Add("${cid}: mechanism.sourceUrl must be string or null") }
         if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and (-not (Test-ValidHttpUri $sourceUrl $mechanismUrlPattern))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl is not a well-formed absolute HTTPS URL matching the catalog's source-URL grammar") }
-        if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and ($sourceUrl -match 'raw\.githubusercontent\.com') -and ($sourceUrl.EndsWith('/'))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl points at a directory listing") }
+        if ((Test-Prop $mechanism 'sourceUrl') -and ($sourceUrl -is [string]) -and ($sourceUrl -cmatch 'raw\.githubusercontent\.com') -and ($sourceUrl.EndsWith('/'))) { $schemaErrors.Add("${cid}: mechanism.sourceUrl points at a directory listing") }
         $builtIn = Get-Prop $mechanism 'builtIn'
         $definitionId = Get-Prop $mechanism 'definitionId'
         if ((Test-Prop $mechanism 'definitionId') -and ($null -ne $definitionId) -and ($definitionId -isnot [string])) { $schemaErrors.Add("${cid}: mechanism.definitionId must be string or null") }
@@ -376,7 +397,7 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         if ((Test-Prop $mechanism 'category') -and ($mechanismCategory -isnot [string])) { $schemaErrors.Add("${cid}: mechanism.category must be a string") }
         $mechanismNotes = Get-Prop $mechanism 'notes'
         if ((Test-Prop $mechanism 'notes') -and ($mechanismNotes -isnot [string])) { $schemaErrors.Add("${cid}: mechanism.notes must be a string") }
-        $verifiedDirectly = @('raw-json', 'initiative-json-member') -contains $verificationMethod
+        $verifiedDirectly = @('raw-json', 'initiative-json-member') -ccontains $verificationMethod
         if (($builtIn -eq $true) -and $verifiedDirectly -and (-not $definitionId -or $definitionId -notmatch $guidPattern)) {
             $schemaErrors.Add("${cid}: definitionId is not a well-formed GUID for a directly-verified built-in")
         }
@@ -405,9 +426,9 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         $dependenciesRaw = Get-Prop $control 'dependencies'
         if (-not (Test-Prop $control 'dependencies') -or -not (Test-IsArray $dependenciesRaw)) { $schemaErrors.Add("${cid}: dependencies must be an array") }
         $dependencyItems = Get-ArrayItems $dependenciesRaw
-        foreach ($dependency in $dependencyItems) { if ($dependency -isnot [string] -or $dependency -notmatch $idPattern) { $schemaErrors.Add("${cid}: a dependencies entry is not a well-formed control id") } }
+        foreach ($dependency in $dependencyItems) { if ($dependency -isnot [string] -or $dependency -cnotmatch $idPattern) { $schemaErrors.Add("${cid}: a dependencies entry is not a well-formed control id") } }
         $enforcementPhase = Get-Prop $control 'enforcementPhase'
-        if ($phaseValues -notcontains $enforcementPhase) { $schemaErrors.Add("${cid}: undeclared enforcementPhase '$enforcementPhase'") }
+        if ($phaseEnum -cnotcontains $enforcementPhase) { $schemaErrors.Add("${cid}: undeclared enforcementPhase '$enforcementPhase'") }
         if (-not (Test-NonEmptyString (Get-Prop $control 'evidenceSource'))) { $schemaErrors.Add("${cid}: missing/invalid evidenceSource") }
         $controlNotes = Get-Prop $control 'notes'
         if ((Test-Prop $control 'notes') -and ($controlNotes -isnot [string])) { $schemaErrors.Add("${cid}: notes must be a string") }
@@ -427,9 +448,18 @@ if ($SchemaOnly) {
 Write-Host '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...'
 $matrixText = Get-Content -LiteralPath $MatrixPath -Raw
 $jsonCount = $controls.Count
-$countMatch = [regex]::Match($matrixText, '\*\*Total control records:\*\* (\d+)')
-if (-not $countMatch.Success) { Stop-Test 'Matrix is missing the "Total control records" line.' }
-$matrixCount = [int]$countMatch.Groups[1].Value
+function Get-MatrixMetadata {
+    param([string]$Name, [string]$Pattern)
+    $matches = [regex]::Matches($matrixText, $Pattern, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+    if ($matches.Count -ne 1) {
+        Stop-Test "Matrix must contain exactly one '$Name' metadata record in its canonical keyed form (found $($matches.Count))."
+    }
+    return $matches[0].Groups[1].Value
+}
+$matrixCatalogVersion = Get-MatrixMetadata 'Catalog version' '^- \*\*Catalog version:\*\* `([^`]+)`\r?$'
+$matrixGeneratedOn = Get-MatrixMetadata 'Generated on' '^- \*\*Generated on:\*\* `([^`]+)`\r?$'
+$matrixSourceIssue = Get-MatrixMetadata 'Source issue' '^- \*\*Source issue:\*\* (https://[^\s\r]+)\r?$'
+$matrixCount = [int](Get-MatrixMetadata 'Total control records' '^- \*\*Total control records:\*\* ([0-9]+)\r?$')
 if ($jsonCount -ne $matrixCount) {
     Stop-Test "Catalog has $jsonCount control records but the matrix states $matrixCount."
 }
@@ -468,9 +498,9 @@ if ($missingIds.Count -gt 0) { Stop-Test "The matrix is missing control ID row(s
 $catalogVersion = $catalog.catalogVersion
 $generatedOnValue = $catalog.generatedOn
 $sourceIssueValue = $catalog.sourceIssue
-if (-not $matrixText.Contains("**Catalog version:** ``$catalogVersion``")) { Stop-Test "Matrix header does not state the current catalogVersion ($catalogVersion)." }
-if (-not $matrixText.Contains("**Generated on:** ``$generatedOnValue``")) { Stop-Test "Matrix header does not state the current generatedOn date ($generatedOnValue)." }
-if (-not $matrixText.Contains($sourceIssueValue)) { Stop-Test "Matrix header does not reference the current sourceIssue ($sourceIssueValue)." }
+if ($matrixCatalogVersion -ne $catalogVersion) { Stop-Test "Matrix Catalog version metadata ($matrixCatalogVersion) does not match catalogVersion ($catalogVersion)." }
+if ($matrixGeneratedOn -ne $generatedOnValue) { Stop-Test "Matrix Generated on metadata ($matrixGeneratedOn) does not match generatedOn ($generatedOnValue)." }
+if ($matrixSourceIssue -ne $sourceIssueValue) { Stop-Test "Matrix Source issue metadata ($matrixSourceIssue) does not match sourceIssue ($sourceIssueValue)." }
 
 # Every declared classification value must be represented in the classification legend.
 foreach ($classificationValue in $classifications) {
@@ -479,19 +509,9 @@ foreach ($classificationValue in $classifications) {
     }
 }
 
-# Every top-level caution / overlapNotes note must be represented (as a
-# normalized substring, since the matrix may format the same text with
-# additional markdown emphasis or inline code spans).
 function Get-NormalizedText {
     param([string]$Text)
     return ([regex]::Replace($Text, '[\s`]+', ' ')).Trim()
-}
-$normalizedMatrix = Get-NormalizedText $matrixText
-foreach ($caution in @($catalog.cautions)) {
-    $normalizedCaution = Get-NormalizedText $caution
-    if (-not $normalizedMatrix.Contains($normalizedCaution)) {
-        Stop-Test "Matrix does not represent a declared caution: $caution"
-    }
 }
 # Overlap-notes pairs are validated structurally and bidirectionally below
 # (exact {topic, note} multiset comparison), which subsumes a one-way
@@ -537,6 +557,35 @@ foreach ($line in $matrixLines) {
         $idToHeading[$Matches[1]] = $currentHeading
     }
 }
+
+# Compare the exact multiset of headings between the classification legend and
+# overlap-notes section with the catalog's known domains. Empty, duplicate,
+# extra, stale, and missing domain sections all fail.
+$matrixDomainHeadings = New-Object System.Collections.Generic.List[string]
+$inDomains = $false
+foreach ($line in $matrixLines) {
+    if ($line -eq '## Classification legend') { $inDomains = $true; continue }
+    if ($inDomains -and $line -match '^## Overlap notes') { break }
+    if ($inDomains -and $line -match '^##\s*$') { $matrixDomainHeadings.Add('<EMPTY>'); continue }
+    if ($inDomains -and $line -match '^## (.+)$') { $matrixDomainHeadings.Add($Matches[1]) }
+}
+$expectedDomainHeadings = New-Object System.Collections.Generic.List[string]
+$seenDomains = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+foreach ($control in $controls) {
+    if ($seenDomains.Add([string]$control.domain)) {
+        $heading = Get-ExpectedHeading $control.domain
+        if ([string]::IsNullOrEmpty($heading)) {
+            Stop-Test "Catalog declares an unrecognized domain `"$($control.domain)`" with no known matrix heading mapping."
+        }
+        $expectedDomainHeadings.Add($heading)
+    }
+}
+$sortedMatrixDomainHeadings = @($matrixDomainHeadings | Sort-Object)
+$sortedExpectedDomainHeadings = @($expectedDomainHeadings | Sort-Object)
+$domainHeadingDiff = Compare-Object -ReferenceObject $sortedExpectedDomainHeadings -DifferenceObject $sortedMatrixDomainHeadings
+if ($domainHeadingDiff) {
+    Stop-Test "Matrix domain headings do not exactly match catalog domains (extra, empty, duplicate, stale, or missing section). Matrix: [$($sortedMatrixDomainHeadings -join ';')] Expected: [$($sortedExpectedDomainHeadings -join ';')]"
+}
 foreach ($control in $controls) {
     $expectedHeading = Get-ExpectedHeading $control.domain
     if ([string]::IsNullOrEmpty($expectedHeading)) {
@@ -558,8 +607,8 @@ foreach ($line in $matrixLines) {
     if ($inCaveats -and $line -match '^## ') { break }
     if ($inCaveats -and $line -match '^- (.+)$') { $matrixCautionBullets.Add($Matches[1]) }
 }
-$normalizedMatrixCautions = @($matrixCautionBullets | ForEach-Object { Get-NormalizedText $_ } | Sort-Object -Unique)
-$normalizedJsonCautions = @(@($catalog.cautions) | ForEach-Object { Get-NormalizedText $_ } | Sort-Object -Unique)
+$normalizedMatrixCautions = @($matrixCautionBullets | ForEach-Object { Get-NormalizedText $_ } | Sort-Object)
+$normalizedJsonCautions = @(@($catalog.cautions) | ForEach-Object { Get-NormalizedText $_ } | Sort-Object)
 $cautionsDiff = Compare-Object -ReferenceObject $normalizedJsonCautions -DifferenceObject $normalizedMatrixCautions
 if ($cautionsDiff) {
     Stop-Test "The matrix's `"Important caveats`" bullets do not exactly match the JSON catalog's .cautions[] (an entry was added, removed, or reworded in only one place). Matrix: [$($normalizedMatrixCautions -join ';')] JSON: [$($normalizedJsonCautions -join ';')]"

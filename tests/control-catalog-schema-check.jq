@@ -75,8 +75,8 @@ def bad_pattern_items(arr; re; msg):
   if (arr | type) == "array" then (arr[] | select(matches_safely(re) | not) | msg) else empty end;
 
 [
-  (if (.["$schema"]? // null | type) != "string" then "top-level: missing/invalid $schema" else empty end),
-  (if (.catalogVersion? // null | type) != "string" then "top-level: missing/invalid catalogVersion" else empty end),
+  (if (.["$schema"]? // null | is_nonempty_string | not) then "top-level: missing/invalid $schema" else empty end),
+  (if (.catalogVersion? // null | is_nonempty_string | not) then "top-level: missing/invalid catalogVersion" else empty end),
   (if (.generatedOn? // null | is_valid_calendar_date | not) then "top-level: missing/invalid generatedOn date" else empty end),
   (if (.purpose? // null | is_nonempty_string | not) then "top-level: missing/invalid purpose" else empty end),
   (if (url_pattern != mechanism_url_pattern) then "top-level: schema sourceIssue and mechanism.sourceUrl patterns have diverged" else empty end),
