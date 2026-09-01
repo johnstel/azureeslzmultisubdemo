@@ -60,6 +60,8 @@ root:
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
+| Corp/Online and opt-in Critical Infrastructure | Audit selected PaaS public network access and private endpoint readiness | Audit |
+| Corp/Online and opt-in Critical Infrastructure | Audit supplied route-table expectations for an approved firewall | Explicit opt-in, Audit |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -77,6 +79,26 @@ exact and wildcard ports. It is not assigned to Platform or Connectivity.
 Exceptional public paths or special-purpose workload subnets must use a
 documented, time-bound Azure Policy exemption. The existing demo-root
 public-IP audit remains the only public-IP resource control.
+
+### Private access and firewall-route guardrails
+
+The private-access initiative audits Storage and Key Vault public network
+access plus the applicable built-in private-link posture. It is scoped only to
+the workload branch and, when enabled, Critical Infrastructure; Platform and
+Connectivity are excluded. `privateAccessPublicNetworkPolicyEffect` defaults
+to `Audit`. Do not select `Deny` until each workload has an approved private
+endpoint, private DNS-zone links and records, endpoint approval, subnet
+connectivity, and a tested management and data-plane access path.
+
+`enableFirewallRouteGuardrails` defaults to `false`. Enabling it requires
+non-empty `approvedFirewallResourceId`, `approvedFirewallPrivateIp`,
+`approvedRouteTableResourceIds`, and `approvedRouteTablePrefixes`; no
+placeholder is accepted or inferred. The resulting audit checks only supplied
+route tables and prefixes for a virtual-appliance next hop using the approved
+private IP. It does not deploy or prove the firewall, VNet peering, private
+DNS, private endpoints, subnet associations, route propagation, or end-to-end
+traffic traversal. Those are customer-owned hub-routing architecture and
+operational-validation dependencies, separate from Azure Policy evidence.
 
 ### Reusable initiative composition
 

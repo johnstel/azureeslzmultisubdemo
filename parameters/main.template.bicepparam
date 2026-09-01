@@ -14,6 +14,16 @@ param workloadContributorsGroupObjectId = 'REPLACE_WITH_WORKLOAD_CONTRIBUTORS_GR
 param readOnlyAuditorsGroupObjectId = 'REPLACE_WITH_READ_ONLY_AUDITORS_GROUP_OBJECT_GUID'
 param denyPolicyEnforcementMode = 'DoNotEnforce'
 param networkIngressPolicyEffect = 'Audit'
+param privateAccessPublicNetworkPolicyEffect = 'Audit'
+param privateAccessServiceCategories = [
+  'Storage'
+  'KeyVault'
+]
+param enableFirewallRouteGuardrails = false
+param approvedFirewallResourceId = ''
+param approvedFirewallPrivateIp = ''
+param approvedRouteTableResourceIds = []
+param approvedRouteTablePrefixes = []
 param deployRoleAssignments = false
 param deployEvidenceResources = false
 param evidenceLocation = 'eastus2'

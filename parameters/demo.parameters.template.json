@@ -44,6 +44,30 @@
     "networkIngressPolicyEffect": {
       "value": "Audit"
     },
+    "privateAccessPublicNetworkPolicyEffect": {
+      "value": "Audit"
+    },
+    "privateAccessServiceCategories": {
+      "value": [
+        "Storage",
+        "KeyVault"
+      ]
+    },
+    "enableFirewallRouteGuardrails": {
+      "value": false
+    },
+    "approvedFirewallResourceId": {
+      "value": ""
+    },
+    "approvedFirewallPrivateIp": {
+      "value": ""
+    },
+    "approvedRouteTableResourceIds": {
+      "value": []
+    },
+    "approvedRouteTablePrefixes": {
+      "value": []
+    },
     "deployRoleAssignments": {
       "value": false
     },

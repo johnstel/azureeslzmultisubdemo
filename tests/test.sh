@@ -47,12 +47,28 @@ jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
   .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
-  .parameters.networkIngressPolicyEffect.value == "Audit"
+  .parameters.networkIngressPolicyEffect.value == "Audit" and
+  .parameters.privateAccessPublicNetworkPolicyEffect.value == "Audit" and
+  .parameters.privateAccessServiceCategories.value == ["Storage", "KeyVault"] and
+  .parameters.enableFirewallRouteGuardrails.value == false and
+  .parameters.approvedFirewallResourceId.value == "" and
+  .parameters.approvedFirewallPrivateIp.value == "" and
+  .parameters.approvedRouteTableResourceIds.value == [] and
+  .parameters.approvedRouteTablePrefixes.value == []
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
-jq -e '.parameters.networkIngressPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
+jq -e '
+  .parameters.networkIngressPolicyEffect.value == "Audit" and
+  .parameters.privateAccessPublicNetworkPolicyEffect.value == "Audit" and
+  .parameters.privateAccessServiceCategories.value == ["Storage", "KeyVault"] and
+  .parameters.enableFirewallRouteGuardrails.value == false and
+  .parameters.approvedFirewallResourceId.value == "" and
+  .parameters.approvedFirewallPrivateIp.value == "" and
+  .parameters.approvedRouteTableResourceIds.value == [] and
+  .parameters.approvedRouteTablePrefixes.value == []
+' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
 printf '4/23 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
@@ -124,6 +140,29 @@ jq -e '
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) == ["public-management-ingress", "require-subnet-nsg"] and
   ($assignment.properties.parameters.nonComplianceMessages.value | all(.message | length > 0))
 ' "${TEMP_DIR}/main.json" >/dev/null
+private_access_and_route_guardrail_count="$(jq '
+  .resources as $resources |
+  ($resources | map(select(.name == "private-access-initiative")) | first) as $initiative |
+  ($resources | map(select(.name == "assign-private-access-workload")) | first) as $workload |
+  ($resources | map(select(.name == "assign-private-access-critical")) | first) as $critical |
+  ($resources | map(select(.name == "assign-firewall-routes-workload")) | first) as $routes |
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == ["key-vault-private-link", "paas-public-network-access", "storage-private-link"] and
+  $initiative.properties.parameters.initiativeParameters.value.publicNetworkAccessEffect.defaultValue == "Audit" and
+  ($workload.scope | contains("workloadManagementGroupId")) and
+  ($workload.scope | contains("platformManagementGroupId") | not) and
+  $critical.condition == "[parameters(\u0027enableCriticalInfrastructure\u0027)]" and
+  ($critical.scope | contains("criticalInfrastructureManagementGroupId")) and
+  $routes.condition == "[parameters(\u0027enableFirewallRouteGuardrails\u0027)]" and
+  ($routes.scope | contains("workloadManagementGroupId")) and
+  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("fail(")) and
+  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("approvedFirewallResourceId")) and
+  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("approvedRouteTableResourceIds")) and
+  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("approvedRouteTablePrefixes"))
+' "${TEMP_DIR}/main.json")"
+[[ "${private_access_and_route_guardrail_count}" == "true" ]] || {
+  printf 'ERROR: Private-access and approved-firewall-route guardrails must remain audit-first, input-gated, and workload/critical scoped.\n' >&2
+  exit 1
+}
 root_public_ip_assignment_count="$(jq '
   [.resources[]
     | select(.name == "assign-audit-public-ip")
