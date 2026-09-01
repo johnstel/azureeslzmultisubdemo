@@ -8,6 +8,8 @@ type policyDefinitionReference = {
   @minLength(1)
   policyDefinitionReferenceId: string
 
+  definitionVersion: string?
+
   parameters: object
   groupNames: string[]
 }
@@ -84,6 +86,9 @@ resource initiative 'Microsoft.Authorization/policySetDefinitions@2025-03-01' = 
       for policyDefinitionReference in validatedPolicyDefinitionReferences: {
         policyDefinitionId: policyDefinitionReference.policyDefinitionId
         policyDefinitionReferenceId: policyDefinitionReference.policyDefinitionReferenceId
+        ...(!empty(policyDefinitionReference.?definitionVersion ?? '') ? {
+          definitionVersion: policyDefinitionReference.?definitionVersion
+        } : {})
         parameters: policyDefinitionReference.parameters
         groupNames: policyDefinitionReference.groupNames
       }

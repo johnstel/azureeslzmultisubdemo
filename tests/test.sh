@@ -147,6 +147,8 @@ private_access_and_route_guardrail_count="$(jq '
   ($resources | map(select(.name == "assign-private-access-critical")) | first) as $critical |
   ($resources | map(select(.name == "assign-firewall-routes-workload")) | first) as $routes |
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == ["key-vault-private-link", "paas-public-network-access", "storage-private-link"] and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(select(.policyDefinitionReferenceId == "storage-private-link")) | first).definitionVersion == "2.*.*" and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(select(.policyDefinitionReferenceId == "key-vault-private-link")) | first).definitionVersion == "1.*.*" and
   $initiative.properties.parameters.initiativeParameters.value.publicNetworkAccessEffect.defaultValue == "Audit" and
   ($workload.scope | contains("workloadManagementGroupId")) and
   ($workload.scope | contains("platformManagementGroupId") | not) and
@@ -154,15 +156,18 @@ private_access_and_route_guardrail_count="$(jq '
   ($critical.scope | contains("criticalInfrastructureManagementGroupId")) and
   $routes.condition == "[parameters(\u0027enableFirewallRouteGuardrails\u0027)]" and
   ($routes.scope | contains("workloadManagementGroupId")) and
-  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("fail(")) and
-  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("approvedFirewallResourceId")) and
-  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("approvedRouteTableResourceIds")) and
-  ($routes.properties.parameters.parameters.value.approvedFirewallPrivateIp.value | contains("approvedRouteTablePrefixes"))
+  $routes.properties.parameters.parameters.value.approvedFirewallResourceId.value == "[parameters(\u0027approvedFirewallResourceId\u0027)]" and
+  (.variables.validatedFirewallRouteInputs | contains("fail(")) and
+  (.variables.validatedFirewallRouteInputs | contains("approvedFirewallResourceId")) and
+  (.variables.validatedFirewallRouteInputs | contains("approvedRouteTableResourceIds")) and
+  (.variables.validatedFirewallRouteInputs | contains("approvedRouteTablePrefixes"))
 ' "${TEMP_DIR}/main.json")"
 [[ "${private_access_and_route_guardrail_count}" == "true" ]] || {
   printf 'ERROR: Private-access and approved-firewall-route guardrails must remain audit-first, input-gated, and workload/critical scoped.\n' >&2
   exit 1
 }
+rg -q 'privateAccessServiceCategories must contain non-empty, case-insensitively unique Storage and/or KeyVault values' "${PROJECT_DIR}/main.bicep"
+rg -q 'approvedFirewallResourceId must be an Azure Firewall resource ID' "${PROJECT_DIR}/main.bicep"
 root_public_ip_assignment_count="$(jq '
   [.resources[]
     | select(.name == "assign-audit-public-ip")
@@ -186,7 +191,7 @@ with open(fixture_path, encoding="utf-8") as stream:
 
 library = next(
     resource
-    for resource in compiled["resources"]
+    for resource in compiled["resources"].values()
     if resource["name"].startswith("[format('policy-library-")
 )
 template = library["properties"]["template"]
@@ -280,6 +285,43 @@ if forms != {
     "destination": {"single", "plural"},
 }:
     raise SystemExit(f"ERROR: Network ingress fixtures do not cover all resource/property forms: {forms}")
+PYEOF
+
+python3 - "${TEMP_DIR}/main.json" "${PROJECT_DIR}/tests/fixtures/firewall-route-semantic-cases.json" <<'PYEOF'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    compiled = json.load(stream)
+with open(sys.argv[2], encoding="utf-8") as stream:
+    fixture = json.load(stream)
+
+library = next(resource for resource in compiled["resources"].values() if resource["name"].startswith("[format('policy-library-"))
+definition = next(
+    resource for resource in library["properties"]["template"]["resources"]
+    if resource["properties"]["displayName"] == "Demo - audit approved firewall route expectations"
+)
+policy_text = json.dumps(definition["properties"]["policyRule"]["if"])
+for expression in (
+    "approvedRouteTablePrefixes",
+    "current('approvedRouteTablePrefix')",
+    "nextHopType",
+    "VirtualAppliance",
+    "nextHopIpAddress",
+    "approvedFirewallPrivateIp",
+):
+    if expression not in policy_text:
+        raise SystemExit(f"ERROR: Compiled firewall route policy is missing: {expression}")
+
+for case in fixture["cases"]:
+    has_approved_route = any(
+        route["addressPrefix"] == fixture["approvedRouteTablePrefix"]
+        and route["nextHopType"] == "VirtualAppliance"
+        and route["nextHopIpAddress"] == fixture["approvedFirewallPrivateIp"]
+        for route in case["routes"]
+    )
+    if (not has_approved_route) != case["expectedNonCompliant"]:
+        raise SystemExit(f"ERROR: Firewall route semantic case failed: {case['name']}")
 PYEOF
 
 printf '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'

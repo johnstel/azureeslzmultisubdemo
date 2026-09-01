@@ -98,8 +98,10 @@ try {
     Assert-Test ($initiative.properties.metadata.governanceVersion -eq '2.0') 'Initiative metadata must identify v2 governance.'
     Assert-Test ($initiative.properties.metadata.managedBy -eq 'Bicep') 'Initiative metadata must identify Bicep management.'
     Assert-Test ($initiative.properties.copy[0].name -eq 'policyDefinitions') 'Module must compose policy definitions with a property loop.'
-    Assert-Test ($initiative.properties.copy[0].input.parameters -eq "[variables('validatedPolicyDefinitionReferences')[copyIndex('policyDefinitions')].parameters]") 'Per-reference parameters must pass through.'
-    Assert-Test ($initiative.properties.copy[0].input.groupNames -eq "[variables('validatedPolicyDefinitionReferences')[copyIndex('policyDefinitions')].groupNames]") 'Per-reference group names must pass through.'
+    Assert-Test ($initiative.properties.copy[0].input.Contains('validatedPolicyDefinitionReferences')) 'Per-reference values must pass through.'
+    Assert-Test ($initiative.properties.copy[0].input.Contains("'definitionVersion'")) 'Optional per-reference definition versions must pass through.'
+    Assert-Test ($initiative.properties.copy[0].input.Contains("'parameters'")) 'Per-reference parameters must pass through.'
+    Assert-Test ($initiative.properties.copy[0].input.Contains("'groupNames'")) 'Per-reference group names must pass through.'
 
     Write-Host '4/8 Validate empty and duplicate reference-ID guards...'
     Assert-Test ($moduleTemplate.variables.copy[0].name -eq 'normalizedPolicyDefinitionReferenceIds') 'Reference IDs must be normalized before duplicate detection.'

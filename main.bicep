@@ -1,5 +1,12 @@
 targetScope = 'tenant'
 
+func stripDigits(value string) string => replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(value, '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', '')
+func stripHex(value string) string => replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(value), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', '')
+func isGuid(value string) bool => length(value) == 36 ? substring(value, 8, 1) == '-' && substring(value, 13, 1) == '-' && substring(value, 18, 1) == '-' && substring(value, 23, 1) == '-' && length(replace(value, '-', '')) == 32 && empty(stripHex(replace(value, '-', ''))) : false
+func isIpv4(value string) bool => length(split(value, '.')) == 4 && value == trim(value) && !empty(value) && !empty(filter(split(value, '.'), octet => empty(octet) || !empty(stripDigits(octet)) || int(octet) > 255))
+func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(first(split(value, '/'))) && !empty(last(split(value, '/'))) && empty(stripDigits(last(split(value, '/')))) && int(last(split(value, '/'))) >= 0 && int(last(split(value, '/'))) <= 32
+func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
+
 @description('Azure region used only to store tenant deployment metadata.')
 param deploymentLocation string = 'eastus'
 
@@ -157,6 +164,20 @@ param enableCriticalInfrastructure bool = false
 
 @description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch. Only used when enableCriticalInfrastructure is true.')
 param criticalInfrastructureSubscriptionIds array = []
+
+var invalidPrivateAccessServiceCategories = filter(privateAccessServiceCategories, serviceCategory => empty(trim(serviceCategory)) || !(toLower(serviceCategory) == 'storage' || toLower(serviceCategory) == 'keyvault'))
+var normalizedPrivateAccessServiceCategories = [for serviceCategory in privateAccessServiceCategories: toLower(serviceCategory)]
+var validatedPrivateAccessServiceCategories = empty(privateAccessServiceCategories) || !empty(invalidPrivateAccessServiceCategories) || length(normalizedPrivateAccessServiceCategories) != length(union(normalizedPrivateAccessServiceCategories, []))
+  ? fail('privateAccessServiceCategories must contain non-empty, case-insensitively unique Storage and/or KeyVault values.')
+  : privateAccessServiceCategories
+var invalidApprovedRouteTableResourceIds = filter(approvedRouteTableResourceIds, routeTableResourceId => !isResourceId(routeTableResourceId, 'routeTables'))
+var normalizedApprovedRouteTableResourceIds = [for routeTableResourceId in approvedRouteTableResourceIds: toLower(routeTableResourceId)]
+var invalidApprovedRouteTablePrefixes = filter(approvedRouteTablePrefixes, routeTablePrefix => !isIpv4Cidr(routeTablePrefix))
+var normalizedApprovedRouteTablePrefixes = [for routeTablePrefix in approvedRouteTablePrefixes: toLower(routeTablePrefix)]
+var firewallRouteInputsValid = isResourceId(approvedFirewallResourceId, 'azureFirewalls') && isIpv4(approvedFirewallPrivateIp) && !empty(approvedRouteTableResourceIds) && empty(invalidApprovedRouteTableResourceIds) && length(normalizedApprovedRouteTableResourceIds) == length(union(normalizedApprovedRouteTableResourceIds, [])) && !empty(approvedRouteTablePrefixes) && empty(invalidApprovedRouteTablePrefixes) && length(normalizedApprovedRouteTablePrefixes) == length(union(normalizedApprovedRouteTablePrefixes, []))
+var validatedFirewallRouteInputs = enableFirewallRouteGuardrails && !firewallRouteInputsValid
+  ? fail('approvedFirewallResourceId must be an Azure Firewall resource ID, approvedFirewallPrivateIp must be an IPv4 address, and approvedRouteTableResourceIds and approvedRouteTablePrefixes must contain non-empty, valid, case-insensitively unique route-table IDs and IPv4 CIDRs when enableFirewallRouteGuardrails is true.')
+  : true
 
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
@@ -376,6 +397,7 @@ module privateAccessInitiative 'modules/policy-initiative.bicep' = {
       {
         policyDefinitionId: '/providers/Microsoft.Authorization/policyDefinitions/6edd7eda-6dd8-40f7-810d-67160c639cd9'
         policyDefinitionReferenceId: 'storage-private-link'
+        definitionVersion: '2.*.*'
         parameters: {}
         groupNames: [
           'private-access'
@@ -384,6 +406,7 @@ module privateAccessInitiative 'modules/policy-initiative.bicep' = {
       {
         policyDefinitionId: '/providers/Microsoft.Authorization/policyDefinitions/a6abeaec-4d90-4a02-805f-6b26c4d3fbe9'
         policyDefinitionReferenceId: 'key-vault-private-link'
+        definitionVersion: '1.*.*'
         parameters: {
           audit_effect: {
             value: 'Audit'
@@ -411,7 +434,7 @@ module privateAccessWorkloadAssignment 'modules/policy-assignment.bicep' = {
         value: privateAccessPublicNetworkPolicyEffect
       }
       serviceCategories: {
-        value: privateAccessServiceCategories
+        value: validatedPrivateAccessServiceCategories
       }
     }
   }
@@ -434,7 +457,7 @@ module privateAccessCriticalAssignment 'modules/policy-assignment.bicep' = if (e
         value: privateAccessPublicNetworkPolicyEffect
       }
       serviceCategories: {
-        value: privateAccessServiceCategories
+        value: validatedPrivateAccessServiceCategories
       }
     }
   }
@@ -454,7 +477,10 @@ module firewallRouteWorkloadAssignment 'modules/policy-assignment.bicep' = if (e
     enforcementMode: 'Default'
     parameters: {
       approvedFirewallPrivateIp: {
-        value: empty(trim(approvedFirewallResourceId)) || empty(trim(approvedFirewallPrivateIp)) || empty(approvedRouteTableResourceIds) || empty(approvedRouteTablePrefixes) ? fail('approvedFirewallResourceId, approvedFirewallPrivateIp, approvedRouteTableResourceIds, and approvedRouteTablePrefixes are required when enableFirewallRouteGuardrails is true.') : approvedFirewallPrivateIp
+        value: validatedFirewallRouteInputs ? approvedFirewallPrivateIp : approvedFirewallPrivateIp
+      }
+      approvedFirewallResourceId: {
+        value: approvedFirewallResourceId
       }
       approvedRouteTableResourceIds: {
         value: approvedRouteTableResourceIds
@@ -480,7 +506,10 @@ module firewallRouteCriticalAssignment 'modules/policy-assignment.bicep' = if (e
     enforcementMode: 'Default'
     parameters: {
       approvedFirewallPrivateIp: {
-        value: empty(trim(approvedFirewallResourceId)) || empty(trim(approvedFirewallPrivateIp)) || empty(approvedRouteTableResourceIds) || empty(approvedRouteTablePrefixes) ? fail('approvedFirewallResourceId, approvedFirewallPrivateIp, approvedRouteTableResourceIds, and approvedRouteTablePrefixes are required when enableFirewallRouteGuardrails is true.') : approvedFirewallPrivateIp
+        value: validatedFirewallRouteInputs ? approvedFirewallPrivateIp : approvedFirewallPrivateIp
+      }
+      approvedFirewallResourceId: {
+        value: approvedFirewallResourceId
       }
       approvedRouteTableResourceIds: {
         value: approvedRouteTableResourceIds

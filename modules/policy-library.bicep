@@ -532,6 +532,12 @@ resource approvedFirewallRoutes 'Microsoft.Authorization/policyDefinitions@2025-
           displayName: 'Approved firewall private IP'
         }
       }
+      approvedFirewallResourceId: {
+        type: 'String'
+        metadata: {
+          displayName: 'Approved firewall resource ID'
+        }
+      }
       approvedRouteTableResourceIds: {
         type: 'Array'
         metadata: {
@@ -558,26 +564,29 @@ resource approvedFirewallRoutes 'Microsoft.Authorization/policyDefinitions@2025-
           }
           {
             count: {
-              field: 'Microsoft.Network/routeTables/routes[*]'
+              value: '[parameters(\'approvedRouteTablePrefixes\')]'
+              name: 'approvedRouteTablePrefix'
               where: {
-                allOf: [
-                  {
-                    field: 'Microsoft.Network/routeTables/routes[*].addressPrefix'
-                    in: '[parameters(\'approvedRouteTablePrefixes\')]'
-                  }
-                  {
-                    anyOf: [
+                count: {
+                  field: 'Microsoft.Network/routeTables/routes[*]'
+                  where: {
+                    allOf: [
+                      {
+                        field: 'Microsoft.Network/routeTables/routes[*].addressPrefix'
+                        equals: '[current(\'approvedRouteTablePrefix\')]'
+                      }
                       {
                         field: 'Microsoft.Network/routeTables/routes[*].nextHopType'
-                        notEquals: 'VirtualAppliance'
+                        equals: 'VirtualAppliance'
                       }
                       {
                         field: 'Microsoft.Network/routeTables/routes[*].nextHopIpAddress'
-                        notEquals: '[parameters(\'approvedFirewallPrivateIp\')]'
+                        equals: '[parameters(\'approvedFirewallPrivateIp\')]'
                       }
                     ]
                   }
-                ]
+                }
+                equals: 0
               }
             }
             greater: 0
