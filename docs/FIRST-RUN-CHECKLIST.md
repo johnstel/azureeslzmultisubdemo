@@ -23,7 +23,7 @@ Do not place secrets in this worksheet.
 | Connectivity sandbox Subscription ID | [ ] |
 | Workload sandbox Subscription ID | [ ] |
 | Governance admins group Object ID | [ ] |
-| Subscription privileged-access group Object ID (only for eligible Owner) | [ ] |
+| Subscription privileged-access group Object ID (separate one-shot PIM workflow only) | [ ] |
 | Network operators group Object ID | [ ] |
 | Workload contributors group Object ID | [ ] |
 | Read-only auditors group Object ID | [ ] |
@@ -89,7 +89,6 @@ cp parameters/demo.parameters.template.json parameters/demo.parameters.json
 - [ ] Every `REPLACE_WITH_*` value has been replaced.
 - [ ] `denyPolicyEnforcementMode` is `DoNotEnforce`.
 - [ ] `deployRoleAssignments` is `false`.
-- [ ] `deployEligibleOwnerRoleAssignments` is `false`.
 - [ ] `deployEvidenceResources` is `false`.
 - [ ] `namePrefix` is unique and identifies a demo.
 
@@ -149,8 +148,8 @@ and both subscription IDs.
 - [ ] Five policy assignments exist only at the demo root or below.
 - [ ] Deny assignments show `DoNotEnforce`.
 - [ ] No RBAC assignment was created while `deployRoleAssignments=false`.
-- [ ] No Owner eligibility schedule was created while
-      `deployEligibleOwnerRoleAssignments=false`.
+- [ ] The main compiled output and what-if contain no
+      `roleEligibilityScheduleRequests`.
 - [ ] No resource group, VNet, or NSG was created while
       `deployEvidenceResources=false`.
 
@@ -168,11 +167,17 @@ deployment.
 - [ ] Owner PIM settings at both subscriptions require approval, MFA,
       justification, a four-hour activation maximum, and notifications.
 - [ ] The deployment principal has narrowly scoped, time-bound bootstrap access.
-- [ ] `subscriptionPrivilegedAccessGroupObjectId`, eligibility start,
-      finite duration, and assignment justification are populated locally.
-- [ ] Administrator approved `deployEligibleOwnerRoleAssignments=true`.
-- [ ] What-if shows exactly two eligible time-bound Owner schedule requests,
-      both targeting the privileged-access group.
+- [ ] Existing Owner eligibility and pending requests were checked separately at
+      each target subscription.
+- [ ] One-shot local parameters contain a fresh request GUID, privileged group,
+      `AdminAssign`, finite schedule, and justification while
+      `submitEligibilityRequest=false`.
+- [ ] `submitEligibilityRequest=true` is used only in the prepared local file
+      for a subscription-scope what-if; what-if submits no request.
+- [ ] Each one-shot what-if shows exactly one eligible Owner
+      request and no active or permanent Owner assignment.
+- [ ] Administrator approved that exact preview before one-time submission.
+- [ ] A distinct request GUID is used for each subscription and is never reused.
 - [ ] Both PIM activations were tested before any role-assignment restriction
       policy was enforced.
 - [ ] Administrator approved `deployEvidenceResources=true`.
@@ -220,7 +225,8 @@ Afterward:
 - [ ] Both subscriptions still exist and are enabled.
 - [ ] Both subscriptions are at the approved return scope.
 - [ ] Demo policy and five ordinary RBAC assignments are gone.
-- [ ] Both eligible Owner schedules were removed with separately reviewed PIM
-      `AdminRemove` requests; teardown does not automate this.
+- [ ] Both eligible Owner schedules were removed with separately reviewed,
+      one-shot PIM `AdminRemove` requests using their existing schedule IDs and
+      fresh request GUIDs; teardown does not automate this.
 - [ ] The dedicated demo management groups are gone.
 - [ ] The five Microsoft Entra security groups still exist.

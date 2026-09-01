@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$CompiledTemplate
+    [string]$CompiledTemplate,
+    [string]$CompiledEligibilityTemplate
 )
 
 Set-StrictMode -Version Latest
@@ -47,15 +48,35 @@ try {
         & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $CompiledTemplate | Out-Null
         if ($LASTEXITCODE -ne 0) { Stop-Validation 'Bicep build failed.' }
     }
+    if ([string]::IsNullOrWhiteSpace($CompiledEligibilityTemplate)) {
+        if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
+            Stop-Validation "Required command 'az' is not installed."
+        }
+        $CompiledEligibilityTemplate = Join-Path $TempDir 'owner-eligibility-request.json'
+        & az bicep build `
+            --file (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.bicep') `
+            --outfile $CompiledEligibilityTemplate | Out-Null
+        if ($LASTEXITCODE -ne 0) { Stop-Validation 'Owner eligibility Bicep build failed.' }
+    }
     if (-not (Test-Path -LiteralPath $CompiledTemplate -PathType Leaf)) {
         Stop-Validation "Compiled template not found: $CompiledTemplate"
     }
+    if (-not (Test-Path -LiteralPath $CompiledEligibilityTemplate -PathType Leaf)) {
+        Stop-Validation "Compiled eligibility template not found: $CompiledEligibilityTemplate"
+    }
 
     try {
-        $compiled = Get-Content -LiteralPath $CompiledTemplate -Raw | ConvertFrom-Json
+        $compiledText = Get-Content -LiteralPath $CompiledTemplate -Raw
+        $compiled = $compiledText | ConvertFrom-Json
     }
     catch {
         Stop-Validation "Compiled template is not valid JSON: $($_.Exception.Message)"
+    }
+    try {
+        $compiledEligibility = Get-Content -LiteralPath $CompiledEligibilityTemplate -Raw | ConvertFrom-Json
+    }
+    catch {
+        Stop-Validation "Compiled eligibility template is not valid JSON: $($_.Exception.Message)"
     }
 
     $ownerRoleDefinitionId = '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
@@ -68,6 +89,9 @@ try {
     }
     if (@($permanentOwners).Count -ne 0) {
         Stop-Validation "Compiled default contains $(@($permanentOwners).Count) permanent Owner role assignment(s)."
+    }
+    if ($compiledText -match [regex]::Escape($ownerRoleDefinitionId)) {
+        Stop-Validation 'Compiled main contains an Owner role definition reference.'
     }
 
     $ordinaryRoleAssignments = Find-JsonObjects -Node $compiled -Predicate {
@@ -94,44 +118,90 @@ try {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Authorization/roleEligibilityScheduleRequests'
     }
-    if (@($eligibleRequests).Count -ne 2) {
-        Stop-Validation "Expected exactly two subscription Owner eligibility schedule request artifacts, found $(@($eligibleRequests).Count)."
-    }
-    foreach ($request in $eligibleRequests) {
-        $properties = $request.properties
-        if ($request.apiVersion -ne '2020-10-01' -or
-            $request.condition -ne "[parameters('deployEligibleOwnerRoleAssignment')]" -or
-            $properties.requestType -ne 'AdminAssign' -or
-            $properties.roleDefinitionId -ne "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('ownerRoleDefinitionId'))]" -or
-            $properties.principalId -ne "[variables('validatedPrivilegedAccessGroupObjectId')]" -or
-            $properties.justification -ne "[parameters('eligibleOwnerAssignmentJustification')]" -or
-            $properties.scheduleInfo.startDateTime -ne "[parameters('eligibleOwnerAssignmentStartDateTime')]" -or
-            $properties.scheduleInfo.expiration.type -ne 'AfterDuration' -or
-            $properties.scheduleInfo.expiration.duration -ne "[parameters('eligibleOwnerAssignmentDuration')]") {
-            Stop-Validation 'Eligible Owner request artifacts must use the stable API, AdminAssign, group input, justification, and a finite parameterized schedule.'
-        }
+    if (@($eligibleRequests).Count -ne 0) {
+        Stop-Validation "Repeatable main template contains $(@($eligibleRequests).Count) one-time eligibility schedule request artifact(s)."
     }
 
+    $mainPimParameters = @(
+        'deployEligibleOwnerRoleAssignments',
+        'subscriptionPrivilegedAccessGroupObjectId',
+        'eligibleOwnerAssignmentStartDateTime',
+        'eligibleOwnerAssignmentDuration',
+        'eligibleOwnerAssignmentJustification'
+    )
     if ($compiled.parameters.deployRoleAssignments.defaultValue -ne $false -or
-        $compiled.parameters.deployEligibleOwnerRoleAssignments.defaultValue -ne $false -or
-        $compiled.parameters.subscriptionPrivilegedAccessGroupObjectId.defaultValue -ne '' -or
-        $compiled.parameters.eligibleOwnerAssignmentStartDateTime.defaultValue -ne '' -or
-        $compiled.parameters.eligibleOwnerAssignmentDuration.defaultValue -ne 'P90D' -or
-        $compiled.parameters.eligibleOwnerAssignmentJustification.defaultValue -ne '') {
-        Stop-Validation 'Compiled RBAC and eligible Owner parameters must retain safe defaults.'
+        @($mainPimParameters | Where-Object { $compiled.parameters.PSObject.Properties[$_] }).Count -ne 0) {
+        Stop-Validation 'Repeatable main template must keep ordinary RBAC disabled and contain no PIM request parameters.'
     }
 
-    $eligibleModuleDefaults = Find-JsonObjects -Node $compiled -Predicate {
+    $oneShotRequests = Find-JsonObjects -Node $compiledEligibility -Predicate {
         param($node)
-        $node.PSObject.Properties['parameters'] -and
-        $node.parameters.PSObject.Properties['deployEligibleOwnerRoleAssignment'] -and
-        $node.parameters.deployEligibleOwnerRoleAssignment.PSObject.Properties['defaultValue'] -and
-        $node.parameters.deployEligibleOwnerRoleAssignment.defaultValue -eq $false -and
-        $node.parameters.PSObject.Properties['subscriptionPrivilegedAccessGroupObjectId'] -and
-        $node.parameters.subscriptionPrivilegedAccessGroupObjectId.defaultValue -eq ''
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Authorization/roleEligibilityScheduleRequests'
     }
-    if (@($eligibleModuleDefaults).Count -ne 2) {
-        Stop-Validation 'Both subscription RBAC modules must default the eligible Owner request off and its group input empty.'
+    $requestIdHasDefault = $null -ne $compiledEligibility.parameters.requestId.PSObject.Properties['defaultValue']
+    $requestTypeHasDefault = $null -ne $compiledEligibility.parameters.requestType.PSObject.Properties['defaultValue']
+    $allowedRequestTypes = @($compiledEligibility.parameters.requestType.allowedValues) -join ','
+    $allowedDurations = @($compiledEligibility.parameters.eligibleOwnerAssignmentDuration.allowedValues) -join ','
+    $oneShotRequest = @($oneShotRequests) | Select-Object -First 1
+    if (@($compiledEligibility.resources).Count -ne 1 -or
+        @($oneShotRequests).Count -ne 1 -or
+        $compiledEligibility.parameters.submitEligibilityRequest.defaultValue -ne $false -or
+        $requestIdHasDefault -or
+        $compiledEligibility.parameters.requestId.minLength -ne 36 -or
+        $compiledEligibility.parameters.requestId.maxLength -ne 36 -or
+        $requestTypeHasDefault -or
+        $allowedRequestTypes -ne 'AdminAssign,AdminUpdate,AdminRemove' -or
+        $compiledEligibility.parameters.targetRoleEligibilityScheduleId.defaultValue -ne '' -or
+        $compiledEligibility.parameters.eligibleOwnerAssignmentStartDateTime.defaultValue -ne '' -or
+        $compiledEligibility.parameters.eligibleOwnerAssignmentDuration.defaultValue -ne 'P90D' -or
+        $allowedDurations -ne 'P30D,P90D,P180D,P365D' -or
+        $compiledEligibility.variables.ownerRoleDefinitionId -ne $ownerRoleDefinitionId -or
+        $compiledEligibility.variables.baseRequestProperties.principalId -ne "[variables('validatedPrincipalId')]" -or
+        $compiledEligibility.variables.baseRequestProperties.roleDefinitionId -ne "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('ownerRoleDefinitionId'))]" -or
+        $compiledEligibility.variables.baseRequestProperties.requestType -ne "[parameters('requestType')]" -or
+        $compiledEligibility.variables.baseRequestProperties.justification -ne "[parameters('eligibleOwnerAssignmentJustification')]" -or
+        [string]$compiledEligibility.variables.scheduleProperties -notmatch 'AdminRemove' -or
+        [string]$compiledEligibility.variables.scheduleProperties -notmatch 'AfterDuration' -or
+        [string]$compiledEligibility.variables.scheduleProperties -notmatch 'eligibleOwnerAssignmentDuration' -or
+        [string]$compiledEligibility.variables.targetScheduleProperties -notmatch 'AdminAssign' -or
+        [string]$compiledEligibility.variables.targetScheduleProperties -notmatch 'targetRoleEligibilityScheduleId' -or
+        $oneShotRequest.apiVersion -ne '2020-10-01' -or
+        $oneShotRequest.name -ne "[parameters('requestId')]" -or
+        $oneShotRequest.condition -ne "[parameters('submitEligibilityRequest')]" -or
+        $oneShotRequest.properties -ne "[union(variables('baseRequestProperties'), variables('scheduleProperties'), variables('targetScheduleProperties'))]") {
+        Stop-Validation 'One-shot Owner eligibility artifact must require a caller request ID, explicit opt-in and lifecycle action, group input, and a finite schedule.'
+    }
+
+    $oneShotForbiddenResources = Find-JsonObjects -Node $compiledEligibility -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and
+        $node.type -in @(
+            'Microsoft.Authorization/roleAssignments',
+            'Microsoft.Authorization/roleAssignmentScheduleRequests',
+            'Microsoft.Authorization/roleManagementPolicies',
+            'Microsoft.Authorization/roleManagementPolicyAssignments'
+        )
+    }
+    if (@($oneShotForbiddenResources).Count -ne 0) {
+        Stop-Validation 'One-shot Owner eligibility artifact must not contain permanent/active Owner or PIM activation-policy resources.'
+    }
+
+    $normalDeploymentFiles = @(
+        (Join-Path $ProjectDir 'main.bicep')
+        (Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' | ForEach-Object { $_.FullName })
+        (Join-Path $ProjectDir 'scripts/preflight.sh')
+        (Join-Path $ProjectDir 'scripts/preflight.ps1')
+        (Join-Path $ProjectDir 'scripts/what-if.sh')
+        (Join-Path $ProjectDir 'scripts/what-if.ps1')
+        (Join-Path $ProjectDir 'scripts/deploy.sh')
+        (Join-Path $ProjectDir 'scripts/deploy.ps1')
+        (Join-Path $ProjectDir 'scripts/teardown.sh')
+        (Join-Path $ProjectDir 'scripts/teardown.ps1')
+    )
+    foreach ($normalDeploymentFile in $normalDeploymentFiles) {
+        if ((Get-Content -LiteralPath $normalDeploymentFile -Raw) -match 'owner-eligibility-request|roleEligibilityScheduleRequests') {
+            Stop-Validation "Normal deployment path invokes the one-shot Owner eligibility artifact: $normalDeploymentFile"
+        }
     }
 
     $roleManagementPolicies = Find-JsonObjects -Node $compiled -Predicate {
@@ -148,18 +218,37 @@ try {
 
     $parameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false -or
-        $parameterTemplate.parameters.deployEligibleOwnerRoleAssignments.value -ne $false -or
-        $parameterTemplate.parameters.subscriptionPrivilegedAccessGroupObjectId.value -ne 'REPLACE_WITH_SUBSCRIPTION_PRIVILEGED_ACCESS_GROUP_OBJECT_GUID' -or
-        $parameterTemplate.parameters.eligibleOwnerAssignmentStartDateTime.value -ne 'REPLACE_WITH_ELIGIBLE_OWNER_START_DATE_TIME_UTC' -or
-        $parameterTemplate.parameters.eligibleOwnerAssignmentDuration.value -ne 'P90D' -or
-        $parameterTemplate.parameters.eligibleOwnerAssignmentJustification.value -ne 'REPLACE_WITH_ELIGIBLE_OWNER_ASSIGNMENT_JUSTIFICATION') {
-        Stop-Validation 'The JSON parameter template must keep eligible Owner disabled and use tenant-independent placeholders.'
+        $parameterTemplate.parameters.PSObject.Properties['deployEligibleOwnerRoleAssignments'] -or
+        $parameterTemplate.parameters.PSObject.Properties['subscriptionPrivilegedAccessGroupObjectId']) {
+        Stop-Validation 'The normal JSON parameter template must not expose the one-shot Owner eligibility workflow.'
     }
 
     $bicepParameterText = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/main.template.bicepparam') -Raw
-    if ($bicepParameterText -notmatch '(?m)^param deployEligibleOwnerRoleAssignments = false$' -or
-        $bicepParameterText -notmatch "(?m)^param subscriptionPrivilegedAccessGroupObjectId = 'REPLACE_WITH_SUBSCRIPTION_PRIVILEGED_ACCESS_GROUP_OBJECT_GUID'$") {
-        Stop-Validation 'The Bicep parameter template must keep eligible Owner disabled and use a privileged-access group placeholder.'
+    if ($bicepParameterText -match 'deployEligibleOwnerRoleAssignments|subscriptionPrivilegedAccessGroupObjectId|eligibleOwnerAssignment') {
+        Stop-Validation 'The normal Bicep parameter template must not expose the one-shot Owner eligibility workflow.'
+    }
+
+    $eligibilityParameterPath = Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.parameters.template.json'
+    if (-not (Test-Path -LiteralPath $eligibilityParameterPath -PathType Leaf)) {
+        Stop-Validation "Missing one-shot Owner eligibility parameter template: $eligibilityParameterPath"
+    }
+    $eligibilityParameters = Get-Content -LiteralPath $eligibilityParameterPath -Raw | ConvertFrom-Json
+    if ($eligibilityParameters.parameters.submitEligibilityRequest.value -ne $false -or
+        $eligibilityParameters.parameters.requestId.value -ne 'REPLACE_WITH_NEW_UNIQUE_REQUEST_GUID' -or
+        $eligibilityParameters.parameters.requestType.value -ne 'AdminAssign' -or
+        $eligibilityParameters.parameters.subscriptionPrivilegedAccessGroupObjectId.value -ne 'REPLACE_WITH_SUBSCRIPTION_PRIVILEGED_ACCESS_GROUP_OBJECT_GUID' -or
+        $eligibilityParameters.parameters.targetRoleEligibilityScheduleId.value -ne '' -or
+        $eligibilityParameters.parameters.eligibleOwnerAssignmentStartDateTime.value -ne 'REPLACE_WITH_ELIGIBLE_OWNER_START_DATE_TIME_UTC' -or
+        $eligibilityParameters.parameters.eligibleOwnerAssignmentDuration.value -ne 'P90D' -or
+        $eligibilityParameters.parameters.eligibleOwnerAssignmentJustification.value -ne 'REPLACE_WITH_ELIGIBLE_OWNER_REQUEST_JUSTIFICATION') {
+        Stop-Validation 'One-shot Owner eligibility parameter template must stay disabled and retain explicit tenant-independent placeholders.'
+    }
+
+    $pimGuidance = Get-Content -LiteralPath (Join-Path $ProjectDir 'docs/AZURE-RBAC-PIM.md') -Raw
+    foreach ($requiredGuidance in @('existing eligibility', 'AdminAssign', 'AdminUpdate', 'AdminRemove', 'fresh request GUID', 'never reuse')) {
+        if ($pimGuidance -notmatch [regex]::Escape($requiredGuidance)) {
+            Stop-Validation "PIM runbook is missing one-shot lifecycle guidance: $requiredGuidance"
+        }
     }
 
     $requirementsPath = Join-Path $ProjectDir 'identity/azure-rbac/owner-activation-requirements.template.json'

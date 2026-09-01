@@ -81,9 +81,6 @@ $governanceGroup = Get-Value 'governanceAdminsGroupObjectId'
 $networkGroup = Get-Value 'networkOperatorsGroupObjectId'
 $workloadGroup = Get-Value 'workloadContributorsGroupObjectId'
 $auditorsGroup = Get-Value 'readOnlyAuditorsGroupObjectId'
-# PIM eligibility removal requires a separately reviewed AdminRemove request and
-# is intentionally never inferred or automated by this teardown script.
-$eligibleOwnerEnabled = Get-OptionalBoolValue 'deployEligibleOwnerRoleAssignments' $false
 # Optional: defaults to $false when absent so older parameter files remain safe to tear down.
 $centralLogAnalyticsEnabled = Get-OptionalBoolValue 'deployCentralLogAnalytics' $false
 
@@ -199,10 +196,8 @@ if ($criticalEnabled) {
 else {
     Write-Host "  $stepNumber. Delete management groups $prefix-connectivity, $prefix-platform, $prefix-$archetype, $prefix-landingzones, then $prefix."
 }
-if ($eligibleOwnerEnabled) {
-    Write-Host ''
-    Write-Host 'NOTE: The two eligible Owner schedules are not removed automatically. Submit separately reviewed PIM AdminRemove requests for the group at both subscriptions and verify removal in PIM.'
-}
+Write-Host ''
+Write-Host 'NOTE: Owner eligibility is managed only through the separate one-shot PIM artifact. This teardown never discovers or removes it; submit a new, separately reviewed AdminRemove request for each existing schedule and verify removal in PIM.'
 Write-Host ''
 Write-Host 'Subscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.'
 

@@ -1,61 +1,58 @@
 # PIM-ready Azure RBAC
 
 This repository uses a group-based, time-bound eligible assignment as the
-normal v2 pattern for subscription Owner. It does **not** create a permanent
-Owner role assignment for the platform team, an individual user, a service
-principal, or a managed identity.
+normal v2 pattern for subscription Owner. The repeatable `main.bicep`
+deployment creates neither permanent Owner nor a PIM eligibility request for
+the platform team, an individual user, a service principal, or a managed
+identity.
 
 The implementation has two deliberately separate parts:
 
-- `modules/subscription-rbac.bicep` can create an eligible Owner schedule
-  request with
-  `Microsoft.Authorization/roleEligibilityScheduleRequests@2020-10-01`.
+- `identity/azure-rbac/owner-eligibility-request.bicep` is an explicit,
+  subscription-scoped, one-shot lifecycle artifact for
+  `Microsoft.Authorization/roleEligibilityScheduleRequests@2020-10-01`. It is
+  not referenced by `main.bicep` or any normal deployment script.
 - `identity/azure-rbac/owner-activation-requirements.template.json` records the
   mandatory PIM activation baseline as a static, tenant-independent,
   report-only artifact.
 
-Neither the static artifact nor either validator calls Microsoft Graph,
-Microsoft Entra ID, or Azure. The guarded deployment scripts can submit the
-Bicep schedule requests only after an operator explicitly enables them and
-approves the normal preflight and what-if workflow.
+Neither artifact nor either validator calls Microsoft Graph, Microsoft Entra
+ID, or Azure. An authorized operator may submit the one-shot artifact only
+through a separately reviewed subscription deployment after completing the
+precheck and approval workflow below.
 
 ## Safe defaults and scope
 
-`deployEligibleOwnerRoleAssignments` defaults to `false`. The privileged group,
-start date/time, and assignment justification default to empty strings in
-`main.bicep`. The committed parameter templates contain only
-`REPLACE_WITH_*` placeholders and also keep the feature disabled.
+The normal main parameter templates contain no Owner eligibility parameters.
+Therefore safe demo defaults, ordinary redeployments, and the guarded main
+deployment scripts cannot submit or replay a PIM request.
 
-When explicitly enabled, the same existing security group receives one
-time-bound **eligible** Owner assignment at each of the two sandbox
-subscriptions. The request:
-
-- uses `AdminAssign`, never an active role-assignment schedule;
-- uses a finite `AfterDuration` schedule;
-- accepts only `P30D`, `P90D`, `P180D`, or `P365D`;
-- requires an RFC 3339 UTC start date/time and a business justification;
-- remains inside the two subscriptions under the dedicated demo root.
+The separate parameter template keeps `submitEligibilityRequest=false` and
+contains only `REPLACE_WITH_*` placeholders. The Bicep artifact also requires a
+caller-supplied 36-character request GUID and a lifecycle action with no
+default. One invocation targets one subscription and one operation. For
+`AdminAssign` and `AdminUpdate`, it uses a finite `AfterDuration` schedule of
+`P30D`, `P90D`, `P180D`, or `P365D`. It never creates an active
+`roleAssignmentScheduleRequests` resource.
 
 `deployRoleAssignments` remains a separate opt-in. It controls the permanent,
 group-based Management Group Contributor, Resource Policy Contributor, Reader,
-Network Contributor, and workload Contributor assignments. Enabling ordinary
-RBAC does not enable eligible Owner, and enabling eligible Owner does not
-enable the ordinary assignments.
+Network Contributor, and workload Contributor assignments. Enabling or
+redeploying ordinary RBAC cannot submit eligible Owner.
 
 ## Prerequisites
 
-Before enabling `deployEligibleOwnerRoleAssignments`, verify all of the
-following outside this repository:
+Before preparing a one-shot request, verify all of the following outside this
+repository:
 
 1. Microsoft Entra PIM is available through Microsoft Entra ID P2 or Microsoft
    Entra ID Governance licensing, and every user who can activate through the
    group has the required license.
 2. `subscriptionPrivilegedAccessGroupObjectId` identifies an existing
-   Microsoft Entra **security group**. The offline validator checks only the
-   parameter wiring and GUID shape; it deliberately does not query the
-   directory. The schedule-request API infers the principal type from that
-   object ID; its `principalType` field is response-only and is not written by
-   Bicep.
+   Microsoft Entra **security group**. The offline validator checks only
+   parameter wiring; it deliberately does not query the directory. The
+   schedule-request API infers the principal type from that object ID; its
+   `principalType` field is response-only and is not written by Bicep.
 3. Owner role settings are configured and reviewed independently at **both**
    subscriptions. Role settings are per role and per resource and do not
    inherit from the subscription to child scopes.
@@ -79,8 +76,8 @@ The Bicep schedule request creates eligibility; it does **not** apply PIM role
 settings. Applying `roleManagementPolicies`, Conditional Access, or Microsoft
 Graph configuration is out of scope.
 
-Before submitting either eligibility request, configure the Owner role settings
-at each subscription to match
+Before submitting any eligibility request, configure the Owner role settings at
+each subscription to match
 `identity/azure-rbac/owner-activation-requirements.template.json`:
 
 - approval is required, with at least two reviewed approvers recommended;
@@ -97,6 +94,50 @@ PIM role settings and the time-bound eligibility window are different controls.
 The eligibility window says when the group may request activation. The maximum
 activation duration says how long an approved activation remains active.
 
+## One-shot request workflow
+
+Treat every `roleEligibilityScheduleRequests` resource as an immutable request
+record, not an idempotent desired-state resource. A request name is consumed by
+one operation. Generate a **fresh request GUID** for each subscription and each
+`AdminAssign`, `AdminUpdate`, or `AdminRemove` operation. **Never reuse** a
+request GUID for redeployment, retry, another action, or another subscription.
+
+1. In Microsoft Entra PIM for the target Azure subscription, inspect **existing
+   eligibility** for the privileged group and Owner role. Use the portal or an
+   independently approved read-only inventory process. Do not submit
+   `AdminAssign` if a matching eligibility or pending request already exists.
+2. Record the existing `roleEligibilityScheduleId` when updating or removing
+   eligibility. This schedule ID is not the prior request ID.
+3. Copy
+   `identity/azure-rbac/owner-eligibility-request.parameters.template.json` to
+   a gitignored `*.local.json` file.
+4. Replace every placeholder, generate a new GUID outside Bicep, select the
+   lifecycle action, and keep `submitEligibilityRequest=false` during local
+   preparation.
+5. Build the Bicep locally and run both offline validators.
+6. Set `submitEligibilityRequest=true` only in the prepared local file and run
+   a subscription-scope what-if against exactly one intended sandbox
+   subscription. What-if does not submit the request. Confirm the preview
+   contains one eligible Owner request and no active or permanent Owner
+   assignment.
+7. Obtain approval from that exact preview, then submit the unchanged reviewed
+   request exactly once through a separately controlled subscription
+   deployment. Use a unique deployment name as well as the fresh request GUID.
+8. Verify the resulting PIM state and audit record. If the deployment result is
+   ambiguous, repeat the existing-eligibility precheck before deciding what to
+   do; do not retry with the same request GUID.
+
+The lifecycle actions are:
+
+| Action | When to use it | Target schedule ID | Schedule fields |
+|---|---|---|---|
+| `AdminAssign` | Create eligibility only after confirming none exists | Must be empty | Required and finite |
+| `AdminUpdate` | Change the time-bound window of an existing eligibility | Required | Required and finite |
+| `AdminRemove` | Remove an existing eligibility | Required | Omitted by the artifact |
+
+For the two sandbox subscriptions, complete this workflow twice with distinct
+request GUIDs. Do not add the artifact to `main.bicep`.
+
 ## Bootstrap order before restriction policy
 
 Use this order before enforcing any Azure Policy that restricts eligible or
@@ -108,15 +149,18 @@ time-bound role assignments:
    subscriptions.
 4. Grant the deployment principal narrowly scoped, time-bound bootstrap
    authority.
-5. Populate the PIM parameters locally, keeping
-   `deployEligibleOwnerRoleAssignments=false`.
-6. Run both offline validators, preflight, and tenant-scope what-if.
-7. Set `deployEligibleOwnerRoleAssignments=true`, rerun validation and what-if,
-   obtain approval, and use the guarded deployment path.
-8. Verify both assignments appear as **Eligible time-bound**, test activation
-   and approval, and inspect PIM audit history and notifications.
-9. Remove temporary bootstrap access.
-10. Only after the working eligibility path and emergency access have been
+5. Complete the existing-eligibility precheck at each subscription.
+6. Prepare separate local one-shot parameter files with
+   `submitEligibilityRequest=false` and a fresh request GUID for each
+   subscription.
+7. Run both offline validators, then set `submitEligibilityRequest=true` in
+   each local file and run a subscription-scope what-if for each request.
+8. Obtain approval from each exact preview, submit the unchanged request once,
+   and verify both assignments appear as **Eligible time-bound**.
+9. Test activation and approval, and inspect PIM audit history and
+   notifications.
+10. Remove temporary bootstrap access.
+11. Only after the working eligibility path and emergency access have been
     verified, enforce the separately managed role-assignment restriction
     policy.
 
@@ -150,23 +194,27 @@ macOS or Linux:
 ./scripts/validate-rbac-artifacts.sh
 ```
 
-The validators compile Bicep locally and prove that:
+The validators compile both Bicep entry points locally and prove that:
 
 - no permanent Owner `roleAssignments` resource exists;
 - no active Owner schedule request exists;
-- both eligible Owner artifacts are gated, finite, justified, and group-wired;
-- both parameter templates default to disabled and contain no tenant values;
+- repeatable `main.bicep` contains no eligibility schedule request or PIM
+  request parameter;
+- the one-shot artifact requires explicit opt-in, a caller-supplied request
+  GUID, a lifecycle action, a group, justification, and a finite schedule for
+  assignment or update;
+- the separate parameter template defaults to disabled and contains no tenant
+  values;
 - the static activation baseline requires approval, MFA, justification,
   bounded duration, notifications, and external emergency-access handling;
 - no PIM activation-policy resource is deployed by this repository.
 
 ## Update and teardown limitation
 
-An eligibility schedule request is a PIM request record, not a normal permanent
-role assignment. Changing the start date or duration of an existing eligibility
-requires a separately reviewed PIM update operation. Removing it requires a
-separately reviewed `AdminRemove` request against the resulting eligibility
-schedule.
+Changing the start date or duration of an existing eligibility requires a
+separately reviewed `AdminUpdate` operation with its schedule ID and a fresh
+request GUID. Removing it requires a separately reviewed `AdminRemove`
+operation with its schedule ID and another fresh request GUID.
 
 An incremental deployment of this v2 template also does not delete a permanent
 Owner assignment created by an earlier repository version. Before upgrading,
@@ -178,9 +226,9 @@ time-bound bootstrap access to avoid a lockout during the staged replacement.
 The offline validator cannot prove that live legacy assignments are gone.
 
 The teardown scripts remove only the five ordinary demo role assignments. They
-do not discover, infer, or automatically remove PIM eligibility. Remove and
-verify both eligible Owner schedules separately before considering privileged
-access teardown complete.
+do not discover, infer, or automatically remove PIM eligibility. Use separate
+one-shot `AdminRemove` requests and verify both eligible Owner schedules are
+gone before considering privileged-access teardown complete.
 
 ## Microsoft references
 

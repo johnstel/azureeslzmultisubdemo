@@ -32,9 +32,6 @@ governance_group="$(value governanceAdminsGroupObjectId)"
 network_group="$(value networkOperatorsGroupObjectId)"
 workload_group="$(value workloadContributorsGroupObjectId)"
 auditors_group="$(value readOnlyAuditorsGroupObjectId)"
-# PIM eligibility removal requires a separately reviewed AdminRemove request and
-# is intentionally never inferred or automated by this teardown script.
-eligible_owner_enabled="$(jq -r '.parameters.deployEligibleOwnerRoleAssignments.value // false' "${PARAMETER_FILE}")"
 # Optional: defaults to false when absent so older parameter files remain safe to tear down.
 central_log_analytics_enabled="$(jq -r '.parameters.deployCentralLogAnalytics.value // false' "${PARAMETER_FILE}")"
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
@@ -143,9 +140,7 @@ print_plan() {
     printf '  %d. Delete management groups %s-connectivity, %s-platform, %s-%s, %s-landingzones, then %s.\n' \
       "${step_number}" "${prefix}" "${prefix}" "${prefix}" "${archetype}" "${prefix}" "${prefix}"
   fi
-  if [[ "${eligible_owner_enabled}" == 'true' ]]; then
-    printf '\nNOTE: The two eligible Owner schedules are not removed automatically. Submit separately reviewed PIM AdminRemove requests for the group at both subscriptions and verify removal in PIM.\n'
-  fi
+  printf '\nNOTE: Owner eligibility is managed only through the separate one-shot PIM artifact. This teardown never discovers or removes it; submit a new, separately reviewed AdminRemove request for each existing schedule and verify removal in PIM.\n'
   printf '\nSubscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.\n'
 }
 

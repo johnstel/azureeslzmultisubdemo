@@ -7,10 +7,12 @@ controlled through Microsoft Entra ID and Microsoft Graph. Azure resource-role
 PIM uses Azure RBAC/ARM and is documented separately in
 [PIM-ready Azure RBAC](AZURE-RBAC-PIM.md).
 
-**Nothing in this folder is applied to any tenant by this repository.** The
-files under `identity/` are declarative, report-only inputs for a future,
-separately reviewed apply workflow. This repository never calls Microsoft
-Graph, never modifies Entra ID, and never enables Conditional Access.
+The normal repository deployment applies nothing from this folder.
+Conditional Access, directory-role PIM, and Owner activation settings remain
+declarative report-only inputs. The sole deployable artifact is the separately
+invoked, disabled-by-default Azure RBAC Owner eligibility request documented in
+`AZURE-RBAC-PIM.md`; no repository script calls it. This repository never calls
+Microsoft Graph, never modifies Entra ID, and never enables Conditional Access.
 
 ## Why this is separate from Azure Policy
 
@@ -19,7 +21,7 @@ Graph, never modifies Entra ID, and never enables Conditional Access.
 | Azure Policy (`modules/policy-library.bicep`, `modules/policy-assignment.bicep`) | ARM resource properties: allowed regions, resource types, required tags | Deployed by `main.bicep` at the demo management-group hierarchy |
 | Conditional Access (`identity/conditional-access/`) | Sign-in behavior: which authentication controls apply to which users, apps, and client types | Static JSON inputs only; no deployment path in this repository |
 | Privileged Identity Management (`identity/pim/`) | Directory-role activation: eligible vs. permanent assignment, approval, MFA, duration | Static JSON inputs only; no deployment path in this repository |
-| Azure resource PIM (`identity/azure-rbac/`) | Subscription Owner eligibility and its mandatory activation baseline | Static requirements plus separately opt-in ARM eligibility schedules; activation policy remains report-only |
+| Azure resource PIM (`identity/azure-rbac/`) | Subscription Owner eligibility and its mandatory activation baseline | Static report-only requirements plus a separately invoked, disabled-by-default one-shot ARM request artifact; activation policy remains report-only |
 
 Azure Policy cannot require MFA, block legacy authentication protocols, or
 enforce time-bound, approved role activation — those are Entra ID/Microsoft
@@ -30,6 +32,8 @@ Graph concepts, not ARM resource properties.
 ```text
 identity/
   azure-rbac/
+    owner-eligibility-request.bicep
+    owner-eligibility-request.parameters.template.json
     owner-activation-requirements.template.json
   conditional-access/
     ca-privileged-role-mfa.template.json   Phishing-resistant MFA for privileged directory roles

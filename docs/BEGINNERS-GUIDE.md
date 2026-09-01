@@ -423,14 +423,11 @@ The four baseline groups produce five ordinary role assignments because
 governance admins receive two roles. No ordinary or permanent Owner assignment
 is created.
 
-Eligible Owner is an independent, PIM-ready phase controlled by
-`deployEligibleOwnerRoleAssignments`. When enabled after all prerequisites are
-met, the privileged-access group receives one **time-bound eligible** Owner
-schedule at each sandbox subscription. It must activate through separately
-configured PIM role settings; the repository's mandatory baseline requires
-approval, MFA, business justification, a four-hour maximum activation, and
-notifications. Read [PIM-ready Azure RBAC](AZURE-RBAC-PIM.md) before enabling
-this phase.
+The repeatable main deployment never creates Owner eligibility. PIM-ready Owner
+uses a separate subscription-scoped, one-shot artifact after all prerequisites
+are met. Each sandbox subscription requires its own reviewed request and a
+fresh caller-generated request GUID. Read
+[PIM-ready Azure RBAC](AZURE-RBAC-PIM.md) before preparing this phase.
 
 An Azure role assignment consists of a principal, role, and scope. See
 [Understand Azure role assignments](https://learn.microsoft.com/azure/role-based-access-control/role-assignments).
@@ -449,10 +446,12 @@ Ask your Azure administrator to confirm that your account has permission to:
 - create tenant-, management-group-, subscription-, and resource-group-scope
   deployments;
 - assign Azure roles when `deployRoleAssignments` is `true`;
-- create Azure role eligibility schedule requests when
-  `deployEligibleOwnerRoleAssignments` is `true`;
 - create resource groups and networking resources when
   `deployEvidenceResources` is `true`.
+
+Owner eligibility is not part of this normal deployment. Confirm the separate
+one-shot operator has authorization only when that independently approved
+workflow is performed.
 
 Being a subscription Owner does not automatically give you authority at the
 tenant root. Likewise, being a Microsoft Entra Global Administrator does not
@@ -495,16 +494,11 @@ Open `parameters/demo.parameters.json` in a text editor. Replace all
 | `connectivitySubscriptionId` | Existing connectivity sandbox subscription GUID |
 | `workloadSubscriptionId` | Existing workload sandbox subscription GUID |
 | `governanceAdminsGroupObjectId` | Governance security-group Object ID |
-| `subscriptionPrivilegedAccessGroupObjectId` | Existing security-group Object ID for separately opt-in, time-bound eligible Owner; leave empty if that phase is not used |
 | `networkOperatorsGroupObjectId` | Network operators security-group Object ID |
 | `workloadContributorsGroupObjectId` | Workload contributors security-group Object ID |
 | `readOnlyAuditorsGroupObjectId` | Auditors security-group Object ID |
 | `denyPolicyEnforcementMode` | Keep `DoNotEnforce` for the first deployment |
 | `deployRoleAssignments` | Keep `false` for the first deployment |
-| `deployEligibleOwnerRoleAssignments` | Keep `false`; enable only after completing the PIM-ready Azure RBAC runbook |
-| `eligibleOwnerAssignmentStartDateTime` | RFC 3339 UTC start such as `2026-09-15T13:00:00Z`; required only for eligible Owner |
-| `eligibleOwnerAssignmentDuration` | Finite eligibility window: `P30D`, `P90D`, `P180D`, or `P365D` |
-| `eligibleOwnerAssignmentJustification` | Approved business reason for creating eligibility; do not include secrets |
 | `deployEvidenceResources` | Keep `false` for the first deployment |
 | `evidenceLocation` | Approved region for the optional VNet/NSG, such as `eastus2` |
 
@@ -517,9 +511,6 @@ Keep these exact values initially:
   "value": "DoNotEnforce"
 },
 "deployRoleAssignments": {
-  "value": false
-},
-"deployEligibleOwnerRoleAssignments": {
   "value": false
 },
 "deployEvidenceResources": {
@@ -784,10 +775,10 @@ List policy assignments at the demo root:
 az policy assignment list --scope /providers/Microsoft.Management/managementGroups/eslz-demo --output table
 ```
 
-At this stage, `deployRoleAssignments=false`,
-`deployEligibleOwnerRoleAssignments=false`, and
-`deployEvidenceResources=false`, so there should be no demo role assignments,
-Owner eligibility schedules, or evidence resource groups yet.
+At this stage, `deployRoleAssignments=false` and
+`deployEvidenceResources=false`, so there should be no demo role assignments or
+evidence resource groups. The main deployment can never contain an Owner
+eligibility request.
 
 ## Step 15: Optionally enable RBAC
 
@@ -841,16 +832,21 @@ Deploying the same Bicep again is expected. Infrastructure as Code is
 declarative: Azure compares the desired configuration with current state and
 only applies differences.
 
-### Separately enable PIM-ready eligible Owner
+### Separately request PIM-ready eligible Owner
 
-Do not combine this with the first ordinary RBAC change. Complete every
-prerequisite and bootstrap step in
+Do not add this operation to `main.bicep` or combine it with ordinary RBAC.
+Complete every prerequisite and bootstrap step in
 [PIM-ready Azure RBAC](AZURE-RBAC-PIM.md), including licensing, existing-group
 verification, emergency-access testing, Owner activation settings at both
 subscriptions, and narrowly scoped deployment-principal access.
 
-Populate the privileged group, start date/time, finite duration, and
-justification locally. Then run the offline validator:
+Before `AdminAssign`, inspect existing eligibility and pending requests for the
+same group, Owner role, and target subscription. Copy
+`identity/azure-rbac/owner-eligibility-request.parameters.template.json` to a
+gitignored `*.local.json` file. Populate a fresh request GUID, lifecycle action,
+privileged group, start date/time, finite duration, and justification, but keep
+`submitEligibilityRequest=false` during local preparation. Then run the offline
+validator:
 
 ```powershell
 .\scripts\validate-rbac-artifacts.ps1
@@ -860,17 +856,20 @@ justification locally. Then run the offline validator:
 ./scripts/validate-rbac-artifacts.sh
 ```
 
-Keep `deployEligibleOwnerRoleAssignments=false` through the first what-if.
-Only after an independent review should you set it to `true` and rerun tests,
-preflight, and what-if. The preview must show exactly two
-`roleEligibilityScheduleRequests`, both for eligible Owner on the intended
-subscriptions and both wired to the privileged-access group. It must not show
-an Owner `roleAssignments` or `roleAssignmentScheduleRequests` resource.
+Set `submitEligibilityRequest=true` in the local file and run a
+subscription-scope what-if against one intended sandbox subscription. What-if
+does not submit the request. The preview must show one eligible Owner
+`roleEligibilityScheduleRequests` resource and no Owner `roleAssignments` or
+`roleAssignmentScheduleRequests` resource. Obtain approval from that exact
+preview, then submit the unchanged request exactly once.
 
-After the guarded deployment, verify both entries are **Eligible time-bound**,
-test approval and activation, inspect notifications and PIM audit history, and
-remove temporary bootstrap access. Only then may a separately managed policy
-that restricts PIM role-assignment creation be enforced.
+Repeat for the other subscription with a different fresh request GUID. Never
+reuse a request GUID for a retry, update, removal, or another subscription.
+Afterward, verify both entries are **Eligible time-bound**, test approval and
+activation, inspect notifications and PIM audit history, and remove temporary
+bootstrap access. Use separate `AdminUpdate` and `AdminRemove` operations with
+the existing eligibility schedule ID and a new request GUID for every
+lifecycle change.
 
 ## Step 16: Optionally create evidence resources
 
@@ -965,10 +964,10 @@ The plan:
 5. deletes the leaf management groups, then the demo root.
 
 It never deletes subscriptions or Microsoft Entra groups. It also never
-discovers or automatically removes PIM eligibility. If eligible Owner was
-enabled, submit separately reviewed `AdminRemove` requests for both schedules
-and verify removal in PIM before considering privileged-access teardown
-complete.
+discovers or automatically removes PIM eligibility. Submit separately reviewed,
+one-shot `AdminRemove` requests with each existing schedule ID and a fresh
+request GUID, then verify removal in PIM before considering privileged-access
+teardown complete.
 
 Before execution, verify that moving the subscriptions to the tenant root is
 acceptable. If the subscriptions originally lived under a different management

@@ -73,6 +73,11 @@ try {
     if ($buildOutput -match 'BCP318') {
         Stop-Test 'main.bicep build must not emit a BCP318 nullable-module-output warning.'
     }
+    $compiledEligibilityTemplate = Join-Path $TempDir 'owner-eligibility-request.json'
+    & az bicep build `
+        --file (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.bicep') `
+        --outfile $compiledEligibilityTemplate
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Owner eligibility Bicep build failed.' }
 
     Write-Host '3/22 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
@@ -122,14 +127,16 @@ try {
         }
     }
 
-    Write-Host '7/22 Confirm group-only RBAC, PIM-ready Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/22 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
-    $groupPattern = "(?m)^param (governanceAdminsGroupObjectId|subscriptionPrivilegedAccessGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string( = '')?$"
-    if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
-        Stop-Test 'Expected five Entra security-group parameters.'
+    $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
+    if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
+        Stop-Test 'Expected four ordinary Entra security-group parameters in main.bicep.'
     }
     $rbacValidatorPath = Join-Path $ProjectDir 'scripts/validate-rbac-artifacts.ps1'
-    & $rbacValidatorPath -CompiledTemplate $compiledTemplate
+    & $rbacValidatorPath `
+        -CompiledTemplate $compiledTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate
     if ($LASTEXITCODE -ne 0) { Stop-Test 'PIM-ready RBAC artifact validation failed.' }
 
     $rbacNegativeTemplate = Join-Path $TempDir 'main-permanent-owner.json'
@@ -139,17 +146,71 @@ try {
         apiVersion = '2022-04-01'
         name = '00000000-0000-0000-0000-000000000000'
         properties = [pscustomobject]@{
-            principalId = "[parameters('subscriptionPrivilegedAccessGroupObjectId')]"
+            principalId = "[parameters('governanceAdminsGroupObjectId')]"
             roleDefinitionId = "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]"
         }
     }
     $rbacNegativeJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacNegativeTemplate
-    $rbacNegativeOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath -CompiledTemplate $rbacNegativeTemplate 2>&1
+    $rbacNegativeOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $rbacNegativeTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate 2>&1
     if ($LASTEXITCODE -eq 0) {
         Stop-Test 'RBAC validator accepted a compiled permanent Owner assignment.'
     }
     if (($rbacNegativeOutput -join [Environment]::NewLine) -notmatch 'permanent Owner role assignment') {
         Stop-Test "RBAC validator rejected the permanent Owner fixture for the wrong reason: $($rbacNegativeOutput -join [Environment]::NewLine)"
+    }
+    $rbacMainRequestTemplate = Join-Path $TempDir 'main-one-shot-request.json'
+    $rbacMainRequestJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    $rbacMainRequestJson.resources += [pscustomobject]@{
+        type = 'Microsoft.Authorization/roleEligibilityScheduleRequests'
+        apiVersion = '2020-10-01'
+        name = "[guid(subscription().id, 'reused-request')]"
+        condition = $false
+        properties = [pscustomobject]@{}
+    }
+    $rbacMainRequestJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacMainRequestTemplate
+    $rbacMainRequestOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $rbacMainRequestTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted a one-time eligibility request in the repeatable main template.'
+    }
+    if (($rbacMainRequestOutput -join [Environment]::NewLine) -notmatch 'one-time eligibility schedule request') {
+        Stop-Test "RBAC validator rejected the main eligibility fixture for the wrong reason: $($rbacMainRequestOutput -join [Environment]::NewLine)"
+    }
+    $rbacOwnerBindingTemplate = Join-Path $TempDir 'main-owner-role-binding.json'
+    (Get-Content -LiteralPath $compiledTemplate -Raw).Replace(
+        '4d97b98b-1d4f-4787-a291-c67834d212e7',
+        '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+    ) | Set-Content -LiteralPath $rbacOwnerBindingTemplate
+    $rbacOwnerBindingOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $rbacOwnerBindingTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted an Owner role passed through a nested module binding.'
+    }
+    if (($rbacOwnerBindingOutput -join [Environment]::NewLine) -notmatch 'Owner role definition reference') {
+        Stop-Test "RBAC validator rejected the Owner module binding for the wrong reason: $($rbacOwnerBindingOutput -join [Environment]::NewLine)"
+    }
+
+    $rbacExtraResourceTemplate = Join-Path $TempDir 'owner-request-with-deployment-script.json'
+    $rbacExtraResourceJson = Get-Content -LiteralPath $compiledEligibilityTemplate -Raw | ConvertFrom-Json
+    $rbacExtraResourceJson.resources += [pscustomobject]@{
+        type = 'Microsoft.Resources/deploymentScripts'
+        apiVersion = '2023-08-01'
+        name = 'prohibited-automation'
+        properties = [pscustomobject]@{}
+    }
+    $rbacExtraResourceJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacExtraResourceTemplate
+    $rbacExtraResourceOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $compiledTemplate `
+        -CompiledEligibilityTemplate $rbacExtraResourceTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted an extra automation resource in the one-shot artifact.'
+    }
+    if (($rbacExtraResourceOutput -join [Environment]::NewLine) -notmatch 'One-shot Owner eligibility artifact') {
+        Stop-Test "RBAC validator rejected the one-shot extra resource for the wrong reason: $($rbacExtraResourceOutput -join [Environment]::NewLine)"
     }
     if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/deploy.ps1') -Raw) -notmatch 'DEPLOY-ESLZ-DEMO') {
         Stop-Test 'PowerShell deployment confirmation guard is missing.'
@@ -393,9 +454,6 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $templateJson.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
     $templateJson.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
     $templateJson.parameters.governanceAdminsGroupObjectId.value = '33333333-3333-3333-3333-333333333333'
-    $templateJson.parameters.subscriptionPrivilegedAccessGroupObjectId.value = '44444444-4444-4444-4444-444444444444'
-    $templateJson.parameters.eligibleOwnerAssignmentStartDateTime.value = '2026-09-01T12:00:00Z'
-    $templateJson.parameters.eligibleOwnerAssignmentJustification.value = 'Static teardown safety test'
     $templateJson.parameters.networkOperatorsGroupObjectId.value = '55555555-5555-5555-5555-555555555555'
     $templateJson.parameters.workloadContributorsGroupObjectId.value = '66666666-6666-6666-6666-666666666666'
     $templateJson.parameters.readOnlyAuditorsGroupObjectId.value = '77777777-7777-7777-7777-777777777777'

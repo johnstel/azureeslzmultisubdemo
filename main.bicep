@@ -32,9 +32,6 @@ param workloadSubscriptionId string
 @description('Object ID of an existing Entra security group for governance administrators.')
 param governanceAdminsGroupObjectId string
 
-@description('Object ID of an existing Entra security group for time-bound eligible subscription Owner access. Leave empty unless deployEligibleOwnerRoleAssignments is enabled.')
-param subscriptionPrivilegedAccessGroupObjectId string = ''
-
 @description('Object ID of an existing Entra security group for network operators.')
 param networkOperatorsGroupObjectId string
 
@@ -66,24 +63,6 @@ param allowedLocations array = [
 
 @description('Set true only after reviewing the RBAC matrix and what-if.')
 param deployRoleAssignments bool = false
-
-@description('Set true only after configuring and reviewing the mandatory Owner activation policy and emergency-access prerequisites in PIM.')
-param deployEligibleOwnerRoleAssignments bool = false
-
-@description('UTC start date and time for both eligible Owner assignments, in RFC 3339 format.')
-param eligibleOwnerAssignmentStartDateTime string = ''
-
-@description('Finite ISO 8601 duration for both eligible Owner assignments.')
-@allowed([
-  'P30D'
-  'P90D'
-  'P180D'
-  'P365D'
-])
-param eligibleOwnerAssignmentDuration string = 'P90D'
-
-@description('Auditable business justification for creating both eligible Owner assignments.')
-param eligibleOwnerAssignmentJustification string = ''
 
 @description('Set true to create no-hourly-charge evidence resource groups, a VNet, and an NSG.')
 param deployEvidenceResources bool = false
@@ -263,15 +242,10 @@ module managementGroupRbac 'modules/management-group-rbac.bicep' = if (deployRol
   ]
 }
 
-module connectivityRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssignments || deployEligibleOwnerRoleAssignments) {
+module connectivityRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssignments) {
   name: 'connectivity-subscription-rbac'
   scope: subscription(connectivitySubscriptionId)
   params: {
-    deployEligibleOwnerRoleAssignment: deployEligibleOwnerRoleAssignments
-    subscriptionPrivilegedAccessGroupObjectId: subscriptionPrivilegedAccessGroupObjectId
-    eligibleOwnerAssignmentStartDateTime: eligibleOwnerAssignmentStartDateTime
-    eligibleOwnerAssignmentDuration: eligibleOwnerAssignmentDuration
-    eligibleOwnerAssignmentJustification: eligibleOwnerAssignmentJustification
     deployOperatorRoleAssignment: deployRoleAssignments
     operatorGroupObjectId: networkOperatorsGroupObjectId
     operatorRoleDefinitionId: '4d97b98b-1d4f-4787-a291-c67834d212e7'
@@ -281,15 +255,10 @@ module connectivityRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssign
   ]
 }
 
-module workloadRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssignments || deployEligibleOwnerRoleAssignments) {
+module workloadRbac 'modules/subscription-rbac.bicep' = if (deployRoleAssignments) {
   name: 'workload-subscription-rbac'
   scope: subscription(workloadSubscriptionId)
   params: {
-    deployEligibleOwnerRoleAssignment: deployEligibleOwnerRoleAssignments
-    subscriptionPrivilegedAccessGroupObjectId: subscriptionPrivilegedAccessGroupObjectId
-    eligibleOwnerAssignmentStartDateTime: eligibleOwnerAssignmentStartDateTime
-    eligibleOwnerAssignmentDuration: eligibleOwnerAssignmentDuration
-    eligibleOwnerAssignmentJustification: eligibleOwnerAssignmentJustification
     deployOperatorRoleAssignment: deployRoleAssignments
     operatorGroupObjectId: workloadContributorsGroupObjectId
     operatorRoleDefinitionId: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
@@ -359,7 +328,6 @@ output hierarchy object = {
 }
 output denyPolicyEnforcementMode string = denyPolicyEnforcementMode
 output roleAssignmentsEnabled bool = deployRoleAssignments
-output eligibleOwnerRoleAssignmentsEnabled bool = deployEligibleOwnerRoleAssignments
 output evidenceResourcesEnabled bool = deployEvidenceResources
 output criticalInfrastructureEnabled bool = enableCriticalInfrastructure
 output deploymentRegion string = deploymentLocation

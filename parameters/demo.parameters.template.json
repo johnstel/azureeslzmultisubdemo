@@ -26,9 +26,6 @@
     "governanceAdminsGroupObjectId": {
       "value": "REPLACE_WITH_GOVERNANCE_ADMINS_GROUP_OBJECT_GUID"
     },
-    "subscriptionPrivilegedAccessGroupObjectId": {
-      "value": "REPLACE_WITH_SUBSCRIPTION_PRIVILEGED_ACCESS_GROUP_OBJECT_GUID"
-    },
     "networkOperatorsGroupObjectId": {
       "value": "REPLACE_WITH_NETWORK_OPERATORS_GROUP_OBJECT_GUID"
     },
@@ -43,18 +40,6 @@
     },
     "deployRoleAssignments": {
       "value": false
-    },
-    "deployEligibleOwnerRoleAssignments": {
-      "value": false
-    },
-    "eligibleOwnerAssignmentStartDateTime": {
-      "value": "REPLACE_WITH_ELIGIBLE_OWNER_START_DATE_TIME_UTC"
-    },
-    "eligibleOwnerAssignmentDuration": {
-      "value": "P90D"
-    },
-    "eligibleOwnerAssignmentJustification": {
-      "value": "REPLACE_WITH_ELIGIBLE_OWNER_ASSIGNMENT_JUSTIFICATION"
     },
     "deployEvidenceResources": {
       "value": false

@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPILED_TEMPLATE=''
+COMPILED_ELIGIBILITY_TEMPLATE=''
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -19,6 +20,11 @@ while [[ $# -gt 0 ]]; do
     --compiled-template)
       [[ $# -ge 2 ]] || fail '--compiled-template requires a file path.'
       COMPILED_TEMPLATE="$2"
+      shift 2
+      ;;
+    --compiled-eligibility-template)
+      [[ $# -ge 2 ]] || fail '--compiled-eligibility-template requires a file path.'
+      COMPILED_ELIGIBILITY_TEMPLATE="$2"
       shift 2
       ;;
     *)
@@ -38,8 +44,18 @@ if [[ -z "${COMPILED_TEMPLATE}" ]]; then
   COMPILED_TEMPLATE="${temp_dir}/main.json"
   az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${COMPILED_TEMPLATE}" >/dev/null
 fi
+if [[ -z "${COMPILED_ELIGIBILITY_TEMPLATE}" ]]; then
+  COMPILED_ELIGIBILITY_TEMPLATE="${temp_dir}/owner-eligibility-request.json"
+  az bicep build \
+    --file "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.bicep" \
+    --outfile "${COMPILED_ELIGIBILITY_TEMPLATE}" >/dev/null
+fi
 [[ -f "${COMPILED_TEMPLATE}" ]] || fail "Compiled template not found: ${COMPILED_TEMPLATE}"
+[[ -f "${COMPILED_ELIGIBILITY_TEMPLATE}" ]] \
+  || fail "Compiled eligibility template not found: ${COMPILED_ELIGIBILITY_TEMPLATE}"
 jq empty "${COMPILED_TEMPLATE}" || fail "Compiled template is not valid JSON: ${COMPILED_TEMPLATE}"
+jq empty "${COMPILED_ELIGIBILITY_TEMPLATE}" \
+  || fail "Compiled eligibility template is not valid JSON: ${COMPILED_ELIGIBILITY_TEMPLATE}"
 
 owner_role_definition_id='8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
 permanent_owner_count="$(jq --arg owner "${owner_role_definition_id}" '
@@ -54,6 +70,12 @@ permanent_owner_count="$(jq --arg owner "${owner_role_definition_id}" '
 ' "${COMPILED_TEMPLATE}")"
 [[ "${permanent_owner_count}" -eq 0 ]] \
   || fail "Compiled default contains ${permanent_owner_count} permanent Owner role assignment(s)."
+
+owner_reference_count="$(jq --arg owner "${owner_role_definition_id}" '
+  [.. | strings | select(ascii_downcase | contains($owner))] | length
+' "${COMPILED_TEMPLATE}")"
+[[ "${owner_reference_count}" -eq 0 ]] \
+  || fail "Compiled main contains ${owner_reference_count} Owner role definition reference(s)."
 
 jq -e '
   [.. | objects | select(.type? == "Microsoft.Authorization/roleAssignments")]
@@ -77,46 +99,80 @@ active_owner_schedule_count="$(jq --arg owner "${owner_role_definition_id}" '
 eligible_request_count="$(jq '
   [.. | objects | select(.type? == "Microsoft.Authorization/roleEligibilityScheduleRequests")] | length
 ' "${COMPILED_TEMPLATE}")"
-[[ "${eligible_request_count}" -eq 2 ]] \
-  || fail "Expected exactly two subscription Owner eligibility schedule request artifacts, found ${eligible_request_count}."
-
-jq -e '
-  [.. | objects | select(.type? == "Microsoft.Authorization/roleEligibilityScheduleRequests")]
-  | all(
-      .apiVersion == "2020-10-01"
-      and .condition == "[parameters('\''deployEligibleOwnerRoleAssignment'\'')]"
-      and .properties.requestType == "AdminAssign"
-      and .properties.roleDefinitionId == "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', variables('\''ownerRoleDefinitionId'\''))]"
-      and .properties.principalId == "[variables('\''validatedPrivilegedAccessGroupObjectId'\'')]"
-      and .properties.justification == "[parameters('\''eligibleOwnerAssignmentJustification'\'')]"
-      and .properties.scheduleInfo.startDateTime == "[parameters('\''eligibleOwnerAssignmentStartDateTime'\'')]"
-      and .properties.scheduleInfo.expiration.type == "AfterDuration"
-      and .properties.scheduleInfo.expiration.duration == "[parameters('\''eligibleOwnerAssignmentDuration'\'')]"
-    )
-' "${COMPILED_TEMPLATE}" >/dev/null \
-  || fail 'Eligible Owner request artifacts must use the stable API, AdminAssign, group input, justification, and a finite parameterized schedule.'
+[[ "${eligible_request_count}" -eq 0 ]] \
+  || fail "Repeatable main template contains ${eligible_request_count} one-time eligibility schedule request artifact(s)."
 
 jq -e '
   .parameters.deployRoleAssignments.defaultValue == false
-  and .parameters.deployEligibleOwnerRoleAssignments.defaultValue == false
-  and .parameters.subscriptionPrivilegedAccessGroupObjectId.defaultValue == ""
+  and (.parameters | has("deployEligibleOwnerRoleAssignments") | not)
+  and (.parameters | has("subscriptionPrivilegedAccessGroupObjectId") | not)
+  and (.parameters | has("eligibleOwnerAssignmentStartDateTime") | not)
+  and (.parameters | has("eligibleOwnerAssignmentDuration") | not)
+  and (.parameters | has("eligibleOwnerAssignmentJustification") | not)
+' "${COMPILED_TEMPLATE}" >/dev/null \
+  || fail 'Repeatable main template must keep ordinary RBAC disabled and contain no PIM request parameters.'
+
+jq -e --arg owner "${owner_role_definition_id}" '
+  .parameters.submitEligibilityRequest.defaultValue == false
+  and (.parameters.requestId | has("defaultValue") | not)
+  and .parameters.requestId.minLength == 36
+  and .parameters.requestId.maxLength == 36
+  and (.parameters.requestType | has("defaultValue") | not)
+  and .parameters.requestType.allowedValues == ["AdminAssign", "AdminUpdate", "AdminRemove"]
+  and .parameters.targetRoleEligibilityScheduleId.defaultValue == ""
   and .parameters.eligibleOwnerAssignmentStartDateTime.defaultValue == ""
   and .parameters.eligibleOwnerAssignmentDuration.defaultValue == "P90D"
-  and .parameters.eligibleOwnerAssignmentJustification.defaultValue == ""
-' "${COMPILED_TEMPLATE}" >/dev/null \
-  || fail 'Compiled RBAC and eligible Owner parameters must retain safe defaults.'
+  and .parameters.eligibleOwnerAssignmentDuration.allowedValues == ["P30D", "P90D", "P180D", "P365D"]
+  and .variables.ownerRoleDefinitionId == $owner
+  and .variables.baseRequestProperties.principalId == "[variables('\''validatedPrincipalId'\'')]"
+  and .variables.baseRequestProperties.roleDefinitionId == "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', variables('\''ownerRoleDefinitionId'\''))]"
+  and .variables.baseRequestProperties.requestType == "[parameters('\''requestType'\'')]"
+  and .variables.baseRequestProperties.justification == "[parameters('\''eligibleOwnerAssignmentJustification'\'')]"
+  and (.variables.scheduleProperties | contains("AdminRemove"))
+  and (.variables.scheduleProperties | contains("AfterDuration"))
+  and (.variables.scheduleProperties | contains("eligibleOwnerAssignmentDuration"))
+  and (.variables.targetScheduleProperties | contains("AdminAssign"))
+  and (.variables.targetScheduleProperties | contains("targetRoleEligibilityScheduleId"))
+  and (.resources | length) == 1
+  and ([.resources[] | select(.type == "Microsoft.Authorization/roleEligibilityScheduleRequests")] | length) == 1
+  and ([.resources[]
+    | select(.type == "Microsoft.Authorization/roleEligibilityScheduleRequests")
+    | select(
+        .apiVersion == "2020-10-01"
+        and .name == "[parameters('\''requestId'\'')]"
+        and .condition == "[parameters('\''submitEligibilityRequest'\'')]"
+        and .properties == "[union(variables('\''baseRequestProperties'\''), variables('\''scheduleProperties'\''), variables('\''targetScheduleProperties'\''))]"
+      )] | length) == 1
+' "${COMPILED_ELIGIBILITY_TEMPLATE}" >/dev/null \
+  || fail 'One-shot Owner eligibility artifact must require a caller request ID, explicit opt-in and lifecycle action, group input, and a finite schedule.'
 
-eligible_module_default_count="$(jq '
+one_shot_forbidden_count="$(jq '
   [..
     | objects
-    | .parameters?
-    | select(type == "object")
-    | select(.deployEligibleOwnerRoleAssignment.defaultValue? == false)
-    | select(.subscriptionPrivilegedAccessGroupObjectId.defaultValue? == "")
+    | select(
+        .type? == "Microsoft.Authorization/roleAssignments"
+        or .type? == "Microsoft.Authorization/roleAssignmentScheduleRequests"
+        or .type? == "Microsoft.Authorization/roleManagementPolicies"
+        or .type? == "Microsoft.Authorization/roleManagementPolicyAssignments"
+      )
   ] | length
-' "${COMPILED_TEMPLATE}")"
-[[ "${eligible_module_default_count}" -eq 2 ]] \
-  || fail 'Both subscription RBAC modules must default the eligible Owner request off and its group input empty.'
+' "${COMPILED_ELIGIBILITY_TEMPLATE}")"
+[[ "${one_shot_forbidden_count}" -eq 0 ]] \
+  || fail 'One-shot Owner eligibility artifact must not contain permanent/active Owner or PIM activation-policy resources.'
+
+if rg -q 'owner-eligibility-request|roleEligibilityScheduleRequests' \
+  "${PROJECT_DIR}/main.bicep" \
+  "${PROJECT_DIR}/modules" \
+  "${PROJECT_DIR}/scripts/preflight.sh" \
+  "${PROJECT_DIR}/scripts/preflight.ps1" \
+  "${PROJECT_DIR}/scripts/what-if.sh" \
+  "${PROJECT_DIR}/scripts/what-if.ps1" \
+  "${PROJECT_DIR}/scripts/deploy.sh" \
+  "${PROJECT_DIR}/scripts/deploy.ps1" \
+  "${PROJECT_DIR}/scripts/teardown.sh" \
+  "${PROJECT_DIR}/scripts/teardown.ps1"; then
+  fail 'Normal main modules and lifecycle scripts must not invoke the one-shot Owner eligibility artifact.'
+fi
 
 role_management_policy_count="$(jq '
   [..
@@ -133,19 +189,42 @@ role_management_policy_count="$(jq '
 parameter_template="${PROJECT_DIR}/parameters/demo.parameters.template.json"
 jq -e '
   .parameters.deployRoleAssignments.value == false
-  and .parameters.deployEligibleOwnerRoleAssignments.value == false
+  and (.parameters | has("deployEligibleOwnerRoleAssignments") | not)
+  and (.parameters | has("subscriptionPrivilegedAccessGroupObjectId") | not)
+' "${parameter_template}" >/dev/null \
+  || fail 'The normal JSON parameter template must not expose the one-shot Owner eligibility workflow.'
+
+if rg -q 'deployEligibleOwnerRoleAssignments|subscriptionPrivilegedAccessGroupObjectId|eligibleOwnerAssignment' \
+  "${PROJECT_DIR}/parameters/main.template.bicepparam"; then
+  fail 'The normal Bicep parameter template must not expose the one-shot Owner eligibility workflow.'
+fi
+
+eligibility_parameter_template="${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.parameters.template.json"
+[[ -f "${eligibility_parameter_template}" ]] \
+  || fail "Missing one-shot Owner eligibility parameter template: ${eligibility_parameter_template}"
+jq -e '
+  .parameters.submitEligibilityRequest.value == false
+  and .parameters.requestId.value == "REPLACE_WITH_NEW_UNIQUE_REQUEST_GUID"
+  and .parameters.requestType.value == "AdminAssign"
   and .parameters.subscriptionPrivilegedAccessGroupObjectId.value == "REPLACE_WITH_SUBSCRIPTION_PRIVILEGED_ACCESS_GROUP_OBJECT_GUID"
+  and .parameters.targetRoleEligibilityScheduleId.value == ""
   and .parameters.eligibleOwnerAssignmentStartDateTime.value == "REPLACE_WITH_ELIGIBLE_OWNER_START_DATE_TIME_UTC"
   and .parameters.eligibleOwnerAssignmentDuration.value == "P90D"
-  and .parameters.eligibleOwnerAssignmentJustification.value == "REPLACE_WITH_ELIGIBLE_OWNER_ASSIGNMENT_JUSTIFICATION"
-' "${parameter_template}" >/dev/null \
-  || fail 'The JSON parameter template must keep eligible Owner disabled and use tenant-independent placeholders.'
+  and .parameters.eligibleOwnerAssignmentJustification.value == "REPLACE_WITH_ELIGIBLE_OWNER_REQUEST_JUSTIFICATION"
+' "${eligibility_parameter_template}" >/dev/null \
+  || fail 'One-shot Owner eligibility parameter template must stay disabled and retain explicit tenant-independent placeholders.'
 
-rg -q "^param deployEligibleOwnerRoleAssignments = false$" "${PROJECT_DIR}/parameters/main.template.bicepparam" \
-  || fail 'The Bicep parameter template must keep eligible Owner disabled.'
-rg -q "^param subscriptionPrivilegedAccessGroupObjectId = 'REPLACE_WITH_SUBSCRIPTION_PRIVILEGED_ACCESS_GROUP_OBJECT_GUID'$" \
-  "${PROJECT_DIR}/parameters/main.template.bicepparam" \
-  || fail 'The Bicep parameter template must use a privileged-access group placeholder.'
+pim_guidance="${PROJECT_DIR}/docs/AZURE-RBAC-PIM.md"
+for required_guidance in \
+  'existing eligibility' \
+  'AdminAssign' \
+  'AdminUpdate' \
+  'AdminRemove' \
+  'fresh request GUID' \
+  'never reuse'; do
+  rg -qi "${required_guidance}" "${pim_guidance}" \
+    || fail "PIM runbook is missing one-shot lifecycle guidance: ${required_guidance}"
+done
 
 requirements_file="${PROJECT_DIR}/identity/azure-rbac/owner-activation-requirements.template.json"
 [[ -f "${requirements_file}" ]] || fail "Missing static Owner activation requirements: ${requirements_file}"

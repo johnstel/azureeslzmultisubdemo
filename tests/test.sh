@@ -39,6 +39,9 @@ if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf '%s\n' "${az_build_stderr}" >&2
   exit 1
 fi
+az bicep build \
+  --file "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.bicep" \
+  --outfile "${TEMP_DIR}/owner-eligibility-request.json" >/dev/null
 
 printf '3/22 Validate the ARM parameter template...\n'
 jq -e '
@@ -72,13 +75,15 @@ if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT
   exit 1
 fi
 
-printf '7/22 Confirm group-only RBAC, PIM-ready Owner eligibility, and guarded scripts...\n'
-group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionPrivilegedAccessGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string( = '"'"''"'"')?$' "${PROJECT_DIR}/main.bicep")"
-[[ "${group_param_count}" -eq 5 ]] || {
-  printf 'ERROR: Expected five Entra security-group parameters.\n' >&2
+printf '7/22 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
+[[ "${group_param_count}" -eq 4 ]] || {
+  printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
   exit 1
 }
-"${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" --compiled-template "${TEMP_DIR}/main.json"
+"${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${TEMP_DIR}/main.json" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json"
 rbac_negative_template="${TEMP_DIR}/main-permanent-owner.json"
 jq '
   .resources += [{
@@ -86,17 +91,78 @@ jq '
     "apiVersion": "2022-04-01",
     "name": "00000000-0000-0000-0000-000000000000",
     "properties": {
-      "principalId": "[parameters('\''subscriptionPrivilegedAccessGroupObjectId'\'')]",
+      "principalId": "[parameters('\''governanceAdminsGroupObjectId'\'')]",
       "roleDefinitionId": "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', '\''8e3af657-a8ff-443c-a75c-2fe8c4bcb635'\'')]"
     }
   }]
 ' "${TEMP_DIR}/main.json" > "${rbac_negative_template}"
-if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" --compiled-template "${rbac_negative_template}" 2>&1)"; then
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${rbac_negative_template}" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json" 2>&1)"; then
   printf 'ERROR: RBAC validator accepted a compiled permanent Owner assignment.\n' >&2
   exit 1
 fi
 if ! printf '%s' "${rbac_validation_output}" | grep -qF 'permanent Owner role assignment'; then
   printf 'ERROR: RBAC validator rejected the permanent Owner fixture for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
+rbac_main_request_fixture="${TEMP_DIR}/main-one-shot-request.json"
+jq '
+  .resources += [{
+    "type": "Microsoft.Authorization/roleEligibilityScheduleRequests",
+    "apiVersion": "2020-10-01",
+    "name": "[guid(subscription().id, '\''reused-request'\'')]",
+    "condition": false,
+    "properties": {}
+  }]
+' "${TEMP_DIR}/main.json" > "${rbac_main_request_fixture}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${rbac_main_request_fixture}" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted a one-time eligibility request in the repeatable main template.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'one-time eligibility schedule request'; then
+  printf 'ERROR: RBAC validator rejected the main eligibility fixture for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
+rbac_owner_binding_fixture="${TEMP_DIR}/main-owner-role-binding.json"
+jq '
+  walk(
+    if type == "object"
+      and .parameters?.operatorRoleDefinitionId?.value? == "4d97b98b-1d4f-4787-a291-c67834d212e7"
+    then .parameters.operatorRoleDefinitionId.value = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+    else .
+    end
+  )
+' "${TEMP_DIR}/main.json" > "${rbac_owner_binding_fixture}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${rbac_owner_binding_fixture}" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted an Owner role passed through a nested module binding.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'Owner role definition reference'; then
+  printf 'ERROR: RBAC validator rejected the Owner module binding for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
+rbac_extra_resource_fixture="${TEMP_DIR}/owner-request-with-deployment-script.json"
+jq '
+  .resources += [{
+    "type": "Microsoft.Resources/deploymentScripts",
+    "apiVersion": "2023-08-01",
+    "name": "prohibited-automation",
+    "properties": {}
+  }]
+' "${TEMP_DIR}/owner-eligibility-request.json" > "${rbac_extra_resource_fixture}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${TEMP_DIR}/main.json" \
+  --compiled-eligibility-template "${rbac_extra_resource_fixture}" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted an extra automation resource in the one-shot artifact.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'One-shot Owner eligibility artifact'; then
+  printf 'ERROR: RBAC validator rejected the one-shot extra resource for the wrong reason: %s\n' "${rbac_validation_output}" >&2
   exit 1
 fi
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.sh"
@@ -252,9 +318,6 @@ jq '
   .parameters.connectivitySubscriptionId.value = "11111111-1111-1111-1111-111111111111" |
   .parameters.workloadSubscriptionId.value = "22222222-2222-2222-2222-222222222222" |
   .parameters.governanceAdminsGroupObjectId.value = "33333333-3333-3333-3333-333333333333" |
-  .parameters.subscriptionPrivilegedAccessGroupObjectId.value = "44444444-4444-4444-4444-444444444444" |
-  .parameters.eligibleOwnerAssignmentStartDateTime.value = "2026-09-01T12:00:00Z" |
-  .parameters.eligibleOwnerAssignmentJustification.value = "Static teardown safety test" |
   .parameters.networkOperatorsGroupObjectId.value = "55555555-5555-5555-5555-555555555555" |
   .parameters.workloadContributorsGroupObjectId.value = "66666666-6666-6666-6666-666666666666" |
   .parameters.readOnlyAuditorsGroupObjectId.value = "77777777-7777-7777-7777-777777777777" |

@@ -69,28 +69,28 @@ policy impact.
 
 ## Least-privilege RBAC model
 
-Bicep does not create Microsoft Entra identities. Supply the object IDs of four
-baseline **security groups** and, only when PIM-ready Owner is enabled, one
-separate privileged-access security group:
+Bicep does not create Microsoft Entra identities. The repeatable main deployment
+accepts the object IDs of four baseline **security groups**:
 
 | Group parameter | Assignment |
 |---|---|
 | `governanceAdminsGroupObjectId` | Management Group Contributor and Resource Policy Contributor at the demo root |
-| `subscriptionPrivilegedAccessGroupObjectId` | Time-bound eligible Owner on each sandbox subscription; separately opt-in and never a permanent role assignment |
 | `networkOperatorsGroupObjectId` | Network Contributor on the connectivity subscription |
 | `workloadContributorsGroupObjectId` | Contributor on the workload subscription |
 | `readOnlyAuditorsGroupObjectId` | Reader at the demo root |
 
 Ordinary RBAC is disabled by default with `deployRoleAssignments=false`.
-Eligible Owner is independently disabled with
-`deployEligibleOwnerRoleAssignments=false` and requires a group, UTC start,
-finite duration, and justification. Enabling ordinary RBAC does not grant
-Owner. The deployment principal needs enough existing access to create either
-kind of assignment; the template never bootstraps its own authority.
+Enabling ordinary RBAC does not grant Owner. `main.bicep` contains no Owner
+eligibility request, so normal redeployment cannot replay a one-time PIM
+request. The deployment principal needs enough existing access to create the
+ordinary assignments; the template never bootstraps its own authority.
 
-The Bicep creates only the eligible schedule. Approval, MFA, activation
-justification, four-hour activation duration, and notification expectations
-remain a static report-only contract in
+PIM-ready Owner is handled separately by the explicit one-shot
+`identity/azure-rbac/owner-eligibility-request.bicep` artifact. It requires a
+fresh caller-supplied request GUID, opt-in, an existing privileged-access group,
+and a finite schedule. Approval, MFA, activation justification, four-hour
+activation duration, and notification expectations remain a static report-only
+contract in
 `identity/azure-rbac/owner-activation-requirements.template.json`; configure
 and verify those PIM role settings separately at both subscriptions before
 opting in. See [PIM-ready Azure RBAC](docs/AZURE-RBAC-PIM.md).
@@ -351,7 +351,7 @@ The script:
 2. deletes the demo-created monitoring resource group (`rg-<namePrefix>-monitoring`)
    and waits for completion, but only when `deployCentralLogAnalytics=true`
    **and** no existing workspace ID was supplied;
-3. deletes the five ordinary demo role assignments for the four baseline groups by principal and scope; eligible Owner schedules require separately reviewed PIM `AdminRemove` requests and are not automatically removed;
+3. deletes the five ordinary demo role assignments for the four baseline groups by principal and scope; eligible Owner schedules require separate one-shot PIM `AdminRemove` requests and are not automatically removed;
 4. removes policy assignments, then policy definitions;
 5. moves both subscriptions back to the supplied tenant-root management group;
 6. deletes leaf management groups and then the dedicated demo root.
@@ -373,6 +373,8 @@ docs/
   AZURE-RBAC-PIM.md
 identity/
   azure-rbac/
+    owner-eligibility-request.bicep
+    owner-eligibility-request.parameters.template.json
     owner-activation-requirements.template.json
   conditional-access/
     ca-privileged-role-mfa.template.json
@@ -424,11 +426,12 @@ tests/
 - Tests and static validators are offline; preflight performs read-only Azure
   checks and never changes Azure or Entra.
 - Deny assignments are non-enforcing by default.
-- Ordinary RBAC, eligible Owner schedules, and evidence resources are
-  independently opt-in.
+- Ordinary RBAC and evidence resources are independently opt-in; eligible Owner
+  uses a separate one-shot artifact that is never called by `main.bicep`.
 - Deployment and teardown require exact environment confirmations.
-- No Conditional Access policy or PIM role setting is applied to any
-  tenant; `identity/` templates are static, report-only/eligible-only
-  inputs and always require replacing an emergency-access placeholder.
+- No Conditional Access policy or PIM role setting is applied to any tenant;
+  identity-governance templates remain report-only, while the separately
+  invoked Owner eligibility request is disabled by default and requires
+  explicit placeholders to be replaced.
 - No permanent Owner assignment is created; emergency access remains an
   explicitly documented, customer-managed external responsibility.

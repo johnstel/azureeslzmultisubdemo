@@ -122,16 +122,20 @@
       "mechanism": {
         "kind": "azure-authorization-eligible-role-assignment",
         "builtIn": false,
-        "displayName": "PIM-ready eligible role assignment inputs (Microsoft.Authorization roleEligibilityScheduleRequests)",
+        "displayName": "Separately invoked one-shot PIM eligibility lifecycle request plus report-only activation baseline",
         "sourceUrl": "https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-resource-roles-assign-roles",
-        "verifiedOn": "2026-08-31",
+        "verifiedOn": "2026-09-01",
         "verificationMethod": "ms-learn-page"
       },
       "supportedEffects": [
         "eligible"
       ],
       "requiredParameters": [
+        "submitEligibilityRequest",
+        "requestId",
+        "requestType",
         "subscriptionPrivilegedAccessGroupObjectId",
+        "targetRoleEligibilityScheduleId",
         "eligibleOwnerAssignmentStartDateTime",
         "eligibleOwnerAssignmentDuration",
         "eligibleOwnerAssignmentJustification"
@@ -142,8 +146,8 @@
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Compiled Bicep roleEligibilityScheduleRequests plus the static Azure RBAC PIM activation requirements artifact.",
-      "notes": "Implemented by modules/subscription-rbac.bicep as an explicitly enabled, group-wired, finite eligible Owner schedule. No permanent or active Owner role assignment is created. Approval, MFA, activation justification, duration, notifications, and external emergency-access handling remain a statically validated report-only contract because applying PIM role settings is out of scope."
+      "evidenceSource": "Compiled main Bicep proving no Owner request or assignment, the separate one-shot roleEligibilityScheduleRequests artifact, and the static Azure RBAC PIM activation requirements artifact.",
+      "notes": "The repeatable main deployment contains no Owner role assignment or PIM request. identity/azure-rbac/owner-eligibility-request.bicep is a separately invoked, disabled-by-default, group-wired one-shot artifact that requires a caller-supplied request GUID and supports AdminAssign, AdminUpdate, and AdminRemove. Assignment and update schedules are finite. Approval, MFA, activation justification, duration, notifications, and external emergency-access handling remain a statically validated report-only contract because applying PIM role settings is out of scope."
     },
     {
       "id": "REQ-ID-05",

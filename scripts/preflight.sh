@@ -38,11 +38,6 @@ name_prefix="$(parameter_value namePrefix)"
 connectivity_subscription="$(parameter_value connectivitySubscriptionId)"
 workload_subscription="$(parameter_value workloadSubscriptionId)"
 deployment_location="$(parameter_value deploymentLocation)"
-eligible_owner_enabled="$(parameter_value deployEligibleOwnerRoleAssignments)"
-eligible_owner_group="$(parameter_value subscriptionPrivilegedAccessGroupObjectId)"
-eligible_owner_start="$(parameter_value eligibleOwnerAssignmentStartDateTime)"
-eligible_owner_duration="$(parameter_value eligibleOwnerAssignmentDuration)"
-eligible_owner_justification="$(parameter_value eligibleOwnerAssignmentJustification)"
 
 [[ "${name_prefix}" =~ ^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$ ]] \
   || fail 'namePrefix must be 3-24 lowercase letters, numbers, or hyphens, with no leading/trailing hyphen.'
@@ -74,30 +69,6 @@ for group_parameter in "${group_parameters[@]}"; do
   seen_group_ids+=("${normalized_group_id}")
   seen_group_parameters+=("${group_parameter}")
 done
-
-[[ "${eligible_owner_enabled}" == 'true' || "${eligible_owner_enabled}" == 'false' ]] \
-  || fail 'deployEligibleOwnerRoleAssignments must be true or false.'
-
-if [[ "${eligible_owner_enabled}" == 'true' || -n "${eligible_owner_group}" ]]; then
-  is_guid "${eligible_owner_group}" || fail 'subscriptionPrivilegedAccessGroupObjectId is not a GUID.'
-  normalized_group_id="$(printf '%s' "${eligible_owner_group}" | tr '[:upper:]' '[:lower:]')"
-  for index in "${!seen_group_ids[@]}"; do
-    [[ "${normalized_group_id}" != "${seen_group_ids[${index}]}" ]] \
-      || fail "subscriptionPrivilegedAccessGroupObjectId duplicates ${seen_group_parameters[${index}]}; use a distinct privileged-access group."
-  done
-fi
-
-case "${eligible_owner_duration}" in
-  P30D|P90D|P180D|P365D) ;;
-  *) fail 'eligibleOwnerAssignmentDuration must be P30D, P90D, P180D, or P365D.' ;;
-esac
-
-if [[ "${eligible_owner_enabled}" == 'true' ]]; then
-  [[ "${eligible_owner_start}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]] \
-    || fail 'eligibleOwnerAssignmentStartDateTime must be an RFC 3339 UTC timestamp ending in Z.'
-  [[ -n "$(printf '%s' "${eligible_owner_justification}" | tr -d '[:space:]')" ]] \
-    || fail 'eligibleOwnerAssignmentJustification must contain a business justification.'
-fi
 
 printf 'Building Bicep locally...\n'
 az bicep build --file "${PROJECT_DIR}/main.bicep" --stdout >/dev/null
