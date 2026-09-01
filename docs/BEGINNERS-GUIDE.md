@@ -357,17 +357,19 @@ The first use of management groups in a tenant can require Azure to initialize
 the service, which may take several minutes. See Microsoft's
 [management-group quickstart](https://learn.microsoft.com/azure/governance/management-groups/create-management-group-portal).
 
-## Step 6: Prepare five Microsoft Entra security groups
+## Step 6: Prepare Microsoft Entra security groups
 
 RBAC answers: "Who is allowed to perform which actions, and where?" This project
 assigns Azure roles to groups rather than individual people so membership can
 be managed centrally.
 
-Use five distinct security groups. Suggested names are:
+Use four baseline groups. Add the fifth privileged-access group only if the
+separately controlled PIM-ready Owner phase will be enabled. Suggested names
+are:
 
 ```text
 AZ-ESLZ-Demo-Governance-Admins
-AZ-ESLZ-Demo-Subscription-Owners
+AZ-ESLZ-Demo-Subscription-Privileged-Access
 AZ-ESLZ-Demo-Network-Operators
 AZ-ESLZ-Demo-Workload-Contributors
 AZ-ESLZ-Demo-Read-Only-Auditors
@@ -397,30 +399,35 @@ To copy a group Object ID:
 3. Copy **Object ID** from Overview or Properties.
 
 Do not copy a group owner's user ID, the Tenant ID, or an application/client
-ID. The preflight script checks that all five values look like GUIDs and that
-they are distinct. It cannot verify group type without additional directory
-permissions.
+ID. The preflight script checks that every supplied value looks like a GUID and
+that the values are distinct. It cannot verify group type without additional
+directory permissions.
 
 Microsoft documents group management and the immutable Object ID in
 [How to manage groups](https://learn.microsoft.com/entra/fundamentals/how-to-manage-groups).
 
 ### What access each group receives
 
-RBAC creation is disabled during the safest first deployment. When you later
-set `deployRoleAssignments` to `true`, the project assigns:
+Ordinary RBAC creation is disabled during the safest first deployment. When
+you later set `deployRoleAssignments` to `true`, the project assigns:
 
 | Group | Azure access | Scope |
 |---|---|---|
 | Governance admins | Management Group Contributor | Demo root and descendants |
 | Governance admins | Resource Policy Contributor | Demo root and descendants |
-| Subscription owners | Owner | Each sandbox subscription |
 | Network operators | Network Contributor | Connectivity subscription |
 | Workload contributors | Contributor | Workload subscription |
 | Read-only auditors | Reader | Demo root and descendants |
 
-The five groups produce seven role assignments because governance admins
-receive two roles and subscription owners receive one assignment in each
-subscription.
+The four baseline groups produce five ordinary role assignments because
+governance admins receive two roles. No ordinary or permanent Owner assignment
+is created.
+
+The repeatable main deployment never creates Owner eligibility. PIM-ready Owner
+uses a separate subscription-scoped, one-shot artifact after all prerequisites
+are met. Each sandbox subscription requires its own reviewed request and a
+fresh caller-generated request GUID. Read
+[PIM-ready Azure RBAC](AZURE-RBAC-PIM.md) before preparing this phase.
 
 An Azure role assignment consists of a principal, role, and scope. See
 [Understand Azure role assignments](https://learn.microsoft.com/azure/role-based-access-control/role-assignments).
@@ -441,6 +448,10 @@ Ask your Azure administrator to confirm that your account has permission to:
 - assign Azure roles when `deployRoleAssignments` is `true`;
 - create resource groups and networking resources when
   `deployEvidenceResources` is `true`.
+
+Owner eligibility is not part of this normal deployment. Confirm the separate
+one-shot operator has authorization only when that independently approved
+workflow is performed.
 
 Being a subscription Owner does not automatically give you authority at the
 tenant root. Likewise, being a Microsoft Entra Global Administrator does not
@@ -483,7 +494,6 @@ Open `parameters/demo.parameters.json` in a text editor. Replace all
 | `connectivitySubscriptionId` | Existing connectivity sandbox subscription GUID |
 | `workloadSubscriptionId` | Existing workload sandbox subscription GUID |
 | `governanceAdminsGroupObjectId` | Governance security-group Object ID |
-| `subscriptionOwnersGroupObjectId` | Subscription owners security-group Object ID |
 | `networkOperatorsGroupObjectId` | Network operators security-group Object ID |
 | `workloadContributorsGroupObjectId` | Workload contributors security-group Object ID |
 | `readOnlyAuditorsGroupObjectId` | Auditors security-group Object ID |
@@ -767,7 +777,8 @@ az policy assignment list --scope /providers/Microsoft.Management/managementGrou
 
 At this stage, `deployRoleAssignments=false` and
 `deployEvidenceResources=false`, so there should be no demo role assignments or
-evidence resource groups yet.
+evidence resource groups. The main deployment can never contain an Owner
+eligibility request.
 
 ## Step 15: Optionally enable RBAC
 
@@ -797,8 +808,9 @@ macOS or Linux:
 ./scripts/what-if.sh parameters/demo.parameters.json
 ```
 
-What-if should show seven role assignments for the five security groups. If the
-principal IDs or scopes differ from your expectation, stop.
+What-if should show five ordinary role assignments for the four baseline
+security groups and no Owner role assignment. If the principal IDs or scopes
+differ from your expectation, stop.
 
 Then run the guarded deployment again:
 
@@ -819,6 +831,54 @@ export ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"
 Deploying the same Bicep again is expected. Infrastructure as Code is
 declarative: Azure compares the desired configuration with current state and
 only applies differences.
+
+### Separately request PIM-ready eligible Owner
+
+Do not add this operation to `main.bicep` or combine it with ordinary RBAC.
+Complete every prerequisite and bootstrap step in
+[PIM-ready Azure RBAC](AZURE-RBAC-PIM.md), including licensing, existing-group
+verification, emergency-access testing, Owner activation settings at both
+subscriptions, and narrowly scoped deployment-principal access.
+
+Copy
+`identity/azure-rbac/owner-eligibility-request.parameters.template.json` to a
+gitignored `*.local.json` file. Populate a fresh request GUID, lifecycle action,
+privileged group, start date/time, finite duration, and justification, but keep
+`submitEligibilityRequest=false` during local preparation. Then run the offline
+validator:
+
+```powershell
+.\scripts\validate-rbac-artifacts.ps1
+```
+
+```bash
+./scripts/validate-rbac-artifacts.sh
+```
+
+Do not edit `operatorWorkflowVerificationToken` or invoke the Bicep directly.
+Set `submitEligibilityRequest=true` in the local file, then use
+`scripts/owner-eligibility-request.ps1` or
+`scripts/owner-eligibility-request.sh`. Supply the target subscription GUID and
+local parameter-file path. This supported process verifies the exact object is
+a security-enabled Entra group, checks existing eligibility and pending
+requests, and runs subscription what-if before stopping without submission.
+The preview must show one eligible Owner `roleEligibilityScheduleRequests`
+resource and no Owner `roleAssignments` or
+`roleAssignmentScheduleRequests` resource.
+
+Obtain approval from that exact preview. Submission requires running the same
+workflow with `-Execute` or `--execute`, setting
+`ESLZ_OWNER_ELIGIBILITY_CONFIRMATION=SUBMIT-OWNER-ELIGIBILITY`, and typing the
+request GUID exactly. The workflow repeats preflight and what-if before
+submitting once.
+
+Repeat for the other subscription with a different fresh request GUID. Never
+reuse a request GUID for a retry, update, removal, or another subscription.
+Afterward, verify both entries are **Eligible time-bound**, test approval and
+activation, inspect notifications and PIM audit history, and remove temporary
+bootstrap access. Use separate `AdminUpdate` and `AdminRemove` operations with
+the existing eligibility schedule ID and a new request GUID for every
+lifecycle change.
 
 ## Step 16: Optionally create evidence resources
 
@@ -907,12 +967,16 @@ This only prints the plan. It does not change Azure.
 The plan:
 
 1. deletes the optional evidence resource groups;
-2. removes the seven demo role assignments;
+2. removes the five ordinary demo role assignments;
 3. removes the five policy assignments and definitions;
 4. moves both subscriptions back to the supplied tenant root;
 5. deletes the leaf management groups, then the demo root.
 
-It never deletes subscriptions or Microsoft Entra groups.
+It never deletes subscriptions or Microsoft Entra groups. It also never
+discovers or automatically removes PIM eligibility. Submit separately reviewed,
+one-shot `AdminRemove` requests with each existing schedule ID and a fresh
+request GUID, then verify removal in PIM before considering privileged-access
+teardown complete.
 
 Before execution, verify that moving the subscriptions to the tenant root is
 acceptable. If the subscriptions originally lived under a different management

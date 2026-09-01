@@ -26,9 +26,6 @@
     "governanceAdminsGroupObjectId": {
       "value": "REPLACE_WITH_GOVERNANCE_ADMINS_GROUP_OBJECT_GUID"
     },
-    "subscriptionOwnersGroupObjectId": {
-      "value": "REPLACE_WITH_SUBSCRIPTION_OWNERS_GROUP_OBJECT_GUID"
-    },
     "networkOperatorsGroupObjectId": {
       "value": "REPLACE_WITH_NETWORK_OPERATORS_GROUP_OBJECT_GUID"
     },
@@ -76,4 +73,3 @@
     }
   }
 }
-
