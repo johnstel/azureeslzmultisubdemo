@@ -167,6 +167,9 @@
     },
     "resourceDiagnosticsCategoryGroup": {
       "value": "audit"
+    },
+    "deployLoggingRemediationRoleAssignments": {
+      "value": false
     }
   }
 }

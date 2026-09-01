@@ -91,6 +91,7 @@ jq -e '
   .parameters.approvedFirewallPrivateIp.value == "" and
   .parameters.approvedRouteTableResourceIds.value == [] and
   .parameters.approvedRouteTablePrefixes.value == [] and
+  .parameters.deployLoggingRemediationRoleAssignments.value == false and
   .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
   (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
   (.parameters.customerAllowedVmSkus.value | length) > 0 and
@@ -107,7 +108,8 @@ jq -e '
   .parameters.approvedFirewallResourceId.value == "" and
   .parameters.approvedFirewallPrivateIp.value == "" and
   .parameters.approvedRouteTableResourceIds.value == [] and
-  .parameters.approvedRouteTablePrefixes.value == []
+  .parameters.approvedRouteTablePrefixes.value == [] and
+  .parameters.deployLoggingRemediationRoleAssignments.value == false
 ' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
 printf '4/24 Confirm there are exactly two unconditional subscription associations...\n'
@@ -126,7 +128,7 @@ find_prohibited_paid_declarations() {
       if type == "object" then
         . as $resource
         | if $resource.type? == "Microsoft.Resources/deployments"
-            and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel"))
+            and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel", "activity-log-workspace-destination-rbac", "resource-diagnostics-workspace-destination-rbac"))
           then empty
           elif (($resource.type? | type) == "string") and $resource.apiVersion? and ($resource.type | prohibited)
           then $resource.type
@@ -1669,16 +1671,25 @@ jq -e --slurpfile catalog "${control_catalog}" '
     $deployment.scope | contains("demoRootManagementGroupId");
   deployment("assign-activity-logs") as $activity |
   deployment("assign-resource-diagnostics") as $diagnostics |
+  deployment("activity-log-workspace-destination-rbac") as $activity_workspace_rbac |
+  deployment("resource-diagnostics-workspace-destination-rbac") as $diagnostics_workspace_rbac |
   .parameters.activityLogExportPolicyEffect.defaultValue == "Disabled" and
   .parameters.activityLogExportLogsEnabled.defaultValue == "True" and
   .parameters.resourceDiagnosticsPolicyEffect.defaultValue == "AuditIfNotExists" and
   .parameters.resourceDiagnosticsCategoryGroup.defaultValue == "audit" and
+  .parameters.deployLoggingRemediationRoleAssignments.defaultValue == false and
   .variables.activityLogExportPolicyDefinitionId == definition_id("REQ-LOG-01") and
   .variables.resourceDiagnosticsAllLogsPolicySetDefinitionId == definition_id("REQ-LOG-02") and
   .variables.resourceDiagnosticsAuditPolicySetDefinitionId ==
     "[tenantResourceId(\u0027Microsoft.Authorization/policySetDefinitions\u0027, \u0027f5b29bc4-feca-4cc6-a58a-772dd5e290a5\u0027)]" and
   .variables.resourceDiagnosticsPolicySetDefinitionId ==
     "[if(equals(parameters(\u0027resourceDiagnosticsCategoryGroup\u0027), \u0027allLogs\u0027), variables(\u0027resourceDiagnosticsAllLogsPolicySetDefinitionId\u0027), variables(\u0027resourceDiagnosticsAuditPolicySetDefinitionId\u0027))]" and
+  .variables.loggingWorkspaceSubscriptionId ==
+    "[if(parameters(\u0027deployCentralLogAnalytics\u0027), parameters(\u0027connectivitySubscriptionId\u0027), variables(\u0027existingWorkspaceResourceIdParts\u0027)[2])]" and
+  .variables.loggingWorkspaceResourceGroupName ==
+    "[if(parameters(\u0027deployCentralLogAnalytics\u0027), format(\u0027rg-{0}-monitoring\u0027, parameters(\u0027namePrefix\u0027)), variables(\u0027existingWorkspaceResourceIdParts\u0027)[4])]" and
+  .variables.loggingWorkspaceName ==
+    "[if(parameters(\u0027deployCentralLogAnalytics\u0027), format(\u0027log-{0}-central\u0027, parameters(\u0027namePrefix\u0027)), variables(\u0027existingWorkspaceResourceIdParts\u0027)[8])]" and
   .variables.monitoringContributorRoleDefinitionId == (control("REQ-LOG-01").roleDefinitionIds | first) and
   .variables.logAnalyticsContributorRoleDefinitionId == (control("REQ-LOG-02").roleDefinitionIds | first) and
   assigned_at_demo_root($activity) and assigned_at_demo_root($diagnostics) and
@@ -1696,9 +1707,16 @@ jq -e --slurpfile catalog "${control_catalog}" '
   ($activity.properties.parameters.parameters.value.logAnalytics.value |
     contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
   ($activity.properties.parameters.parameters.value.logAnalytics.value |
-    contains("fail(\u0027Activity Log and supported-resource diagnostics assignments require a non-empty effective Log Analytics workspace resource ID")) and
+    contains("fail(\u0027Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID in the exact form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>")) and
   $activity.properties.parameters.verifiedRoleDefinitionIds.value ==
     ["[variables(\u0027monitoringContributorRoleDefinitionId\u0027)]", "[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  $activity.properties.parameters.deployRemediationRoleAssignments.value ==
+    "[variables(\u0027deployActivityLogRemediationRoleAssignments\u0027)]" and
+  $activity.properties.parameters.nonComplianceMessages.value == [
+    {
+      "message": "Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace."
+    }
+  ] and
   $diagnostics.properties.parameters.policyDefinitionId.value ==
     "[variables(\u0027resourceDiagnosticsPolicySetDefinitionId\u0027)]" and
   $diagnostics.properties.parameters.definitionVersion.value == "1.*.*" and
@@ -1708,12 +1726,37 @@ jq -e --slurpfile catalog "${control_catalog}" '
     contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
   $diagnostics.properties.parameters.verifiedRoleDefinitionIds.value ==
     ["[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  $diagnostics.properties.parameters.deployRemediationRoleAssignments.value ==
+    "[variables(\u0027deployResourceDiagnosticsRemediationRoleAssignments\u0027)]" and
+  $diagnostics.properties.parameters.nonComplianceMessages.value == [
+    {
+      "message": "Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types."
+    }
+  ] and
+  $activity_workspace_rbac.condition ==
+    "[variables(\u0027deployActivityLogRemediationRoleAssignments\u0027)]" and
+  $diagnostics_workspace_rbac.condition ==
+    "[variables(\u0027deployResourceDiagnosticsRemediationRoleAssignments\u0027)]" and
+  $activity_workspace_rbac.subscriptionId == "[variables(\u0027loggingWorkspaceSubscriptionId\u0027)]" and
+  $activity_workspace_rbac.resourceGroup == "[variables(\u0027loggingWorkspaceResourceGroupName\u0027)]" and
+  $diagnostics_workspace_rbac.subscriptionId == "[variables(\u0027loggingWorkspaceSubscriptionId\u0027)]" and
+  $diagnostics_workspace_rbac.resourceGroup == "[variables(\u0027loggingWorkspaceResourceGroupName\u0027)]" and
+  $activity_workspace_rbac.properties.parameters.workspaceName.value == "[variables(\u0027loggingWorkspaceName\u0027)]" and
+  $diagnostics_workspace_rbac.properties.parameters.workspaceName.value == "[variables(\u0027loggingWorkspaceName\u0027)]" and
+  $activity_workspace_rbac.properties.template.resources.remediationRoleAssignments.scope ==
+    "[resourceId(\u0027Microsoft.OperationalInsights/workspaces\u0027, parameters(\u0027workspaceName\u0027))]" and
+  $activity_workspace_rbac.properties.template.resources.remediationRoleAssignments.properties.roleDefinitionId ==
+    "[tenantResourceId(\u0027Microsoft.Authorization/roleDefinitions\u0027, parameters(\u0027roleDefinitionIds\u0027)[copyIndex()])]" and
   .outputs.loggingAssignments.value.activityLogExport.effect ==
     "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
   .outputs.loggingAssignments.value.resourceDiagnostics.effect ==
     "[parameters(\u0027resourceDiagnosticsPolicyEffect\u0027)]" and
   .outputs.loggingAssignments.value.resourceDiagnostics.categoryGroup ==
-    "[parameters(\u0027resourceDiagnosticsCategoryGroup\u0027)]"
+    "[parameters(\u0027resourceDiagnosticsCategoryGroup\u0027)]" and
+  .outputs.loggingAssignments.value.activityLogExport.workspaceDestinationRoleAssignmentIds ==
+    "[if(variables(\u0027deployActivityLogRemediationRoleAssignments\u0027), reference(\u0027activityLogWorkspaceDestinationRbac\u0027).outputs.roleAssignmentIds.value, createArray())]" and
+  .outputs.loggingAssignments.value.resourceDiagnostics.workspaceDestinationRoleAssignmentIds ==
+    "[if(variables(\u0027deployResourceDiagnosticsRemediationRoleAssignments\u0027), reference(\u0027resourceDiagnosticsWorkspaceDestinationRbac\u0027).outputs.roleAssignmentIds.value, createArray())]"
 ' "${TEMP_DIR}/main.json" >/dev/null || {
   printf 'ERROR: Logging assignments do not match the required workspace wiring, identity/roles, effects, or demo-root inheritance.\n' >&2
   exit 1
@@ -1722,10 +1765,172 @@ jq -e '
   .parameters.activityLogExportPolicyEffect.value == "Disabled" and
   .parameters.activityLogExportLogsEnabled.value == "True" and
   .parameters.resourceDiagnosticsPolicyEffect.value == "AuditIfNotExists" and
-  .parameters.resourceDiagnosticsCategoryGroup.value == "audit"
+  .parameters.resourceDiagnosticsCategoryGroup.value == "audit" and
+  .parameters.deployLoggingRemediationRoleAssignments.value == false
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
   printf 'ERROR: Logging policy defaults in parameters/demo.parameters.template.json are not safe audit-first values.\n' >&2
   exit 1
 }
+printf '    Confirm mirrored logging compile-matrix coverage across enabled/disabled effects, workspace paths, and category-group modes...\n'
+python3 - "${PROJECT_DIR}" "${TEMP_DIR}" <<'PYEOF'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+project_dir = pathlib.Path(sys.argv[1])
+temp_dir = pathlib.Path(sys.argv[2])
+template_path = project_dir / "parameters/main.template.bicepparam"
+template_text = template_path.read_text(encoding="utf-8")
+
+valid_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central"
+wrong_type_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.Storage/storageAccounts/not-a-workspace"
+malformed_workspace = "/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/"
+
+cases = [
+    {
+        "name": "disabled-empty-default",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": "",
+        "activityLogExportPolicyEffect": "Disabled",
+        "resourceDiagnosticsPolicyEffect": "Disabled",
+        "resourceDiagnosticsCategoryGroup": "audit",
+        "deployRoleAssignments": "false",
+        "deployLoggingRemediationRoleAssignments": "false",
+    },
+    {
+        "name": "activity-deploy-existing-valid",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": valid_workspace,
+        "activityLogExportPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsPolicyEffect": "Disabled",
+        "resourceDiagnosticsCategoryGroup": "audit",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "diagnostics-deploy-existing-alllogs",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": valid_workspace,
+        "activityLogExportPolicyEffect": "Disabled",
+        "resourceDiagnosticsPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "allLogs",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "diagnostics-auditif-existing",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": valid_workspace,
+        "activityLogExportPolicyEffect": "Disabled",
+        "resourceDiagnosticsPolicyEffect": "AuditIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "audit",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "new-workspace-both-deploy",
+        "deployCentralLogAnalytics": "true",
+        "existingLogAnalyticsWorkspaceResourceId": "",
+        "activityLogExportPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "allLogs",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "enabled-empty-existing-id",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": "",
+        "activityLogExportPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsPolicyEffect": "AuditIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "audit",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "enabled-malformed-existing-id",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": malformed_workspace,
+        "activityLogExportPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "audit",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "enabled-wrong-type-existing-id",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": wrong_type_workspace,
+        "activityLogExportPolicyEffect": "Disabled",
+        "resourceDiagnosticsPolicyEffect": "AuditIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "allLogs",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+]
+
+def replace_param(text: str, name: str, value_literal: str) -> str:
+    pattern = rf"(?m)^param {re.escape(name)} = .*$"
+    return re.sub(pattern, f"param {name} = {value_literal}", text)
+
+covered_workspace_modes = set()
+covered_category_modes = set()
+covered_effect_states = set()
+
+for case in cases:
+    case_text = template_text.replace("using '../main.bicep'", "using '../../main.bicep'")
+    for key, value in case.items():
+        if key == "name":
+            continue
+        literal = f"'{value}'" if key in {
+            "existingLogAnalyticsWorkspaceResourceId",
+            "activityLogExportPolicyEffect",
+            "resourceDiagnosticsPolicyEffect",
+            "resourceDiagnosticsCategoryGroup",
+        } else value
+        case_text = replace_param(case_text, key, literal)
+    case_path = temp_dir / f"logging-{case['name']}.bicepparam"
+    case_path.write_text(case_text, encoding="utf-8")
+    out_path = temp_dir / f"logging-{case['name']}.json"
+    subprocess.run(
+        ["az", "bicep", "build-params", "--file", str(case_path), "--outfile", str(out_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    compiled = json.loads(out_path.read_text(encoding="utf-8"))
+    for key, value in case.items():
+        if key == "name":
+            continue
+        compiled_value = compiled["parameters"][key]["value"]
+        expected_value = value
+        if key in {"deployCentralLogAnalytics", "deployRoleAssignments", "deployLoggingRemediationRoleAssignments"}:
+            expected_value = (value == "true")
+        if compiled_value != expected_value:
+            raise SystemExit(f"ERROR: Logging matrix case {case['name']} did not compile expected parameter value for {key}.")
+    existing_id = case["existingLogAnalyticsWorkspaceResourceId"]
+    if case["deployCentralLogAnalytics"] == "true":
+        covered_workspace_modes.add("new")
+    elif existing_id == "":
+        covered_workspace_modes.add("empty")
+    elif existing_id == valid_workspace:
+        covered_workspace_modes.add("existing-valid")
+    elif existing_id == malformed_workspace:
+        covered_workspace_modes.add("existing-malformed")
+    elif existing_id == wrong_type_workspace:
+        covered_workspace_modes.add("existing-wrong-type")
+    covered_category_modes.add(case["resourceDiagnosticsCategoryGroup"])
+    covered_effect_states.add((case["activityLogExportPolicyEffect"], case["resourceDiagnosticsPolicyEffect"]))
+
+required_workspace_modes = {"new", "empty", "existing-valid", "existing-malformed", "existing-wrong-type"}
+if covered_workspace_modes != required_workspace_modes:
+    raise SystemExit(f"ERROR: Logging matrix coverage mismatch for workspace-path modes: {covered_workspace_modes}")
+if covered_category_modes != {"audit", "allLogs"}:
+    raise SystemExit(f"ERROR: Logging matrix must cover both diagnostics category-group modes: {covered_category_modes}")
+if ("Disabled", "Disabled") not in covered_effect_states or ("DeployIfNotExists", "DeployIfNotExists") not in covered_effect_states:
+    raise SystemExit("ERROR: Logging matrix must include both disabled and enabled remediation effect combinations.")
+PYEOF
 
 printf '\nAll local validation and safety tests passed.\n'

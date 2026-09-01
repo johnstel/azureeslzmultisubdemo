@@ -84,3 +84,4 @@ param activityLogExportPolicyEffect = 'Disabled'
 param activityLogExportLogsEnabled = 'True'
 param resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
 param resourceDiagnosticsCategoryGroup = 'audit'
+param deployLoggingRemediationRoleAssignments = false

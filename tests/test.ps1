@@ -63,7 +63,7 @@ function Find-ProhibitedPaidDeclarations {
         $apiVersionProperty = $Node.PSObject.Properties['apiVersion']
         $nameProperty = $Node.PSObject.Properties['name']
         if ($typeProperty -and $typeProperty.Value -eq 'Microsoft.Resources/deployments' -and
-            $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel')) {
+            $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel', 'activity-log-workspace-destination-rbac', 'resource-diagnostics-workspace-destination-rbac')) {
             return $results
         }
         $prohibitedPattern = '^Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$'
@@ -237,7 +237,8 @@ try {
         $parameterTemplate.parameters.approvedFirewallResourceId.value -ne '' -or
         $parameterTemplate.parameters.approvedFirewallPrivateIp.value -ne '' -or
         @($parameterTemplate.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
-        @($parameterTemplate.parameters.approvedRouteTablePrefixes.value).Count -ne 0) {
+        @($parameterTemplate.parameters.approvedRouteTablePrefixes.value).Count -ne 0 -or
+        $parameterTemplate.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
         Stop-Test 'Private-access and firewall-route JSON template parameters must retain safe defaults.'
     }
     if ($compiledParameters.parameters.privateAccessPublicNetworkPolicyEffect.value -ne 'Audit' -or
@@ -246,7 +247,8 @@ try {
         $compiledParameters.parameters.approvedFirewallResourceId.value -ne '' -or
         $compiledParameters.parameters.approvedFirewallPrivateIp.value -ne '' -or
         @($compiledParameters.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
-        @($compiledParameters.parameters.approvedRouteTablePrefixes.value).Count -ne 0) {
+        @($compiledParameters.parameters.approvedRouteTablePrefixes.value).Count -ne 0 -or
+        $compiledParameters.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
         Stop-Test 'Private-access and firewall-route Bicep template parameters must retain safe defaults.'
     }
 
@@ -2166,13 +2168,15 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($compiledJson.parameters.activityLogExportPolicyEffect.defaultValue -ne 'Disabled' -or
         $compiledJson.parameters.activityLogExportLogsEnabled.defaultValue -ne 'True' -or
         $compiledJson.parameters.resourceDiagnosticsPolicyEffect.defaultValue -ne 'AuditIfNotExists' -or
-        $compiledJson.parameters.resourceDiagnosticsCategoryGroup.defaultValue -ne 'audit') {
+        $compiledJson.parameters.resourceDiagnosticsCategoryGroup.defaultValue -ne 'audit' -or
+        $compiledJson.parameters.deployLoggingRemediationRoleAssignments.defaultValue -ne $false) {
         Stop-Test 'Logging policy parameters must keep safe defaults (Disabled / AuditIfNotExists / audit).'
     }
     if ($armParameterTemplate.parameters.activityLogExportPolicyEffect.value -ne 'Disabled' -or
         $armParameterTemplate.parameters.activityLogExportLogsEnabled.value -ne 'True' -or
         $armParameterTemplate.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
-        $armParameterTemplate.parameters.resourceDiagnosticsCategoryGroup.value -ne 'audit') {
+        $armParameterTemplate.parameters.resourceDiagnosticsCategoryGroup.value -ne 'audit' -or
+        $armParameterTemplate.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
         Stop-Test 'ARM parameter template logging defaults must match the safe baseline values.'
     }
     $expectedActivityDefinitionId = "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '$($logActivityControl.mechanism.definitionId)')]"
@@ -2189,6 +2193,11 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($compiledJson.variables.resourceDiagnosticsPolicySetDefinitionId -ne "[if(equals(parameters('resourceDiagnosticsCategoryGroup'), 'allLogs'), variables('resourceDiagnosticsAllLogsPolicySetDefinitionId'), variables('resourceDiagnosticsAuditPolicySetDefinitionId'))]") {
         Stop-Test 'resourceDiagnosticsCategoryGroup must explicitly choose audit or allLogs built-in initiative IDs.'
     }
+    if ($compiledJson.variables.loggingWorkspaceSubscriptionId -ne "[if(parameters('deployCentralLogAnalytics'), parameters('connectivitySubscriptionId'), variables('existingWorkspaceResourceIdParts')[2])]" -or
+        $compiledJson.variables.loggingWorkspaceResourceGroupName -ne "[if(parameters('deployCentralLogAnalytics'), format('rg-{0}-monitoring', parameters('namePrefix')), variables('existingWorkspaceResourceIdParts')[4])]" -or
+        $compiledJson.variables.loggingWorkspaceName -ne "[if(parameters('deployCentralLogAnalytics'), format('log-{0}-central', parameters('namePrefix')), variables('existingWorkspaceResourceIdParts')[8])]") {
+        Stop-Test 'Logging destination workspace scope/name variables are not correctly wired for new-vs-existing workspace paths.'
+    }
     if ($compiledJson.variables.monitoringContributorRoleDefinitionId -ne @($logActivityControl.roleDefinitionIds)[0] -or
         $compiledJson.variables.logAnalyticsContributorRoleDefinitionId -ne @($logDiagnosticsControl.roleDefinitionIds)[0]) {
         Stop-Test 'Logging remediation role variables must match the verified control-catalog roleDefinitionIds.'
@@ -2203,8 +2212,21 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
         $node.PSObject.Properties['name'] -and $node.name -eq 'assign-resource-diagnostics'
     } | Select-Object -First 1
+    $activityWorkspaceRbacDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'activity-log-workspace-destination-rbac'
+    } | Select-Object -First 1
+    $diagnosticsWorkspaceRbacDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'resource-diagnostics-workspace-destination-rbac'
+    } | Select-Object -First 1
     if (-not $activityDeployment -or -not $diagnosticsDeployment) {
         Stop-Test 'Missing Activity Log or resource diagnostics assignment deployment.'
+    }
+    if (-not $activityWorkspaceRbacDeployment -or -not $diagnosticsWorkspaceRbacDeployment) {
+        Stop-Test 'Missing workspace-scoped destination RBAC deployment for one or both logging assignments.'
     }
     foreach ($loggingDeployment in @($activityDeployment, $diagnosticsDeployment)) {
         if ($loggingDeployment.scope -notmatch 'demoRootManagementGroupId') {
@@ -2229,12 +2251,20 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Compare-Object @("[variables('monitoringContributorRoleDefinitionId')]", "[variables('logAnalyticsContributorRoleDefinitionId')]") @($activityDeployment.properties.parameters.verifiedRoleDefinitionIds.value)) {
         Stop-Test 'Activity Log assignment remediation roles are invalid.'
     }
+    if ($activityDeployment.properties.parameters.deployRemediationRoleAssignments.value -ne "[variables('deployActivityLogRemediationRoleAssignments')]") {
+        Stop-Test 'Activity Log remediation role-assignment gating must be parameterized and explicit.'
+    }
+    if (Compare-Object @(
+        'Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace.'
+    ) @($activityDeployment.properties.parameters.nonComplianceMessages.value | ForEach-Object { $_.message })) {
+        Stop-Test 'Activity Log noncompliance message must match the precise logging export guidance.'
+    }
     $activityWorkspaceExpression = [string]$activityDeployment.properties.parameters.parameters.value.logAnalytics.value
     if ($activityDeployment.properties.parameters.parameters.value.effect.value -ne "[parameters('activityLogExportPolicyEffect')]" -or
         $activityDeployment.properties.parameters.parameters.value.logsEnabled.value -ne "[parameters('activityLogExportLogsEnabled')]" -or
         ($activityWorkspaceExpression -notlike "*reference('centralMonitoring').outputs.effectiveLogAnalyticsWorkspaceResourceId.value*") -or
-        ($activityWorkspaceExpression -notlike "*fail('Activity Log and supported-resource diagnostics assignments require a non-empty effective Log Analytics workspace resource ID*")) {
-        Stop-Test 'Activity Log assignment parameters must be wired to effect/logsEnabled and guarded effective workspace resolution.'
+        ($activityWorkspaceExpression -notlike "*isWorkspaceResourceId*")) {
+        Stop-Test 'Activity Log assignment parameters must be wired to effect/logsEnabled and strict effective workspace resource ID validation.'
     }
     if ($diagnosticsDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('resourceDiagnosticsPolicySetDefinitionId')]") {
         Stop-Test 'Resource diagnostics assignment must use the category-group-selected policy set variable.'
@@ -2245,15 +2275,169 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Compare-Object @("[variables('logAnalyticsContributorRoleDefinitionId')]") @($diagnosticsDeployment.properties.parameters.verifiedRoleDefinitionIds.value)) {
         Stop-Test 'Resource diagnostics assignment remediation roles are invalid.'
     }
+    if ($diagnosticsDeployment.properties.parameters.deployRemediationRoleAssignments.value -ne "[variables('deployResourceDiagnosticsRemediationRoleAssignments')]") {
+        Stop-Test 'Resource diagnostics remediation role-assignment gating must be parameterized and explicit.'
+    }
+    if (Compare-Object @(
+        'Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types.'
+    ) @($diagnosticsDeployment.properties.parameters.nonComplianceMessages.value | ForEach-Object { $_.message })) {
+        Stop-Test 'Resource diagnostics noncompliance message must match the precise logging guidance.'
+    }
     $diagnosticsWorkspaceExpression = [string]$diagnosticsDeployment.properties.parameters.parameters.value.logAnalytics.value
     if ($diagnosticsDeployment.properties.parameters.parameters.value.effect.value -ne "[parameters('resourceDiagnosticsPolicyEffect')]" -or
-        ($diagnosticsWorkspaceExpression -notlike "*reference('centralMonitoring').outputs.effectiveLogAnalyticsWorkspaceResourceId.value*")) {
-        Stop-Test 'Resource diagnostics assignment parameters must be wired to effect and guarded effective workspace inputs.'
+        ($diagnosticsWorkspaceExpression -notlike "*reference('centralMonitoring').outputs.effectiveLogAnalyticsWorkspaceResourceId.value*") -or
+        ($diagnosticsWorkspaceExpression -notlike "*isWorkspaceResourceId*")) {
+        Stop-Test 'Resource diagnostics assignment parameters must be wired to effect and strict effective workspace resource ID validation.'
+    }
+    if ($activityWorkspaceRbacDeployment.condition -ne "[variables('deployActivityLogRemediationRoleAssignments')]" -or
+        $diagnosticsWorkspaceRbacDeployment.condition -ne "[variables('deployResourceDiagnosticsRemediationRoleAssignments')]" -or
+        $activityWorkspaceRbacDeployment.subscriptionId -ne "[variables('loggingWorkspaceSubscriptionId')]" -or
+        $activityWorkspaceRbacDeployment.resourceGroup -ne "[variables('loggingWorkspaceResourceGroupName')]" -or
+        $diagnosticsWorkspaceRbacDeployment.subscriptionId -ne "[variables('loggingWorkspaceSubscriptionId')]" -or
+        $diagnosticsWorkspaceRbacDeployment.resourceGroup -ne "[variables('loggingWorkspaceResourceGroupName')]") {
+        Stop-Test 'Workspace destination RBAC deployments must be explicitly gated and scoped to the resolved destination workspace location.'
+    }
+    if ($activityWorkspaceRbacDeployment.properties.parameters.workspaceName.value -ne "[variables('loggingWorkspaceName')]" -or
+        $diagnosticsWorkspaceRbacDeployment.properties.parameters.workspaceName.value -ne "[variables('loggingWorkspaceName')]") {
+        Stop-Test 'Workspace destination RBAC deployments must target the resolved destination workspace name.'
+    }
+    if ($activityWorkspaceRbacDeployment.properties.template.resources.remediationRoleAssignments.scope -ne "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]" -or
+        $activityWorkspaceRbacDeployment.properties.template.resources.remediationRoleAssignments.properties.roleDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/roleDefinitions', parameters('roleDefinitionIds')[copyIndex()])]") {
+        Stop-Test 'Workspace destination RBAC must grant role assignments at the workspace scope using built-in role IDs.'
     }
     if ($compiledJson.outputs.loggingAssignments.value.activityLogExport.effect -ne "[parameters('activityLogExportPolicyEffect')]" -or
         $compiledJson.outputs.loggingAssignments.value.resourceDiagnostics.effect -ne "[parameters('resourceDiagnosticsPolicyEffect')]" -or
-        $compiledJson.outputs.loggingAssignments.value.resourceDiagnostics.categoryGroup -ne "[parameters('resourceDiagnosticsCategoryGroup')]") {
-        Stop-Test 'loggingAssignments output must expose configured effects and diagnostic category-group.'
+        $compiledJson.outputs.loggingAssignments.value.resourceDiagnostics.categoryGroup -ne "[parameters('resourceDiagnosticsCategoryGroup')]" -or
+        $compiledJson.outputs.loggingAssignments.value.activityLogExport.workspaceDestinationRoleAssignmentIds -ne "[if(variables('deployActivityLogRemediationRoleAssignments'), reference('activityLogWorkspaceDestinationRbac').outputs.roleAssignmentIds.value, createArray())]" -or
+        $compiledJson.outputs.loggingAssignments.value.resourceDiagnostics.workspaceDestinationRoleAssignmentIds -ne "[if(variables('deployResourceDiagnosticsRemediationRoleAssignments'), reference('resourceDiagnosticsWorkspaceDestinationRbac').outputs.roleAssignmentIds.value, createArray())]") {
+        Stop-Test 'loggingAssignments output must expose effects, category-group, and gated workspace destination-role assignment outputs.'
+    }
+    Write-Host '    Confirm mirrored logging compile-matrix coverage across enabled/disabled effects, workspace paths, and category-group modes...'
+    $loggingCases = @(
+        @{
+            Name = 'disabled-empty-default'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = ''
+            activityLogExportPolicyEffect = 'Disabled'
+            resourceDiagnosticsPolicyEffect = 'Disabled'
+            resourceDiagnosticsCategoryGroup = 'audit'
+            deployRoleAssignments = $false
+            deployLoggingRemediationRoleAssignments = $false
+        },
+        @{
+            Name = 'activity-deploy-existing-valid'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+            activityLogExportPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsPolicyEffect = 'Disabled'
+            resourceDiagnosticsCategoryGroup = 'audit'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'diagnostics-deploy-existing-alllogs'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+            activityLogExportPolicyEffect = 'Disabled'
+            resourceDiagnosticsPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsCategoryGroup = 'allLogs'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'diagnostics-auditif-existing'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+            activityLogExportPolicyEffect = 'Disabled'
+            resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
+            resourceDiagnosticsCategoryGroup = 'audit'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'new-workspace-both-deploy'
+            deployCentralLogAnalytics = $true
+            existingLogAnalyticsWorkspaceResourceId = ''
+            activityLogExportPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsCategoryGroup = 'allLogs'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'enabled-empty-existing-id'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = ''
+            activityLogExportPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
+            resourceDiagnosticsCategoryGroup = 'audit'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'enabled-malformed-existing-id'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/'
+            activityLogExportPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsCategoryGroup = 'audit'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'enabled-wrong-type-existing-id'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.Storage/storageAccounts/not-a-workspace'
+            activityLogExportPolicyEffect = 'Disabled'
+            resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
+            resourceDiagnosticsCategoryGroup = 'allLogs'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        }
+    )
+    $workspaceModes = [System.Collections.Generic.HashSet[string]]::new()
+    $categoryModes = [System.Collections.Generic.HashSet[string]]::new()
+    $effectStates = [System.Collections.Generic.HashSet[string]]::new()
+    $loggingParameterTemplateText = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/main.template.bicepparam') -Raw
+    foreach ($loggingCase in $loggingCases) {
+        $caseParametersPath = Join-Path $TempDir ("logging-" + $loggingCase.Name + '.bicepparam')
+        $caseText = $loggingParameterTemplateText -replace "(?m)^using '\.\./main\.bicep'$", "using '../../main.bicep'"
+        foreach ($property in @('deployCentralLogAnalytics', 'existingLogAnalyticsWorkspaceResourceId', 'activityLogExportPolicyEffect', 'resourceDiagnosticsPolicyEffect', 'resourceDiagnosticsCategoryGroup', 'deployRoleAssignments', 'deployLoggingRemediationRoleAssignments')) {
+            $value = $loggingCase.$property
+            $valueLiteral = if ($value -is [bool]) { $value.ToString().ToLowerInvariant() } else { "'$value'" }
+            $caseText = $caseText -replace "(?m)^param $property = .*$", "param $property = $valueLiteral"
+        }
+        Set-Content -LiteralPath $caseParametersPath -Value $caseText
+        & az bicep build-params --file $caseParametersPath --outfile "$caseParametersPath.json"
+        if ($LASTEXITCODE -ne 0) { Stop-Test "Logging matrix case $($loggingCase.Name) failed to compile." }
+        $caseParameters = Get-Content -LiteralPath "$caseParametersPath.json" -Raw | ConvertFrom-Json
+        foreach ($property in @('deployCentralLogAnalytics', 'existingLogAnalyticsWorkspaceResourceId', 'activityLogExportPolicyEffect', 'resourceDiagnosticsPolicyEffect', 'resourceDiagnosticsCategoryGroup', 'deployRoleAssignments', 'deployLoggingRemediationRoleAssignments')) {
+            if ($caseParameters.parameters.$property.value -cne $loggingCase.$property) {
+                Stop-Test "Logging matrix case $($loggingCase.Name) did not compile expected parameter value for $property."
+            }
+        }
+        if ($loggingCase.deployCentralLogAnalytics) {
+            [void]$workspaceModes.Add('new')
+        } elseif ([string]::IsNullOrEmpty($loggingCase.existingLogAnalyticsWorkspaceResourceId)) {
+            [void]$workspaceModes.Add('empty')
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central') {
+            [void]$workspaceModes.Add('existing-valid')
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq '/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/') {
+            [void]$workspaceModes.Add('existing-malformed')
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.Storage/storageAccounts/not-a-workspace') {
+            [void]$workspaceModes.Add('existing-wrong-type')
+        }
+        [void]$categoryModes.Add($loggingCase.resourceDiagnosticsCategoryGroup)
+        [void]$effectStates.Add("$($loggingCase.activityLogExportPolicyEffect)|$($loggingCase.resourceDiagnosticsPolicyEffect)")
+    }
+    if (Compare-Object @($workspaceModes) @('new', 'empty', 'existing-valid', 'existing-malformed', 'existing-wrong-type')) {
+        Stop-Test 'Logging matrix coverage must include new, empty, valid-existing, malformed-existing, and wrong-type-existing workspace paths.'
+    }
+    if (Compare-Object @($categoryModes) @('audit', 'allLogs')) {
+        Stop-Test 'Logging matrix coverage must include both resourceDiagnosticsCategoryGroup values: audit and allLogs.'
+    }
+    if (-not $effectStates.Contains('Disabled|Disabled') -or -not $effectStates.Contains('DeployIfNotExists|DeployIfNotExists')) {
+        Stop-Test 'Logging matrix coverage must include both fully disabled and fully remediation-enabled effect combinations.'
     }
 
     Write-Host ''

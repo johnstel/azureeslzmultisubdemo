@@ -300,12 +300,19 @@ supplied existing workspace, even if the names happen to collide.
 
 The demo root also assigns two remediation-capable built-ins for Activity Log
 and supported-resource diagnostics export. Both assignments use
-system-assigned identities with only the verified built-in least-privilege
-roles and never start remediation tasks automatically. They consume the same
-effective workspace ID output used by central monitoring. If either assignment
-effect is enabled (`DeployIfNotExists` for Activity Logs or
-`AuditIfNotExists`/`DeployIfNotExists` for resource diagnostics) without a
-usable effective workspace ID, template validation fails explicitly.
+system-assigned identities and never start remediation tasks automatically.
+They consume the same effective workspace ID output used by central
+monitoring. If either assignment effect is enabled (`DeployIfNotExists` for
+Activity Logs or `AuditIfNotExists`/`DeployIfNotExists` for resource
+diagnostics) without a valid effective workspace ID in the exact form
+`/subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>`,
+template validation fails explicitly.
+
+Remediation RBAC grants for these logging assignments are separately opt-in.
+Set both `deployRoleAssignments=true` and
+`deployLoggingRemediationRoleAssignments=true` to allow role assignment
+creation. In audit/disabled modes, no logging remediation-role grants are
+created.
 
 `resourceDiagnosticsCategoryGroup` selects the built-in initiative profile:
 `audit` (default) or `allLogs`. Coverage is limited to the resource types

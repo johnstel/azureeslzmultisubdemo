@@ -6,6 +6,7 @@ func isGuid(value string) bool => length(value) == 36 ? substring(value, 8, 1) =
 func isIpv4(value string) bool => length(split(value, '.')) == 4 && value == trim(value) && !empty(value) && empty(filter(split(value, '.'), octet => empty(octet) || !empty(stripDigits(octet)) || int(octet) > 255))
 func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(first(split(value, '/'))) && !empty(last(split(value, '/'))) && empty(stripDigits(last(split(value, '/')))) && int(last(split(value, '/'))) >= 0 && int(last(split(value, '/'))) <= 32
 func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
+func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && !empty(trim(split(value, '/')[8])) && value == trim(value)
 
 @description('Azure region used only to store tenant deployment metadata.')
 param deploymentLocation string = 'eastus'
@@ -262,6 +263,9 @@ param resourceDiagnosticsPolicyEffect string = 'AuditIfNotExists'
 ])
 param resourceDiagnosticsCategoryGroup string = 'audit'
 
+@description('Set true only when you intentionally want policy-assignment identities to receive remediation RBAC grants for logging exports. Requires deployRoleAssignments=true.')
+param deployLoggingRemediationRoleAssignments bool = false
+
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
@@ -302,11 +306,22 @@ var resourceDiagnosticsPolicySetDefinitionId = resourceDiagnosticsCategoryGroup 
 var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var monitoringContributorRoleDefinitionId = '749f88d5-cbae-40b8-bcfc-e573ddc772fa'
 var logAnalyticsContributorRoleDefinitionId = '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
+var placeholderWorkspaceResourceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.OperationalInsights/workspaces/placeholder'
+var existingWorkspaceResourceIdParts = split(!empty(existingLogAnalyticsWorkspaceResourceId) ? existingLogAnalyticsWorkspaceResourceId : placeholderWorkspaceResourceId, '/')
 var effectiveMonitoringWorkspaceResourceId = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
-var loggingPoliciesRequireWorkspace = (activityLogExportPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'AuditIfNotExists') && empty(effectiveMonitoringWorkspaceResourceId)
+var loggingAssignmentsRequireWorkspace = activityLogExportPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'AuditIfNotExists'
+var effectiveMonitoringWorkspaceIdIsValid = isWorkspaceResourceId(effectiveMonitoringWorkspaceResourceId)
+var loggingPoliciesRequireWorkspace = loggingAssignmentsRequireWorkspace && !effectiveMonitoringWorkspaceIdIsValid
 var validatedLoggingWorkspaceResourceId = loggingPoliciesRequireWorkspace
-  ? fail('Activity Log and supported-resource diagnostics assignments require a non-empty effective Log Analytics workspace resource ID. Set existingLogAnalyticsWorkspaceResourceId or deployCentralLogAnalytics=true before enabling these effects.')
+  ? fail('Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID in the exact form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>. Set existingLogAnalyticsWorkspaceResourceId or deployCentralLogAnalytics=true before enabling these effects.')
   : effectiveMonitoringWorkspaceResourceId
+var activityLogRemediationDeployRequested = activityLogExportPolicyEffect == 'DeployIfNotExists'
+var resourceDiagnosticsRemediationDeployRequested = resourceDiagnosticsPolicyEffect == 'DeployIfNotExists'
+var deployActivityLogRemediationRoleAssignments = deployRoleAssignments && deployLoggingRemediationRoleAssignments && activityLogRemediationDeployRequested
+var deployResourceDiagnosticsRemediationRoleAssignments = deployRoleAssignments && deployLoggingRemediationRoleAssignments && resourceDiagnosticsRemediationDeployRequested
+var loggingWorkspaceSubscriptionId = deployCentralLogAnalytics ? connectivitySubscriptionId : existingWorkspaceResourceIdParts[2]
+var loggingWorkspaceResourceGroupName = deployCentralLogAnalytics ? 'rg-${namePrefix}-monitoring' : existingWorkspaceResourceIdParts[4]
+var loggingWorkspaceName = deployCentralLogAnalytics ? 'log-${namePrefix}-central' : existingWorkspaceResourceIdParts[8]
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -889,6 +904,7 @@ module activityLogExportAssignment 'modules/remediating-policy-assignment.bicep'
       monitoringContributorRoleDefinitionId
       logAnalyticsContributorRoleDefinitionId
     ]
+    deployRemediationRoleAssignments: deployActivityLogRemediationRoleAssignments
     enforcementMode: denyPolicyEnforcementMode
     parameters: {
       effect: {
@@ -901,6 +917,11 @@ module activityLogExportAssignment 'modules/remediating-policy-assignment.bicep'
         value: validatedLoggingWorkspaceResourceId
       }
     }
+    nonComplianceMessages: [
+      {
+        message: 'Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace.'
+      }
+    ]
   }
   dependsOn: [
     hierarchy
@@ -923,6 +944,7 @@ module resourceDiagnosticsAssignment 'modules/remediating-policy-assignment.bice
     verifiedRoleDefinitionIds: [
       logAnalyticsContributorRoleDefinitionId
     ]
+    deployRemediationRoleAssignments: deployResourceDiagnosticsRemediationRoleAssignments
     enforcementMode: denyPolicyEnforcementMode
     parameters: {
       effect: {
@@ -932,10 +954,40 @@ module resourceDiagnosticsAssignment 'modules/remediating-policy-assignment.bice
         value: validatedLoggingWorkspaceResourceId
       }
     }
+    nonComplianceMessages: [
+      {
+        message: 'Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types.'
+      }
+    ]
   }
   dependsOn: [
     hierarchy
   ]
+}
+
+module activityLogWorkspaceDestinationRbac 'modules/workspace-remediation-rbac.bicep' = if (deployActivityLogRemediationRoleAssignments) {
+  name: 'activity-log-workspace-destination-rbac'
+  scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
+  params: {
+    workspaceName: loggingWorkspaceName
+    principalId: activityLogExportAssignment.outputs.identityPrincipalId
+    roleDefinitionIds: [
+      monitoringContributorRoleDefinitionId
+      logAnalyticsContributorRoleDefinitionId
+    ]
+  }
+}
+
+module resourceDiagnosticsWorkspaceDestinationRbac 'modules/workspace-remediation-rbac.bicep' = if (deployResourceDiagnosticsRemediationRoleAssignments) {
+  name: 'resource-diagnostics-workspace-destination-rbac'
+  scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
+  params: {
+    workspaceName: loggingWorkspaceName
+    principalId: resourceDiagnosticsAssignment.outputs.identityPrincipalId
+    roleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+  }
 }
 
 module managementGroupRbac 'modules/management-group-rbac.bicep' = if (deployRoleAssignments) {
@@ -1052,12 +1104,16 @@ output loggingAssignments object = {
     policyAssignmentId: activityLogExportAssignment.outputs.policyAssignmentId
     identityPrincipalId: activityLogExportAssignment.outputs.identityPrincipalId
     roleAssignmentIds: activityLogExportAssignment.outputs.roleAssignmentIds
+    remediationRoleAssignmentIds: activityLogExportAssignment.outputs.roleAssignmentIds
+    workspaceDestinationRoleAssignmentIds: deployActivityLogRemediationRoleAssignments ? activityLogWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
     effect: activityLogExportPolicyEffect
   }
   resourceDiagnostics: {
     policyAssignmentId: resourceDiagnosticsAssignment.outputs.policyAssignmentId
     identityPrincipalId: resourceDiagnosticsAssignment.outputs.identityPrincipalId
     roleAssignmentIds: resourceDiagnosticsAssignment.outputs.roleAssignmentIds
+    remediationRoleAssignmentIds: resourceDiagnosticsAssignment.outputs.roleAssignmentIds
+    workspaceDestinationRoleAssignmentIds: deployResourceDiagnosticsRemediationRoleAssignments ? resourceDiagnosticsWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
     effect: resourceDiagnosticsPolicyEffect
     categoryGroup: resourceDiagnosticsCategoryGroup
     policySetDefinitionId: resourceDiagnosticsPolicySetDefinitionId
