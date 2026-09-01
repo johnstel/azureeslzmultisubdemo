@@ -50,6 +50,8 @@ jq -e '
   ["CostCenter", "ApplicationName", "Owner", "Environment", "DataClassification", "SSP-ID"] as $requiredTags |
   deployment("resource-group-tags-initiative") as $initiative |
   deployment("assign-resource-group-tags") as $assignment |
+  deployment("tag-inheritance-initiative") as $inheritanceInitiative |
+  deployment("assign-tag-inheritance") as $inheritanceAssignment |
   deployment("connectivity-evidence") as $connectivityEvidence |
   deployment("workload-evidence") as $workloadEvidence |
   ($initiative.properties.parameters.policyDefinitionReferences.value |
@@ -69,11 +71,43 @@ jq -e '
   all($assignment.properties.parameters.nonComplianceMessages.value[];
     $tagsByReference[.policyDefinitionReferenceId] as $tag |
     $tag != null and .message == "Resource groups must include the \($tag) tag.") and
+  ($inheritanceInitiative.properties.parameters.policyDefinitionReferences.value | length) == 6 and
+  ($inheritanceInitiative.properties.parameters.policyDefinitionReferences.value | map(.parameters.tagName.value) | sort) ==
+    ($requiredTags | sort) and
+  ([$inheritanceInitiative.properties.parameters.policyDefinitionReferences.value[].policyDefinitionId] | unique) ==
+    ["[variables(\u0027inheritResourceGroupTagPolicyDefinitionId\u0027)]"] and
+  all($inheritanceInitiative.properties.parameters.policyDefinitionReferences.value[];
+    .definitionVersion == "1.*.*" and (.policyDefinitionReferenceId | startswith("inherit-"))) and
+  ($inheritanceInitiative.scope | contains("demoRootManagementGroupId")) and
+  ($inheritanceAssignment.scope | contains("landingZonesManagementGroupId")) and
+  $inheritanceAssignment.properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
+  $inheritanceAssignment.properties.parameters.identity.value == {"type": "SystemAssigned"} and
+  $inheritanceAssignment.properties.parameters.verifiedRoleDefinitionIds.value ==
+    ["[variables(\u0027contributorRoleDefinitionId\u0027)]"] and
+  $inheritanceAssignment.properties.parameters.enforcementMode.value ==
+    "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  ([.. | objects | select(.type? == "Microsoft.PolicyInsights/remediations")] | length) == 0 and
+  .outputs.tagInheritanceRemediation.value.remediationStarted == false and
   (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
   (first($workloadEvidence.properties.template.resources[] |
     select(.type == "Microsoft.Resources/resourceGroups")).tags | keys | sort) == ($requiredTags | sort)
 ' "${TEMP_DIR}/main.json" >/dev/null || {
-  printf 'ERROR: Required resource-group tag initiative or evidence tags are invalid.\n' >&2
+  printf 'ERROR: Required resource-group tag controls, remediation safety, or evidence tags are invalid.\n' >&2
+  exit 1
+}
+jq -e '
+  [.controls[] | select(.id | test("^REQ-TAG-(0[7-9]|1[0-2])$"))] as $controls |
+  ($controls | length) == 6 and
+  all($controls[];
+    .mechanism.definitionId == "ea3f2387-9b95-492a-a190-fcdc54f7b070" and
+    .mechanism.verificationMethod == "raw-json" and
+    .supportedEffects == ["Modify"] and
+    .roleDefinitionIds == ["b24988ac-6180-42a0-ab88-20f7382dd24c"] and
+    .remediationIdentityRequired == true and
+    (.notes | contains("only adds a missing tag")) and
+    (.notes | contains("never overwrites an existing tag value")))
+' "${PROJECT_DIR}/policy/control-catalog.json" >/dev/null || {
+  printf 'ERROR: Verified built-in Modify semantics for tag inheritance are invalid.\n' >&2
   exit 1
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"

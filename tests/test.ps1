@@ -201,6 +201,66 @@ try {
             }
         }
     }
+    $inheritanceInitiative = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'tag-inheritance-initiative'
+    } | Select-Object -First 1
+    $inheritanceAssignment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-tag-inheritance'
+    } | Select-Object -First 1
+    if ($null -eq $inheritanceInitiative -or $null -eq $inheritanceAssignment) {
+        Stop-Test 'Tag-inheritance initiative or remediating assignment deployment is missing.'
+    }
+    $inheritanceReferences = @($inheritanceInitiative.properties.parameters.policyDefinitionReferences.value)
+    if ($inheritanceReferences.Count -ne 6 -or
+        (Compare-Object -ReferenceObject $requiredTags -DifferenceObject @($inheritanceReferences.parameters.tagName.value) -CaseSensitive)) {
+        Stop-Test 'Tag-inheritance initiative must contain the exact six case-sensitive tag names.'
+    }
+    foreach ($inheritanceReference in $inheritanceReferences) {
+        if ($inheritanceReference.policyDefinitionId -cne "[variables('inheritResourceGroupTagPolicyDefinitionId')]" -or
+            $inheritanceReference.definitionVersion -cne '1.*.*' -or
+            -not $inheritanceReference.policyDefinitionReferenceId.StartsWith('inherit-')) {
+            Stop-Test 'Every tag-inheritance control must use the pinned verified built-in and a stable reference ID.'
+        }
+    }
+    if (-not $inheritanceInitiative.scope.Contains('demoRootManagementGroupId') -or
+        -not $inheritanceAssignment.scope.Contains('landingZonesManagementGroupId') -or
+        $inheritanceAssignment.properties.parameters.location.value -cne "[parameters('deploymentLocation')]" -or
+        $inheritanceAssignment.properties.parameters.identity.value.type -cne 'SystemAssigned' -or
+        @($inheritanceAssignment.properties.parameters.verifiedRoleDefinitionIds.value).Count -ne 1 -or
+        $inheritanceAssignment.properties.parameters.verifiedRoleDefinitionIds.value[0] -cne "[variables('contributorRoleDefinitionId')]" -or
+        $inheritanceAssignment.properties.parameters.enforcementMode.value -cne "[parameters('denyPolicyEnforcementMode')]") {
+        Stop-Test 'Tag-inheritance scope, identity, location, role, or safe enforcement wiring is invalid.'
+    }
+    $remediationResources = @(Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.PolicyInsights/remediations'
+    })
+    if ($remediationResources.Count -ne 0 -or
+        $compiledJson.outputs.tagInheritanceRemediation.value.remediationStarted -ne $false) {
+        Stop-Test 'The safe template must expose remediation inputs without starting a remediation task.'
+    }
+    $catalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
+    $inheritanceControls = @($catalog.controls | Where-Object { $_.id -match '^REQ-TAG-(0[7-9]|1[0-2])$' })
+    if ($inheritanceControls.Count -ne 6) {
+        Stop-Test 'The control catalog must contain all six tag-inheritance controls.'
+    }
+    foreach ($inheritanceControl in $inheritanceControls) {
+        if ($inheritanceControl.mechanism.definitionId -cne 'ea3f2387-9b95-492a-a190-fcdc54f7b070' -or
+            $inheritanceControl.mechanism.verificationMethod -cne 'raw-json' -or
+            @($inheritanceControl.supportedEffects).Count -ne 1 -or
+            $inheritanceControl.supportedEffects[0] -cne 'Modify' -or
+            @($inheritanceControl.roleDefinitionIds).Count -ne 1 -or
+            $inheritanceControl.roleDefinitionIds[0] -cne 'b24988ac-6180-42a0-ab88-20f7382dd24c' -or
+            $inheritanceControl.remediationIdentityRequired -ne $true -or
+            -not $inheritanceControl.notes.Contains('only adds a missing tag') -or
+            -not $inheritanceControl.notes.Contains('never overwrites an existing tag value')) {
+            Stop-Test "Verified built-in Modify semantics are invalid for $($inheritanceControl.id)."
+        }
+    }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
     Write-Host '3/24 Validate both parameter templates...'

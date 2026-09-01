@@ -60,6 +60,7 @@ root:
 | Demo root | Customer deployment-restrictions initiative: `eastus`/`eastus2`, approved resource types and VM SKUs, managed disks, and public IP creation | Deny members in `DoNotEnforce`; audit members remain Audit |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Landing Zones | Require `CostCenter`, `ApplicationName`, `Owner`, `Environment`, `DataClassification`, and `SSP-ID` tags on resource groups | Initiative assignment in `DoNotEnforce` |
+| Landing Zones | Inherit those six tags to taggable child resources only when missing | Modify initiative assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
 | Demo root | Microsoft cloud security benchmark (built-in initiative, enabled by default) | Assignment in `DoNotEnforce` |
 | Demo root | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
@@ -74,6 +75,52 @@ assigned at Landing Zones. Change
 policy impact. The resource-group tagging initiative composes six instances of
 Azure's built-in **Require a tag on resource groups** definition and provides a
 tag-specific noncompliance message for each requirement.
+
+The companion tag-inheritance initiative composes six instances of the verified
+**Inherit a tag from the resource group if missing** built-in
+(`ea3f2387-9b95-492a-a190-fcdc54f7b070`). Its `Indexed` mode limits evaluation
+to taggable resources. Each `Modify` operation adds only an absent tag whose
+resource-group value is non-empty, so an existing resource value always wins.
+The Landing Zones assignment has a system-assigned identity in
+`deploymentLocation` and the built-in's verified Contributor role. It inherits
+the safe `DoNotEnforce` default and creates no remediation task.
+
+### Deliberately remediate existing resource tags
+
+After deployment and review, the `tagInheritanceRemediation` output provides the
+assignment ID and six definition reference IDs. Starting remediation remains a
+separate operator action. Confirm the Landing Zones management-group ID, wait
+for the assignment identity's role to propagate, and run one task per reference:
+
+```bash
+LANDING_ZONES_MG='<namePrefix>-landingzones'
+ASSIGNMENT_ID='<tagInheritanceRemediation.policyAssignmentId>'
+for reference in inherit-cost-center inherit-application-name inherit-owner inherit-environment inherit-data-classification inherit-ssp-id; do
+  az policy remediation create \
+    --management-group "${LANDING_ZONES_MG}" \
+    --name "tag-${reference}" \
+    --policy-assignment "${ASSIGNMENT_ID}" \
+    --definition-reference-id "${reference}"
+done
+```
+
+```powershell
+$landingZonesManagementGroup = '<namePrefix>-landingzones'
+$assignmentId = '<tagInheritanceRemediation.policyAssignmentId>'
+'inherit-cost-center', 'inherit-application-name', 'inherit-owner',
+'inherit-environment', 'inherit-data-classification', 'inherit-ssp-id' |
+    ForEach-Object {
+        az policy remediation create `
+            --management-group $landingZonesManagementGroup `
+            --name "tag-$_" `
+            --policy-assignment $assignmentId `
+            --definition-reference-id $_
+    }
+```
+
+Review compliance and the intended scope before running these commands. Do not
+substitute a different policy or role: these tasks only add missing values and
+must not overwrite customer-supplied resource tags.
 
 The customer-control profile is separate from the broader safe demo location
 profile. Its `customerAllowedLocations`, `customerAllowedResourceTypes`, and

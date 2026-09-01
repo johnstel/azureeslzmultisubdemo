@@ -207,7 +207,23 @@ and replacement initiative/assignment. Only then does it require
 `REMOVE-LEGACY-RG-TAG-POLICY` and the interactive
 `<tenantId>/<namePrefix>-<workloadArchetype>` confirmation.
 
-## 10. Teardown
+## 10. Deliberately remediate existing resource tags
+
+Skip this section unless policy owners have approved changing existing
+resources.
+
+- [ ] The `tagInheritanceRemediation` output contains the expected Landing
+      Zones assignment ID and all six `inherit-*` definition reference IDs.
+- [ ] Compliance results show only taggable resources with missing tags whose
+      resource groups contain the corresponding non-empty values.
+- [ ] The assignment identity's Contributor role has propagated.
+- [ ] Policy owners approved one remediation task per definition reference ID.
+- [ ] The commands in the README were run deliberately; deployment itself
+      started no remediation task.
+- [ ] Existing resource tag values were sampled afterward and remained
+      unchanged.
+
+## 11. Teardown
 
 Preview:
 
