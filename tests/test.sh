@@ -1563,8 +1563,8 @@ jq -e '
   .resources as $resources |
   ($resources | map(select(.name == "data-protection-initiative")) | first) as $initiative |
   ($resources | map(select(.name == "assign-data-protection")) | first) as $assignment |
-  ($initiative.scope | contains("demoRootManagementGroupId")) and
-  ($assignment.scope | contains("landingZonesManagementGroupId")) and
+  ($initiative.scope == "[format(\u0027Microsoft.Management/managementGroups/{0}\u0027, variables(\u0027demoRootManagementGroupId\u0027))]") and
+  ($assignment.scope == "[format(\u0027Microsoft.Management/managementGroups/{0}\u0027, variables(\u0027landingZonesManagementGroupId\u0027))]") and
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == [
     "key-vault-deletion-protection",
     "key-vault-diagnostics-readiness",
@@ -1725,17 +1725,36 @@ jq -e '
 }
 
 # Restricting public access must never be implemented by deploying a Key Vault,
-# private endpoint, or private DNS zone in this template.
+# a key, a private endpoint, or a private DNS zone in this template, and the
+# data-protection controls must never request a managed identity (which would
+# imply remediation rights or paid/data-plane changes).
 prohibited_data_protection_types="$(jq -r '
   [.. | objects
     | select((.type? | type) == "string")
     | select(.apiVersion?)
-    | select(.type | test("^Microsoft\\.(KeyVault/vaults|Network/(privateEndpoints|privateDnsZones))$"; "i"))
+    | select(.type | test("^Microsoft\\.(KeyVault/vaults(/keys|/secrets)?|Network/(privateEndpoints|privateDnsZones))$"; "i"))
     | .type
   ] | unique | .[]
 ' "${TEMP_DIR}/main.json")"
 [[ -z "${prohibited_data_protection_types}" ]] || {
-  printf 'ERROR: The data-protection controls must not declare a Key Vault, private endpoint, or private DNS zone.\n' >&2
+  printf 'ERROR: The data-protection controls must not declare a Key Vault, key, secret, private endpoint, or private DNS zone.\n' >&2
+  exit 1
+}
+jq -e '
+  .resources as $resources |
+  [$resources[] | select(.name == "data-protection-initiative" or .name == "assign-data-protection")] as $deployments |
+  ($deployments | length) == 2 and
+  ($deployments | all(has("identity") | not)) and
+  ([$deployments[] | .properties.template.resources[]] | length) == 2 and
+  ([$deployments[] | .properties.template.resources[] | .type] | sort) == [
+    "Microsoft.Authorization/policyAssignments",
+    "Microsoft.Authorization/policySetDefinitions"
+  ] and
+  ([$deployments[] | .properties.template.resources[]] | all((has("identity") | not) and (has("location") | not))) and
+  ([$deployments[] | .properties.template.resources[]]
+    | all(.type | test("^Microsoft\\.(ManagedIdentity|KeyVault|Storage|Network|OperationalInsights)/"; "i") | not))
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The data-protection initiative and assignment must declare only policy resources with no system-assigned or user-assigned identity.\n' >&2
   exit 1
 }
 jq -e '

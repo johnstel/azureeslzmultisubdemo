@@ -2066,10 +2066,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($dataProtectionInitiative.Count -ne 1 -or $dataProtectionAssignment.Count -ne 1) {
         Stop-Test 'Expected exactly one data-protection initiative and one data-protection assignment.'
     }
-    if (-not $dataProtectionInitiative[0].scope.Contains('demoRootManagementGroupId')) {
+    if ($dataProtectionInitiative[0].scope -cne "[format('Microsoft.Management/managementGroups/{0}', variables('demoRootManagementGroupId'))]") {
         Stop-Test 'The data-protection initiative must be created at the dedicated demo root.'
     }
-    if (-not $dataProtectionAssignment[0].scope.Contains('landingZonesManagementGroupId')) {
+    if ($dataProtectionAssignment[0].scope -cne "[format('Microsoft.Management/managementGroups/{0}', variables('landingZonesManagementGroupId'))]") {
         Stop-Test 'The data-protection initiative must be assigned at the Landing Zones management group.'
     }
 
@@ -2226,16 +2226,40 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     }
 
     # Restricting public access must never be implemented by deploying a Key
-    # Vault, private endpoint, or private DNS zone in this template.
+    # Vault, a key, a private endpoint, or a private DNS zone in this template,
+    # and the data-protection controls must never request a managed identity
+    # (which would imply remediation rights or paid/data-plane changes).
     $prohibitedDataProtectionResources = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and
         $node.PSObject.Properties['apiVersion'] -and
         ($node.type -is [string]) -and
-        ($node.type -match '^Microsoft\.(KeyVault/vaults|Network/(privateEndpoints|privateDnsZones))$')
+        ($node.type -match '^Microsoft\.(KeyVault/vaults(/keys|/secrets)?|Network/(privateEndpoints|privateDnsZones))$')
     }
     if (@($prohibitedDataProtectionResources).Count -ne 0) {
-        Stop-Test 'The data-protection controls must not declare a Key Vault, private endpoint, or private DNS zone.'
+        Stop-Test 'The data-protection controls must not declare a Key Vault, key, secret, private endpoint, or private DNS zone.'
+    }
+    $dataProtectionDeployments = @($dataProtectionInitiative[0], $dataProtectionAssignment[0])
+    # Compiled nested templates use symbolic-name resource maps, so the nested
+    # resources are enumerated as property values rather than array elements.
+    $dataProtectionNestedResources = @($dataProtectionDeployments | ForEach-Object {
+        $nested = $_.properties.template.resources
+        if ($nested -is [System.Collections.IEnumerable] -and $nested -isnot [string]) { $nested } else { $nested.PSObject.Properties.Value }
+    })
+    if (@($dataProtectionNestedResources).Count -ne 2 -or
+        (Compare-Object @($dataProtectionNestedResources | ForEach-Object { $_.type } | Sort-Object) @(
+            'Microsoft.Authorization/policyAssignments',
+            'Microsoft.Authorization/policySetDefinitions'))) {
+        Stop-Test 'The data-protection initiative and assignment must declare only policy resources.'
+    }
+    foreach ($dataProtectionResource in ($dataProtectionDeployments + $dataProtectionNestedResources)) {
+        if ($dataProtectionResource.PSObject.Properties['identity']) {
+            Stop-Test 'The data-protection initiative and assignment must not request a system-assigned or user-assigned identity.'
+        }
+        if ($dataProtectionResource.PSObject.Properties['type'] -and
+            $dataProtectionResource.type -match '^Microsoft\.(ManagedIdentity|KeyVault|Storage|Network|OperationalInsights)/') {
+            Stop-Test "The data-protection controls must not declare $($dataProtectionResource.type)."
+        }
     }
 
     Write-Host ''
