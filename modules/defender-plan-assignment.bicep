@@ -1,16 +1,43 @@
 targetScope = 'managementGroup'
 
-// Dedicated, narrow-purpose module for optional Microsoft Defender for Cloud
-// plan assignments (REQ-DEF-02/03/04). These built-in policy definitions are
-// DeployIfNotExists-capable, so Azure Policy requires the assignment to carry
-// a managed identity even while the safe default keeps the resolved effect
-// at Disabled. The verified built-in role each definition requires for
-// remediation (Owner) is intentionally excluded from this repository's
-// automatic RBAC granting (see modules/remediating-policy-assignment.bicep),
-// so this module never assigns any role to the identity it creates. A
-// customer who explicitly opts in to a paid plan must manually grant the
-// Owner role to the identity's principal ID (exposed as an output) before
-// the DeployIfNotExists effect can successfully remediate.
+// Dedicated, narrow-purpose module for the Microsoft Defender for Cloud plan
+// governance markers (REQ-DEF-02/03/04). These built-in policy definitions
+// are DeployIfNotExists-capable and their only verified remediation role is
+// Owner. This repository's shared RBAC modules deliberately refuse to grant
+// Owner or User Access Administrator automatically (see
+// modules/remediating-policy-assignment.bicep), and a single management-
+// group-scoped identity inherited across every descendant subscription is
+// too broad a blast radius to grant Owner to without a separately approved,
+// time-bounded workflow that is out of scope for this demo template. So
+// this module keeps these controls "manual-evidence" (see
+// policy/control-catalog.json): the assignment's effect is always Disabled
+// and it never creates a managed identity, meaning normal deployment of
+// this template can never create or leave standing Owner access anywhere.
+// Actually enabling a plan is an independent action a customer takes
+// directly against Microsoft Defender for Cloud (Azure Portal or
+// `az security pricing create`), entirely outside this template; that
+// action, and any role grants Microsoft's own tooling then requires, remain
+// the customer's responsibility.
+//
+// policyDefinitionId/definitionVersion are intentionally not accepted as
+// free-text parameters. The `plan` parameter is restricted to the three
+// verified built-in plans below so this module can never be pointed at an
+// unverified definition or an unpinned version.
+
+var planDefinitions = {
+  cspm: {
+    definitionId: '72f8cee7-2937-403d-84a1-a4e3e57f3c21'
+    definitionVersion: '1.*.*'
+  }
+  servers: {
+    definitionId: '5eb6d64a-4086-4d7a-92da-ec51aed0332d'
+    definitionVersion: '1.*.*'
+  }
+  storage: {
+    definitionId: 'cfdc5972-75b3-4418-8ae1-7f5c36839390'
+    definitionVersion: '1.*.*'
+  }
+}
 
 var controlCharacterEncodings = [
   '%00'
@@ -63,16 +90,8 @@ param displayName string
 @maxLength(512)
 param description string
 
-@sys.description('Full resource ID of a built-in Microsoft Defender for Cloud plan policy definition.')
-@minLength(1)
-param policyDefinitionId string
-
-@sys.description('Non-global Azure region used to store the policy assignment and its managed identity.')
-@minLength(1)
-param location string
-
-@sys.description('Set true only after reviewing Microsoft Defender for Cloud licensing/cost and manually granting the identity the required built-in role. Defaults to false, which keeps the plan Disabled and requires no role grant.')
-param enablePlan bool = false
+@sys.description('Which verified Microsoft Defender for Cloud plan this assignment tracks. Restricted to the plans this module has independently verified against the control catalog (policy/control-catalog.json); no other policyDefinitionId can be supplied.')
+param plan 'cspm' | 'servers' | 'storage'
 
 @sys.description('Open-ended policy assignment metadata.')
 param metadata object = {
@@ -86,24 +105,20 @@ var validatedAssignmentName = !assignmentNameContainsInvalidCharacter && !assign
   ? assignmentName
   : fail('assignmentName contains a character that is invalid for an Azure Policy assignment or ends with a period or space.')
 
-var validatedLocation = !empty(trim(location)) && toLower(trim(location)) != 'global'
-  ? trim(location)
-  : fail('location must be a non-global Azure region.')
+var selectedPlan = planDefinitions[plan]
+var policyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', selectedPlan.definitionId)
 
 resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
   name: validatedAssignmentName
-  location: validatedLocation
-  identity: {
-    type: 'SystemAssigned'
-  }
   properties: {
     displayName: displayName
     description: description
     policyDefinitionId: policyDefinitionId
+    definitionVersion: selectedPlan.definitionVersion
     enforcementMode: 'Default'
     parameters: {
       effect: {
-        value: enablePlan ? 'DeployIfNotExists' : 'Disabled'
+        value: 'Disabled'
       }
     }
     metadata: metadata
@@ -111,5 +126,3 @@ resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
 }
 
 output policyAssignmentId string = assignment.id
-output identityPrincipalId string = assignment.identity.principalId
-output planEnabled bool = enablePlan

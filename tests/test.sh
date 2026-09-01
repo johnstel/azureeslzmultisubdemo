@@ -70,39 +70,35 @@ if rg -n \
   exit 1
 fi
 
-printf '6/24 Confirm Microsoft Defender for Cloud plans default to Disabled, require explicit opt-in parameters, and never reference the deprecated Log Analytics (MMA) auto-provisioning agent...\n'
-rg -q "^param enableDefenderCspm bool = false$" "${PROJECT_DIR}/main.bicep"
-rg -q "^param enableDefenderForServers bool = false$" "${PROJECT_DIR}/main.bicep"
-rg -q "^param enableDefenderForStorage bool = false$" "${PROJECT_DIR}/main.bicep"
-jq -e '
-  .parameters.enableDefenderCspm.value == false and
-  .parameters.enableDefenderForServers.value == false and
-  .parameters.enableDefenderForStorage.value == false
-' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
+printf '6/24 Confirm Microsoft Defender for Cloud plan assignments always stay Disabled with no managed identity, no auto-granted role, pinned built-in versions, and never reference the deprecated Log Analytics (MMA) auto-provisioning agent...\n'
+if rg -n 'enableDefenderCspm|enableDefenderForServers|enableDefenderForStorage|enablePlan' "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" "${PROJECT_DIR}/parameters" -g '*.bicep' -g '*.bicepparam' -g '*.json'; then
+  printf 'ERROR: Microsoft Defender for Cloud plan assignments must not expose an opt-in parameter; they are manual-evidence-only governance markers with no toggle.\n' >&2
+  exit 1
+fi
 if rg -n '475aae12-b88a-4572-8b36-9b712b2b3a17' "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" -g '*.bicep'; then
   printf 'ERROR: main.bicep/modules must never assign the deprecated Log Analytics (MMA) auto-provisioning policy definition.\n' >&2
   exit 1
 fi
-defender_effect_default_count="$(jq '
+defender_disabled_count="$(jq '
   [.resources[]
     | select(.type == "Microsoft.Resources/deployments")
     | select(.name == "assign-defender-cspm" or .name == "assign-defender-servers" or .name == "assign-defender-storage")
-    | select(.properties.template.resources[0].properties.parameters.effect.value == "[if(parameters(\u0027enablePlan\u0027), \u0027DeployIfNotExists\u0027, \u0027Disabled\u0027)]")
+    | select(.properties.template.resources.assignment.properties.parameters.effect.value == "Disabled")
   ] | length
 ' "${TEMP_DIR}/main.json")"
-[[ "${defender_effect_default_count}" -eq 3 ]] || {
-  printf 'ERROR: Expected exactly three Defender plan assignments (CSPM, Servers, Storage) whose effect toggles between Disabled and DeployIfNotExists based on their own opt-in parameter.\n' >&2
+[[ "${defender_disabled_count}" -eq 3 ]] || {
+  printf 'ERROR: Expected exactly three Defender plan assignments (CSPM, Servers, Storage) whose effect is unconditionally Disabled.\n' >&2
   exit 1
 }
-defender_identity_count="$(jq '
+defender_no_identity_count="$(jq '
   [.resources[]
     | select(.type == "Microsoft.Resources/deployments")
     | select(.name == "assign-defender-cspm" or .name == "assign-defender-servers" or .name == "assign-defender-storage")
-    | select(.properties.template.resources[0].identity.type == "SystemAssigned")
+    | select(.properties.template.resources.assignment.identity == null)
   ] | length
 ' "${TEMP_DIR}/main.json")"
-[[ "${defender_identity_count}" -eq 3 ]] || {
-  printf 'ERROR: Expected exactly three Defender plan assignments to carry a SystemAssigned managed identity (required by Azure Policy for their DeployIfNotExists capability).\n' >&2
+[[ "${defender_no_identity_count}" -eq 3 ]] || {
+  printf 'ERROR: Defender plan assignments must never carry a managed identity; a normal deployment must never create or leave standing Owner access.\n' >&2
   exit 1
 }
 defender_role_assignment_count="$(jq '
@@ -116,7 +112,21 @@ defender_role_assignment_count="$(jq '
   printf 'ERROR: Defender plan assignments must never automatically grant RBAC roles; Owner is required for remediation and this repository never grants it automatically.\n' >&2
   exit 1
 }
+defender_version_pin_count="$(jq '
+  [.resources[]
+    | select(.type == "Microsoft.Resources/deployments")
+    | select(.name == "assign-defender-cspm" or .name == "assign-defender-servers" or .name == "assign-defender-storage")
+    | select(.properties.template.resources.assignment.properties.definitionVersion | tostring | test("^\\[variables\\(.selectedPlan.\\)\\.definitionVersion\\]$"))
+  ] | length
+' "${TEMP_DIR}/main.json")"
+[[ "${defender_version_pin_count}" -eq 3 ]] || {
+  printf 'ERROR: Expected exactly three Defender plan assignments to pin definitionVersion via the verified plan lookup.\n' >&2
+  exit 1
+}
+rg -q "definitionVersion: '1\.\*\.\*'" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
+rg -q "^param plan 'cspm' \| 'servers' \| 'storage'$" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
 rg -q "^module vulnerabilityAssessmentAuditAssignment 'modules/policy-assignment\.bicep' = \{" "${PROJECT_DIR}/main.bicep"
+rg -q "definitionVersion: '3\.\*\.\*'" "${PROJECT_DIR}/main.bicep"
 
 printf '7/24 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then

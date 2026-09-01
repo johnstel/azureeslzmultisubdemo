@@ -129,15 +129,6 @@ param enableCriticalInfrastructure bool = false
 @description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch. Only used when enableCriticalInfrastructure is true.')
 param criticalInfrastructureSubscriptionIds array = []
 
-@description('Set true to enable the paid Microsoft Defender CSPM (Cloud Security Posture Management) plan (REQ-DEF-02), adding CIEM and advanced posture findings. Disabled by default. Enabling this plan accrues Microsoft Defender for Cloud licensing cost and requires the subscription Owner to manually grant the resulting assignment identity the Owner role before the DeployIfNotExists effect can remediate; this template never grants that role automatically.')
-param enableDefenderCspm bool = false
-
-@description('Set true to enable the paid Microsoft Defender for Servers plan (REQ-DEF-03) on the Landing Zones branch, using current agentless scanning and Azure Monitor Agent auto-provisioning rather than the deprecated Log Analytics (MMA) agent. Disabled by default. Enabling this plan accrues Microsoft Defender for Cloud licensing cost and requires the subscription Owner to manually grant the resulting assignment identity the Owner role before the DeployIfNotExists effect can remediate; this template never grants that role automatically.')
-param enableDefenderForServers bool = false
-
-@description('Set true to enable the paid Microsoft Defender for Storage plan (REQ-DEF-04) on the Landing Zones branch. Disabled by default. Enabling this plan accrues Microsoft Defender for Cloud licensing cost and requires the subscription Owner to manually grant the resulting assignment identity the Owner role before the DeployIfNotExists effect can remediate; this template never grants that role automatically.')
-param enableDefenderForStorage bool = false
-
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
@@ -341,9 +332,20 @@ module workloadResourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
-var defenderCspmPolicyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', '72f8cee7-2937-403d-84a1-a4e3e57f3c21')
-var defenderForServersPolicyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', '5eb6d64a-4086-4d7a-92da-ec51aed0332d')
-var defenderForStoragePolicyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', 'cfdc5972-75b3-4418-8ae1-7f5c36839390')
+// REQ-DEF-02/03/04 (Microsoft Defender CSPM, for Servers, and for Storage)
+// are governance markers only: policy/control-catalog.json classifies them
+// "manual-evidence" because their only verified remediation role is Owner,
+// and a single management-group-scoped identity inherited across every
+// descendant subscription is too broad a blast radius to grant Owner to
+// automatically (this repository's shared RBAC modules never auto-grant
+// Owner/User Access Administrator; see
+// modules/remediating-policy-assignment.bicep). modules/defender-plan-
+// assignment.bicep therefore always assigns effect Disabled and never
+// creates a managed identity, so this template can never create or leave
+// standing Owner access. Actually enabling a paid plan is an independent
+// action a customer takes directly against Microsoft Defender for Cloud
+// (Azure Portal or `az security pricing create`), entirely outside this
+// template.
 var vulnerabilityAssessmentAuditPolicyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', '501541f7-f7e7-4cd6-868c-4190fdad3ac9')
 
 module defenderCspmAssignment 'modules/defender-plan-assignment.bicep' = {
@@ -351,11 +353,9 @@ module defenderCspmAssignment 'modules/defender-plan-assignment.bicep' = {
   scope: managementGroup(demoRootManagementGroupId)
   params: {
     assignmentName: 'demo-defender-cspm'
-    displayName: 'Demo - Microsoft Defender CSPM (optional, paid)'
-    description: 'Optionally enables Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Disabled by default; a paid Microsoft Defender for Cloud plan once enabled. This template never grants the Owner role its DeployIfNotExists effect requires for remediation; the subscription Owner must grant it manually.'
-    policyDefinitionId: defenderCspmPolicyDefinitionId
-    location: deploymentLocation
-    enablePlan: enableDefenderCspm
+    displayName: 'Demo - Microsoft Defender CSPM (manual evidence, paid)'
+    description: 'Governance marker for Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Always Disabled and creates no managed identity; this template never enables the plan or grants any role. Enabling the plan is a separate, customer-performed action against Microsoft Defender for Cloud (Azure Portal or az security pricing create) with its own licensing cost and role considerations.'
+    plan: 'cspm'
   }
   dependsOn: [
     hierarchy
@@ -367,11 +367,9 @@ module defenderForServersAssignment 'modules/defender-plan-assignment.bicep' = {
   scope: managementGroup(landingZonesManagementGroupId)
   params: {
     assignmentName: 'demo-defender-servers'
-    displayName: 'Demo - Microsoft Defender for Servers (optional, paid)'
-    description: 'Optionally enables Microsoft Defender for Servers (REQ-DEF-03) using current agentless scanning and Azure Monitor Agent auto-provisioning, not the deprecated Log Analytics (MMA) agent. Disabled by default; a paid Microsoft Defender for Cloud plan once enabled. This template never grants the Owner role its DeployIfNotExists effect requires for remediation; the subscription Owner must grant it manually.'
-    policyDefinitionId: defenderForServersPolicyDefinitionId
-    location: deploymentLocation
-    enablePlan: enableDefenderForServers
+    displayName: 'Demo - Microsoft Defender for Servers (manual evidence, paid)'
+    description: 'Governance marker for Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Always Disabled and creates no managed identity; this template never enables the plan or grants any role. Enabling the plan is a separate, customer-performed action against Microsoft Defender for Cloud; whether that provisions agentless scanning or the Azure Monitor Agent depends on the sub-plan/settings chosen at that time and is not configured or claimed here.'
+    plan: 'servers'
   }
   dependsOn: [
     hierarchy
@@ -383,11 +381,9 @@ module defenderForStorageAssignment 'modules/defender-plan-assignment.bicep' = {
   scope: managementGroup(landingZonesManagementGroupId)
   params: {
     assignmentName: 'demo-defender-storage'
-    displayName: 'Demo - Microsoft Defender for Storage (optional, paid)'
-    description: 'Optionally enables Microsoft Defender for Storage (REQ-DEF-04). Disabled by default; a paid Microsoft Defender for Cloud plan once enabled. This template never grants the Owner role its DeployIfNotExists effect requires for remediation; the subscription Owner must grant it manually.'
-    policyDefinitionId: defenderForStoragePolicyDefinitionId
-    location: deploymentLocation
-    enablePlan: enableDefenderForStorage
+    displayName: 'Demo - Microsoft Defender for Storage (manual evidence, paid)'
+    description: 'Governance marker for Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Always Disabled and creates no managed identity; this template never enables the plan or grants any role. Enabling the plan is a separate, customer-performed action against Microsoft Defender for Cloud (Azure Portal or az security pricing create) with its own licensing cost and role considerations.'
+    plan: 'storage'
   }
   dependsOn: [
     hierarchy
@@ -402,6 +398,7 @@ module vulnerabilityAssessmentAuditAssignment 'modules/policy-assignment.bicep' 
     displayName: 'Demo - audit VM vulnerability assessment'
     description: 'Audits that virtual machines have a supported vulnerability assessment solution enabled (REQ-DEF-06), independent of any paid Defender plan. No-cost audit signal populated by the free, default-on Foundational CSPM tier.'
     policyDefinitionId: vulnerabilityAssessmentAuditPolicyDefinitionId
+    definitionVersion: '3.*.*'
     enforcementMode: 'Default'
     parameters: {}
   }
@@ -514,6 +511,6 @@ output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
 output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
-output defenderCspmEnabled bool = defenderCspmAssignment.outputs.planEnabled
-output defenderForServersEnabled bool = defenderForServersAssignment.outputs.planEnabled
-output defenderForStorageEnabled bool = defenderForStorageAssignment.outputs.planEnabled
+output defenderCspmPolicyAssignmentId string = defenderCspmAssignment.outputs.policyAssignmentId
+output defenderForServersPolicyAssignmentId string = defenderForServersAssignment.outputs.policyAssignmentId
+output defenderForStoragePolicyAssignmentId string = defenderForStorageAssignment.outputs.policyAssignmentId
