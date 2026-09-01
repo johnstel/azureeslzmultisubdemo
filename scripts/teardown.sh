@@ -53,6 +53,7 @@ done < <(jq -r '.parameters.criticalInfrastructureSubscriptionIds.value // [] | 
 
 demo_root_scope="/providers/Microsoft.Management/managementGroups/${prefix}"
 platform_scope="/providers/Microsoft.Management/managementGroups/${prefix}-platform"
+landing_zones_scope="/providers/Microsoft.Management/managementGroups/${prefix}-landingzones"
 workload_scope="/providers/Microsoft.Management/managementGroups/${prefix}-${archetype}"
 connectivity_scope="/subscriptions/${connectivity_subscription}"
 subscription_workload_scope="/subscriptions/${workload_subscription}"
@@ -120,7 +121,7 @@ print_plan() {
   fi
   printf '  %d. Delete only the five permanent lower-privilege demo role assignments for the four operator/auditor groups at their documented scopes.\n' "${step_number}"
   step_number=$((step_number + 1))
-  printf '  %d. Delete demo policy assignments and the five custom policy definitions.\n' "${step_number}"
+  printf '  %d. Delete demo policy assignments, the tagging initiative, and custom policy definitions.\n' "${step_number}"
   step_number=$((step_number + 1))
   printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
   step_number=$((step_number + 1))
@@ -201,7 +202,8 @@ delete_role_mapping "${auditors_group}" 'Reader' "${demo_root_scope}"
 delete_role_mapping "${network_group}" 'Network Contributor' "${connectivity_scope}"
 delete_role_mapping "${workload_group}" 'Contributor' "${subscription_workload_scope}"
 
-delete_policy_assignment 'demo-require-workload-rg-tags' "${workload_scope}"
+delete_policy_assignment 'demo-require-rg-tags' "${landing_zones_scope}"
+delete_policy_assignment 'demo-require-rg-tags' "${workload_scope}"
 delete_policy_assignment 'demo-audit-platform-tags' "${platform_scope}"
 delete_policy_assignment 'demo-block-expensive' "${demo_root_scope}"
 delete_policy_assignment 'demo-audit-public-ip' "${demo_root_scope}"
@@ -215,6 +217,7 @@ for policy_name in \
   "${prefix}-allowed-us-locations"; do
   az policy definition delete --name "${policy_name}" --management-group "${prefix}" 2>/dev/null || true
 done
+az policy set-definition delete --name "${prefix}-required-rg-tags" --management-group "${prefix}" 2>/dev/null || true
 
 az account management-group subscription add --name "${tenant_root}" --subscription "${connectivity_subscription}"
 az account management-group subscription add --name "${tenant_root}" --subscription "${workload_subscription}"

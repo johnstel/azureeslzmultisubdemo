@@ -118,6 +118,89 @@ try {
         --outfile $compiledEligibilityTemplate
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Owner eligibility Bicep build failed.' }
     & (Join-Path $ScriptDir 'validate-policy-assignment.ps1') -CompiledMainTemplate $compiledTemplate
+    $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    Write-Host '    Confirm the exact six-tag initiative and compliant evidence resource groups...'
+    $requiredTags = @('CostCenter', 'ApplicationName', 'Owner', 'Environment', 'DataClassification', 'SSP-ID')
+    $initiativeDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'resource-group-tags-initiative'
+    } | Select-Object -First 1
+    $assignmentDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-resource-group-tags'
+    } | Select-Object -First 1
+    if ($null -eq $initiativeDeployment -or $null -eq $assignmentDeployment) {
+        Stop-Test 'Required resource-group tag initiative or assignment deployment is missing.'
+    }
+    $tagReferences = @($initiativeDeployment.properties.parameters.policyDefinitionReferences.value)
+    if ($tagReferences.Count -ne 6) {
+        Stop-Test 'Required resource-group tag initiative must contain exactly six policy references.'
+    }
+    $actualTags = @($tagReferences.parameters.tagName.value)
+    if (Compare-Object -ReferenceObject $requiredTags -DifferenceObject $actualTags -CaseSensitive) {
+        Stop-Test 'Required resource-group tag initiative must contain the exact six case-sensitive tag names.'
+    }
+    foreach ($tagReference in $tagReferences) {
+        if ($tagReference.policyDefinitionId -cne "[variables('requireResourceGroupTagPolicyDefinitionId')]") {
+            Stop-Test 'Every required tag must use the verified built-in resource-group tag policy.'
+        }
+        if ($tagReference.definitionVersion -cne '1.*.*') {
+            Stop-Test 'Every required tag policy reference must pin the catalog-supported 1.*.* major version.'
+        }
+    }
+    if (-not $initiativeDeployment.scope.Contains('demoRootManagementGroupId')) {
+        Stop-Test 'Required resource-group tag initiative definition must be stored at the demo root.'
+    }
+    if (-not $assignmentDeployment.scope.Contains('landingZonesManagementGroupId')) {
+        Stop-Test 'Required resource-group tag assignment must remain scoped to Landing Zones.'
+    }
+    if ($assignmentDeployment.properties.parameters.enforcementMode.value -cne "[parameters('denyPolicyEnforcementMode')]") {
+        Stop-Test 'Required resource-group tag assignment must use the safe deny enforcement parameter.'
+    }
+    $nonComplianceMessages = @($assignmentDeployment.properties.parameters.nonComplianceMessages.value)
+    if ($nonComplianceMessages.Count -ne 6) {
+        Stop-Test 'Required resource-group tag assignment must contain exactly six noncompliance messages.'
+    }
+    $tagsByReference = @{}
+    foreach ($tagReference in $tagReferences) {
+        $tagsByReference[$tagReference.policyDefinitionReferenceId] = $tagReference.parameters.tagName.value
+    }
+    $messageReferences = @($nonComplianceMessages.policyDefinitionReferenceId)
+    foreach ($tagReference in $tagReferences) {
+        if (@($messageReferences | Where-Object { $_ -ceq $tagReference.policyDefinitionReferenceId }).Count -ne 1) {
+            Stop-Test "Required tag reference $($tagReference.policyDefinitionReferenceId) must have exactly one noncompliance message."
+        }
+    }
+    foreach ($nonComplianceMessage in $nonComplianceMessages) {
+        $tagName = $tagsByReference[$nonComplianceMessage.policyDefinitionReferenceId]
+        if ($null -eq $tagName -or
+            $nonComplianceMessage.message -cne "Resource groups must include the $tagName tag.") {
+            Stop-Test "Noncompliance message for $($nonComplianceMessage.policyDefinitionReferenceId) does not match its required tag."
+        }
+    }
+    foreach ($evidenceDeploymentName in @('connectivity-evidence', 'workload-evidence')) {
+        $evidenceDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+            param($node)
+            $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+            $node.PSObject.Properties['name'] -and $node.name -eq $evidenceDeploymentName
+        } | Select-Object -First 1
+        if ($null -eq $evidenceDeployment) {
+            Stop-Test "$evidenceDeploymentName deployment is missing."
+        }
+        if ($evidenceDeploymentName -eq 'connectivity-evidence') {
+            $evidenceTags = $evidenceDeployment.properties.template.variables.commonTags
+        } else {
+            $evidenceTags = @($evidenceDeployment.properties.template.resources |
+                Where-Object { $_.type -eq 'Microsoft.Resources/resourceGroups' })[0].tags
+        }
+        foreach ($requiredTag in $requiredTags) {
+            if (-not $evidenceTags.PSObject.Properties[$requiredTag]) {
+                Stop-Test "$evidenceDeploymentName resource group is missing the exact $requiredTag tag."
+            }
+        }
+    }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
     Write-Host '3/24 Validate both parameter templates...'
@@ -150,7 +233,6 @@ try {
     }
 
     Write-Host '4/24 Confirm there are exactly two unconditional subscription associations...'
-    $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -1154,6 +1236,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     }
 
     Write-Host '18/24 Parse every PowerShell lifecycle and test script...'
+    & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
         Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'

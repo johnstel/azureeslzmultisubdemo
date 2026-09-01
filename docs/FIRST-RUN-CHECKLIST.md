@@ -189,7 +189,25 @@ deployment.
 - [ ] What-if shows two resource groups, one VNet, and one NSG only.
 - [ ] Policy owners approved changing `denyPolicyEnforcementMode` to `Default`.
 
-## 9. Teardown
+## 9. Migrate an existing legacy tag policy
+
+Skip this section for a first deployment. For an upgraded deployment:
+
+- [ ] What-if showed the replacement six-tag initiative at the demo root and
+      its assignment at Landing Zones.
+- [ ] The replacement deployment completed and was approved.
+- [ ] The migration preview lists only `demo-require-rg-tags` at the workload
+      scope and `<namePrefix>-require-workload-rg-tags` at the demo root.
+
+Preview with `migrate-legacy-rg-tags.ps1` or `migrate-legacy-rg-tags.sh`.
+Execution first validates the active tenant/subscription, both supplied
+subscriptions, exact management-group ancestry, legacy policy relationship,
+and replacement initiative/assignment. Only then does it require
+`ESLZ_TAG_MIGRATION_CONFIRMATION` to equal
+`REMOVE-LEGACY-RG-TAG-POLICY` and the interactive
+`<tenantId>/<namePrefix>-<workloadArchetype>` confirmation.
+
+## 10. Teardown
 
 Preview:
 
