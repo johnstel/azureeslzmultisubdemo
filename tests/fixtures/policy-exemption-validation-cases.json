@@ -1,6 +1,7 @@
 {
   "trimmedRequiredStrings": [
     { "value": "valid", "valid": true },
+    { "value": "", "valid": false },
     { "value": " valid", "valid": false },
     { "value": "valid ", "valid": false },
     { "value": "   ", "valid": false }

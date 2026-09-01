@@ -123,15 +123,21 @@ var validatedGovernanceOwner = isTrimmedNonEmpty(governanceOwner)
   ? governanceOwner
   : fail('governanceOwner must be non-empty and cannot include leading or trailing whitespace.')
 
-var validatedManagementGroupName = isTrimmedNonEmpty(managementGroupName)
-  ? managementGroupName
-  : ''
-var validatedSubscriptionId = subscriptionId == trim(subscriptionId) && isGuid(subscriptionId)
-  ? subscriptionId
-  : ''
-var validatedResourceGroupName = isTrimmedNonEmpty(resourceGroupName)
-  ? resourceGroupName
-  : ''
+var validatedManagementGroupName = empty(managementGroupName)
+  ? ''
+  : isTrimmedNonEmpty(managementGroupName)
+    ? managementGroupName
+    : fail('managementGroupName must be non-empty and cannot include leading or trailing whitespace when supplied.')
+var validatedSubscriptionId = empty(subscriptionId)
+  ? ''
+  : subscriptionId == trim(subscriptionId) && isGuid(subscriptionId)
+    ? subscriptionId
+    : fail('subscriptionId must be a valid GUID without leading or trailing whitespace when supplied.')
+var validatedResourceGroupName = empty(resourceGroupName)
+  ? ''
+  : isTrimmedNonEmpty(resourceGroupName)
+    ? resourceGroupName
+    : fail('resourceGroupName must be non-empty and cannot include leading or trailing whitespace when supplied.')
 
 var validatedExpiresOn = isCanonicalRfc3339Utc(expiresOn)
   ? expiresOn
@@ -190,7 +196,9 @@ var trimmedPolicyDefinitionReferenceIds = [for policyDefinitionReferenceId in po
 var normalizedPolicyDefinitionReferenceIds = [for policyDefinitionReferenceId in trimmedPolicyDefinitionReferenceIds: toLower(policyDefinitionReferenceId)]
 var invalidPolicyDefinitionReferenceIds = filter(normalizedPolicyDefinitionReferenceIds, policyDefinitionReferenceId => empty(policyDefinitionReferenceId))
 var hasDuplicatePolicyDefinitionReferenceIds = length(normalizedPolicyDefinitionReferenceIds) != length(union(normalizedPolicyDefinitionReferenceIds, normalizedPolicyDefinitionReferenceIds))
-var disallowedPolicyDefinitionReferenceIds = filter(normalizedPolicyDefinitionReferenceIds, policyDefinitionReferenceId => !contains(validatedAllowedPolicyDefinitionReferenceIds, policyDefinitionReferenceId))
+var disallowedPolicyDefinitionReferenceIds = empty(normalizedPolicyDefinitionReferenceIds)
+  ? []
+  : filter(normalizedPolicyDefinitionReferenceIds, policyDefinitionReferenceId => !contains(validatedAllowedPolicyDefinitionReferenceIds, policyDefinitionReferenceId))
 var validatedPolicyDefinitionReferenceIds = empty(policyDefinitionReferenceIds)
   ? []
   : empty(validatedAllowedPolicyDefinitionReferenceIds)

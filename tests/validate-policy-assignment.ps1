@@ -309,27 +309,48 @@ try {
         }
     }
 
-    $exemptionValidationCases = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/policy-exemption-validation-cases.json') -Raw | ConvertFrom-Json -DateKind String
-    foreach ($case in $exemptionValidationCases.trimmedRequiredStrings) {
-        if ((Test-TrimmedNonEmpty -Value $case.value) -ne [bool]$case.valid) {
-            Stop-Test "Trimmed required-string validation produced the wrong result for '$($case.value)'."
+    $exemptionValidationDocument = [System.Text.Json.JsonDocument]::Parse((Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/policy-exemption-validation-cases.json') -Raw))
+    $exemptionValidationRoot = $exemptionValidationDocument.RootElement
+    foreach ($case in $exemptionValidationRoot.GetProperty('trimmedRequiredStrings').EnumerateArray()) {
+        $value = $case.GetProperty('value').GetString()
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-TrimmedNonEmpty -Value $value) -ne $valid) {
+            Stop-Test "Trimmed required-string validation produced the wrong result for '$value'."
         }
     }
-    foreach ($case in $exemptionValidationCases.rfc3339UtcTimestamps) {
-        if ((Test-CanonicalRfc3339UtcTimestamp -Value $case.value) -ne [bool]$case.valid) {
-            Stop-Test "RFC3339 UTC validation produced the wrong result for '$($case.value)'."
+    foreach ($case in $exemptionValidationRoot.GetProperty('rfc3339UtcTimestamps').EnumerateArray()) {
+        $value = $case.GetProperty('value').GetString()
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-CanonicalRfc3339UtcTimestamp -Value $value) -ne $valid) {
+            Stop-Test "RFC3339 UTC validation produced the wrong result for '$value'."
         }
     }
-    foreach ($case in $exemptionValidationCases.policyAssignmentScopeContracts) {
-        if ((Test-PolicyAssignmentScopeContract -Case $case) -ne [bool]$case.valid) {
-            Stop-Test "policyAssignmentId scope/ancestry validation produced the wrong result for '$($case.policyAssignmentId)'."
+    foreach ($case in $exemptionValidationRoot.GetProperty('policyAssignmentScopeContracts').EnumerateArray()) {
+        $contractCase = [pscustomobject]@{
+            scopeType = $case.GetProperty('scopeType').GetString()
+            managementGroupName = $case.GetProperty('managementGroupName').GetString()
+            subscriptionId = $case.GetProperty('subscriptionId').GetString()
+            resourceGroupName = $case.GetProperty('resourceGroupName').GetString()
+            policyAssignmentId = $case.GetProperty('policyAssignmentId').GetString()
+        }
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-PolicyAssignmentScopeContract -Case $contractCase) -ne $valid) {
+            Stop-Test "policyAssignmentId scope/ancestry validation produced the wrong result for '$($contractCase.policyAssignmentId)'."
         }
     }
-    foreach ($case in $exemptionValidationCases.policyDefinitionReferenceContracts) {
-        if ((Test-PolicyDefinitionReferenceContract -Case $case) -ne [bool]$case.valid) {
+    foreach ($case in $exemptionValidationRoot.GetProperty('policyDefinitionReferenceContracts').EnumerateArray()) {
+        $allowed = @($case.GetProperty('allowed').EnumerateArray() | ForEach-Object { $_.GetString() })
+        $provided = @($case.GetProperty('provided').EnumerateArray() | ForEach-Object { $_.GetString() })
+        $contractCase = [pscustomobject]@{
+            allowed = $allowed
+            provided = $provided
+        }
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-PolicyDefinitionReferenceContract -Case $contractCase) -ne $valid) {
             Stop-Test 'policyDefinitionReferenceIds allowlist validation produced the wrong result for a contract case.'
         }
     }
+    $exemptionValidationDocument.Dispose()
 
     $mainJson = Get-Content -LiteralPath $CompiledMainTemplate -Raw | ConvertFrom-Json
     $assignmentNames = @(
