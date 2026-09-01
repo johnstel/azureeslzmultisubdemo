@@ -117,6 +117,7 @@ private IP. It does not deploy or prove the firewall, VNet peering, private
 DNS, private endpoints, subnet associations, route propagation, or end-to-end
 traffic traversal. Those are customer-owned hub-routing architecture and
 operational-validation dependencies, separate from Azure Policy evidence.
+
 ### Backup coverage and vault posture
 
 The `demo-backup-posture` initiative is assigned to the Landing Zones branch
