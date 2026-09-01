@@ -1998,6 +1998,52 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
+    # Every built-in member must be pinned to the exact major version verified in
+    # the control catalog, and the in-repository custom member must stay unpinned
+    # because definitionVersion applies only to built-in definitions.
+    $expectedDefinitionVersions = [ordered]@{
+        'storage-secure-transfer'                = '2.*.*'
+        'storage-minimum-tls'                    = '1.*.*'
+        'storage-public-blob-access'             = '3.*.*'
+        'storage-network-access'                 = '1.*.*'
+        'storage-shared-key-access'              = '2.*.*'
+        'storage-private-link-readiness'         = '2.*.*'
+        'key-vault-soft-delete'                  = '3.*.*'
+        'key-vault-deletion-protection'          = '2.*.*'
+        'key-vault-rbac-authorization'           = '1.*.*'
+        'key-vault-network-access'               = '3.*.*'
+        'key-vault-private-link-readiness'       = '1.*.*'
+        'key-vault-diagnostics-readiness'        = '5.*.*'
+        'storage-customer-managed-key'           = '1.*.*'
+        'storage-approved-customer-managed-key'  = $null
+    }
+    foreach ($dataProtectionReference in $dataProtectionReferences) {
+        $referenceId = $dataProtectionReference.policyDefinitionReferenceId
+        if (-not $expectedDefinitionVersions.Contains($referenceId)) {
+            Stop-Test "Unexpected data-protection policy definition reference '$referenceId'."
+        }
+        $actualDefinitionVersion = $null
+        if ($dataProtectionReference.PSObject.Properties['definitionVersion']) {
+            $actualDefinitionVersion = $dataProtectionReference.definitionVersion
+        }
+        if ($actualDefinitionVersion -ne $expectedDefinitionVersions[$referenceId]) {
+            Stop-Test "Data-protection reference '$referenceId' must pin definitionVersion '$($expectedDefinitionVersions[$referenceId])' but pins '$actualDefinitionVersion'."
+        }
+        $referenceBuiltInId = [regex]::Match($dataProtectionReference.policyDefinitionId, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}').Value
+        if (-not $referenceBuiltInId) {
+            if ($null -ne $actualDefinitionVersion) {
+                Stop-Test "Custom data-protection reference '$referenceId' must not declare definitionVersion."
+            }
+            continue
+        }
+        $catalogMajor = @($controlCatalog.controls |
+            Where-Object { $_.mechanism.builtIn -eq $true -and $_.mechanism.definitionId -eq $referenceBuiltInId } |
+            ForEach-Object { $_.mechanism.majorVersion })
+        if ($catalogMajor.Count -lt 1 -or $actualDefinitionVersion -ne "$($catalogMajor[0]).*.*") {
+            Stop-Test "Data-protection reference '$referenceId' must pin the catalog-verified major for built-in $referenceBuiltInId."
+        }
+    }
+
     # Purge protection is only ever audited or denied, never turned off, and the
     # audit-only and readiness controls can never be escalated to Deny.
     $dataProtectionInitiativeParameters = $dataProtectionInitiative[0].properties.parameters.initiativeParameters.value

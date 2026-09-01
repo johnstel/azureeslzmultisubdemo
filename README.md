@@ -103,6 +103,13 @@ built-in supports only `Audit`/`Disabled` or `AuditIfNotExists`/`Disabled`
 follow that choice without ever being escalated to `Deny`. Purge protection is
 only ever audited or required, never disabled.
 
+Each built-in member is pinned to the exact major version recorded in
+`policy/control-catalog.json` (for example `2.*.*`) through the reusable
+`definitionVersion` support in `modules/policy-initiative.bicep`, so a future
+major revision of a built-in never changes the assignment's behaviour without
+review. The in-repository custom member is intentionally unpinned, because
+`definitionVersion` applies only to built-in definitions.
+
 The public-access and private-link controls audit configuration and readiness
 only. They do not deploy a private endpoint, private DNS zone, virtual
 network, or diagnostic setting, so a compliant result must not be reported as

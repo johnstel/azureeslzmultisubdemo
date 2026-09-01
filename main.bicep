@@ -561,6 +561,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '404c3081-a854-4457-ae30-26a93ef643f9'
         )
+        definitionVersion: '2.*.*'
         policyDefinitionReferenceId: 'storage-secure-transfer'
         parameters: {
           effect: {
@@ -576,6 +577,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           'fe83a0eb-a853-422d-aac2-1bffd182c5d0'
         )
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'storage-minimum-tls'
         parameters: {
           effect: {
@@ -594,6 +596,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '4fa4b6c0-31ca-4c0d-b10d-24b96f62a751'
         )
+        definitionVersion: '3.*.*'
         policyDefinitionReferenceId: 'storage-public-blob-access'
         parameters: {
           effect: {
@@ -609,6 +612,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '34c877ad-507e-4c82-993e-3452a6e0ad3c'
         )
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'storage-network-access'
         parameters: {
           effect: {
@@ -624,6 +628,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '8c6a50c6-9ffd-4ae7-986f-5fa6111f9a54'
         )
+        definitionVersion: '2.*.*'
         policyDefinitionReferenceId: 'storage-shared-key-access'
         parameters: {
           effect: {
@@ -639,6 +644,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '6edd7eda-6dd8-40f7-810d-67160c639cd9'
         )
+        definitionVersion: '2.*.*'
         policyDefinitionReferenceId: 'storage-private-link-readiness'
         parameters: {
           effect: {
@@ -654,6 +660,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '1e66c121-a66a-4b1f-9b83-0fd99bf0fc2d'
         )
+        definitionVersion: '3.*.*'
         policyDefinitionReferenceId: 'key-vault-soft-delete'
         parameters: {
           effect: {
@@ -669,6 +676,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '0b60c0b2-2dc2-4e1c-b5c9-abbed971de53'
         )
+        definitionVersion: '2.*.*'
         policyDefinitionReferenceId: 'key-vault-deletion-protection'
         parameters: {
           effect: {
@@ -684,6 +692,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '12d4fa5e-1f9f-4c21-97a9-b99b3c6611b5'
         )
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'key-vault-rbac-authorization'
         parameters: {
           effect: {
@@ -699,6 +708,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '55615ac9-af46-4a59-874e-391cc3dfb490'
         )
+        definitionVersion: '3.*.*'
         policyDefinitionReferenceId: 'key-vault-network-access'
         parameters: {
           effect: {
@@ -714,6 +724,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           'a6abeaec-4d90-4a02-805f-6b26c4d3fbe9'
         )
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'key-vault-private-link-readiness'
         parameters: {
           // This built-in evaluates audit_effect; its legacy effect parameter is deprecated and unused.
@@ -730,6 +741,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           'cf820ca0-f99e-4f3e-84fb-66e913812d21'
         )
+        definitionVersion: '5.*.*'
         policyDefinitionReferenceId: 'key-vault-diagnostics-readiness'
         parameters: {
           effect: {
@@ -745,6 +757,7 @@ module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
           'Microsoft.Authorization/policyDefinitions',
           '6fac406b-40ca-413b-bf8e-0bf964659c25'
         )
+        definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'storage-customer-managed-key'
         parameters: {
           effect: {

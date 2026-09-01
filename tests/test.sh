@@ -1517,6 +1517,69 @@ while IFS= read -r builtin_id; do
   }
 done <<< "${data_protection_builtin_ids}"
 
+# Every built-in member must be pinned to the exact major version verified in
+# the control catalog, and the in-repository custom member must stay unpinned
+# because definitionVersion applies only to built-in definitions.
+data_protection_reference_pins="$(jq -r '
+  .resources[]
+  | select(.name == "data-protection-initiative")
+  | .properties.parameters.policyDefinitionReferences.value[]
+  | [
+      .policyDefinitionReferenceId,
+      (.policyDefinitionId | capture("(?<guid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})").guid? // "custom"),
+      (.definitionVersion // "")
+    ]
+  | @tsv
+' "${TEMP_DIR}/main.json")"
+while IFS="$(printf '\t')" read -r reference_id builtin_id pinned_version; do
+  if [[ "${builtin_id}" == 'custom' ]]; then
+    [[ -z "${pinned_version}" ]] || {
+      printf 'ERROR: Custom data-protection reference %s must not declare definitionVersion.\n' "${reference_id}" >&2
+      exit 1
+    }
+    continue
+  fi
+  expected_major="$(jq -r --arg id "${builtin_id}" '
+    [.controls[] | select(.mechanism.builtIn == true and .mechanism.definitionId == $id) | .mechanism.majorVersion] | first // ""
+  ' "${PROJECT_DIR}/policy/control-catalog.json")"
+  [[ -n "${expected_major}" ]] || {
+    printf 'ERROR: Data-protection built-in %s has no verified majorVersion in the control catalog.\n' "${builtin_id}" >&2
+    exit 1
+  }
+  [[ "${pinned_version}" == "${expected_major}.*.*" ]] || {
+    printf 'ERROR: Data-protection reference %s must pin definitionVersion %s.*.* but pins "%s".\n' \
+      "${reference_id}" "${expected_major}" "${pinned_version}" >&2
+    exit 1
+  }
+done <<< "${data_protection_reference_pins}"
+
+# The exact expected pin per reference is spelled out so an unpinned, removed,
+# or silently re-pointed built-in fails even if the catalog changes too.
+jq -e '
+  (.resources[] | select(.name == "data-protection-initiative")
+    | .properties.parameters.policyDefinitionReferences.value
+    | map({ (.policyDefinitionReferenceId): (.definitionVersion // null) })
+    | add) == {
+    "storage-secure-transfer": "2.*.*",
+    "storage-minimum-tls": "1.*.*",
+    "storage-public-blob-access": "3.*.*",
+    "storage-network-access": "1.*.*",
+    "storage-shared-key-access": "2.*.*",
+    "storage-private-link-readiness": "2.*.*",
+    "key-vault-soft-delete": "3.*.*",
+    "key-vault-deletion-protection": "2.*.*",
+    "key-vault-rbac-authorization": "1.*.*",
+    "key-vault-network-access": "3.*.*",
+    "key-vault-private-link-readiness": "1.*.*",
+    "key-vault-diagnostics-readiness": "5.*.*",
+    "storage-customer-managed-key": "1.*.*",
+    "storage-approved-customer-managed-key": null
+  }
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Data-protection references must pin the exact verified built-in majors and leave the custom member unpinned.\n' >&2
+  exit 1
+}
+
 # Purge protection is only ever audited or denied, never turned off, and the
 # audit-only and readiness controls can never be escalated to Deny.
 jq -e '
