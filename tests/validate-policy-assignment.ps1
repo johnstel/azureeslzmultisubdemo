@@ -146,6 +146,155 @@ function Test-ResourceWithoutLocation {
     return $values.Count -eq 1 -and $values[0] -eq 'subscriptionLevelResources'
 }
 
+function Test-TrimmedNonEmpty {
+    param([string]$Value)
+    return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -ceq $Value.Trim()
+}
+
+function Test-CanonicalRfc3339UtcTimestamp {
+    param([string]$Value)
+    if ($Value -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$') {
+        return $false
+    }
+    $parsed = [System.DateTimeOffset]::MinValue
+    $parsedOk = [System.DateTimeOffset]::TryParseExact(
+        $Value,
+        'yyyy-MM-ddTHH:mm:ssZ',
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$parsed
+    )
+    return $parsedOk -and $parsed.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ') -ceq $Value
+}
+
+function Test-PolicyAssignmentScopeContract {
+    param(
+        [pscustomobject]$Case
+    )
+    if ([string]::IsNullOrWhiteSpace($Case.policyAssignmentId) -or
+        $Case.policyAssignmentId -cne $Case.policyAssignmentId.Trim() -or
+        -not $Case.policyAssignmentId.StartsWith('/') -or
+        $Case.policyAssignmentId.EndsWith('/')) {
+        return $false
+    }
+    $segments = $Case.policyAssignmentId.Split('/')
+    if ($segments.Count -lt 2 -or ($segments[1..($segments.Count - 1)] | Where-Object { $_ -eq '' -or $_ -cne $_.Trim() })) {
+        return $false
+    }
+    $permittedAncestors = @($Case.permittedAncestorAssignmentScopeIds | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    if (@($permittedAncestors | Where-Object { $_ -eq '' }).Count -gt 0 -or
+        @($permittedAncestors | Select-Object -Unique).Count -ne $permittedAncestors.Count) {
+        return $false
+    }
+    foreach ($scopeId in $permittedAncestors) {
+        if ($scopeId -notmatch '^/providers/Microsoft\.Management/managementGroups/[^/]+$' -and
+            $scopeId -notmatch '^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+            return $false
+        }
+    }
+    $assignmentScopeType = ''
+    $assignmentScopeId = ''
+    if ($Case.policyAssignmentId -imatch '^/providers/Microsoft\.Management/managementGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$') {
+        $assignmentScopeType = 'managementGroup'
+        $assignmentScopeId = "/providers/Microsoft.Management/managementGroups/$($segments[4])"
+    }
+    elseif ($Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/providers/Microsoft\.Authorization/policyAssignments/[^/]+$') {
+        $assignmentScopeType = 'subscription'
+        $assignmentScopeId = "/subscriptions/$($segments[2])"
+    }
+    elseif ($Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$') {
+        $assignmentScopeType = 'resourceGroup'
+        $assignmentScopeId = "/subscriptions/$($segments[2])/resourceGroups/$($segments[4])"
+    }
+    else {
+        return $false
+    }
+    $assignmentScopeId = $assignmentScopeId.ToLowerInvariant()
+    switch ($Case.scopeType) {
+        'managementGroup' {
+            $targetScopeId = "/providers/Microsoft.Management/managementGroups/$([string]$Case.managementGroupName)".ToLowerInvariant()
+            if (-not (Test-TrimmedNonEmpty -Value ([string]$Case.managementGroupName)) -or
+                -not [string]::IsNullOrEmpty([string]$Case.subscriptionId) -or
+                -not [string]::IsNullOrEmpty([string]$Case.resourceGroupName)) {
+                return $false
+            }
+            if (@($permittedAncestors | Where-Object { $_ -notmatch '^/providers/microsoft\.management/managementgroups/[^/]+$' -or $_ -ceq $targetScopeId }).Count -gt 0) {
+                return $false
+            }
+            if ($assignmentScopeId -ceq $targetScopeId) {
+                return $true
+            }
+            return $assignmentScopeType -eq 'managementGroup' -and
+                ($assignmentScopeId -in $permittedAncestors) -and
+                ($assignmentScopeId -cne $targetScopeId)
+        }
+        'subscription' {
+            $subscriptionGuid = [guid]::Empty
+            if (-not [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -or
+                -not [string]::IsNullOrEmpty([string]$Case.managementGroupName) -or
+                -not [string]::IsNullOrEmpty([string]$Case.resourceGroupName)) {
+                return $false
+            }
+            if (@($permittedAncestors | Where-Object { $_ -notmatch '^/providers/microsoft\.management/managementgroups/[^/]+$' }).Count -gt 0) {
+                return $false
+            }
+            $targetScopeId = "/subscriptions/$([string]$Case.subscriptionId)".ToLowerInvariant()
+            if ($assignmentScopeId -ceq $targetScopeId) {
+                return $true
+            }
+            return $assignmentScopeType -eq 'managementGroup' -and
+                ($assignmentScopeId -in $permittedAncestors)
+        }
+        'resourceGroup' {
+            $subscriptionGuid = [guid]::Empty
+            if (-not [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -or
+                -not (Test-TrimmedNonEmpty -Value ([string]$Case.resourceGroupName)) -or
+                -not [string]::IsNullOrEmpty([string]$Case.managementGroupName)) {
+                return $false
+            }
+            $targetSubscriptionScopeId = "/subscriptions/$([string]$Case.subscriptionId)".ToLowerInvariant()
+            if (@($permittedAncestors | Where-Object { $_ -notmatch '^/providers/microsoft\.management/managementgroups/[^/]+$' -and $_ -cne $targetSubscriptionScopeId }).Count -gt 0) {
+                return $false
+            }
+            $targetScopeId = "/subscriptions/$([string]$Case.subscriptionId)/resourceGroups/$([string]$Case.resourceGroupName)".ToLowerInvariant()
+            if ($assignmentScopeId -ceq $targetScopeId) {
+                return $true
+            }
+            if ($assignmentScopeType -eq 'managementGroup' -and ($assignmentScopeId -in $permittedAncestors)) {
+                return $true
+            }
+            return $assignmentScopeType -eq 'subscription' -and
+                ($assignmentScopeId -ceq $targetSubscriptionScopeId) -and
+                ($assignmentScopeId -in $permittedAncestors)
+        }
+        default {
+            return $false
+        }
+    }
+}
+
+function Test-PolicyDefinitionReferenceContract {
+    param(
+        [pscustomobject]$Case
+    )
+    $allowed = @($Case.allowed | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    $providedTrimmed = @($Case.provided | ForEach-Object { ([string]$_).Trim() })
+    $provided = @($providedTrimmed | ForEach-Object { $_.ToLowerInvariant() })
+    if ($allowed.Count -ne @($allowed | Select-Object -Unique).Count -or
+        $provided.Count -ne @($provided | Select-Object -Unique).Count -or
+        @($allowed | Where-Object { $_ -eq '' }).Count -gt 0 -or
+        @($providedTrimmed | Where-Object { $_ -eq '' }).Count -gt 0 -or
+        ($provided.Count -gt 0 -and $allowed.Count -eq 0)) {
+        return $false
+    }
+    foreach ($referenceId in $provided) {
+        if ($referenceId -notin $allowed) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Assert-BicepBuildFails {
     param(
         [string]$Fixture,
@@ -163,6 +312,35 @@ function Assert-BicepBuildFails {
     }
     if (-not $failed) {
         Stop-Test "Bicep unexpectedly accepted $Description."
+    }
+}
+
+function Assert-BicepBuildCompilesThroughExemptionValidationPath {
+    param(
+        [string]$Fixture,
+        [string]$Description,
+        [string]$TempDirectory
+    )
+    $compiledFixture = Join-Path $TempDirectory ([System.IO.Path]::GetFileNameWithoutExtension($Fixture) + '.json')
+    & az bicep build --file $Fixture --outfile $compiledFixture | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test "Bicep failed to compile $Description."
+    }
+    $compiledFixtureJson = Get-Content -LiteralPath $compiledFixture -Raw | ConvertFrom-Json
+    $validationTemplates = @(
+        Find-JsonObjects -Node $compiledFixtureJson -Predicate {
+            param($node)
+            $variables = $node.PSObject.Properties['variables']
+            if (-not $variables) {
+                return $false
+            }
+            $variablesValue = $variables.Value
+            return $variablesValue.PSObject.Properties['validatedScopedPolicyAssignmentId'] -and
+                $variablesValue.PSObject.Properties['validatedPolicyDefinitionReferenceIds']
+        }
+    )
+    if ($validationTemplates.Count -eq 0) {
+        Stop-Test "Exemption fixture did not compile through the policy-exemption module validation path: $Description."
     }
 }
 
@@ -186,12 +364,52 @@ try {
         --outfile $compiledShapes | Out-Null
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Policy assignment shape fixture build failed.' }
 
+    $compiledExemptionShapes = Join-Path $TempDir 'policy-exemption-shapes.json'
+    & az bicep build `
+        --file (Join-Path $ScriptDir 'fixtures/policy-exemption-shapes.bicep') `
+        --outfile $compiledExemptionShapes | Out-Null
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Policy exemption shape fixture build failed.' }
+
     Assert-BicepBuildFails `
         -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-assignment-name.bicep') `
         -Description 'a management-group policy assignment name longer than 24 characters'
     Assert-BicepBuildFails `
         -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-selector-kind.bicep') `
         -Description 'policyDefinitionReferenceId as a resource selector kind'
+    Assert-BicepBuildFails `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-expiry.bicep') `
+        -Description 'a policy exemption with an empty expiresOn value'
+    Assert-BicepBuildFails `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-scope.bicep') `
+        -Description 'a policy exemption with an unsupported exemptionScopeType value'
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-assignment-ancestry.bicep') `
+        -Description 'assignment ancestry negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-assignment-shape.bicep') `
+        -Description 'assignment shape negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-reference-contract.bicep') `
+        -Description 'reference contract negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-reference-missing-allowlist.bicep') `
+        -Description 'missing reference allowlist negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-timestamp-date.bicep') `
+        -Description 'timestamp calendar-date negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-timestamp-format.bicep') `
+        -Description 'timestamp format negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-whitespace-fields.bicep') `
+        -Description 'whitespace-required-fields negative fixture' `
+        -TempDirectory $TempDir
 
     $validationCases = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/policy-assignment-validation-cases.json') -Raw | ConvertFrom-Json
     foreach ($case in $validationCases.assignmentNames) {
@@ -214,6 +432,50 @@ try {
             Stop-Test 'resourceWithoutLocation validation produced the wrong result for a negative contract case.'
         }
     }
+
+    $exemptionValidationDocument = [System.Text.Json.JsonDocument]::Parse((Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/policy-exemption-validation-cases.json') -Raw))
+    $exemptionValidationRoot = $exemptionValidationDocument.RootElement
+    foreach ($case in $exemptionValidationRoot.GetProperty('trimmedRequiredStrings').EnumerateArray()) {
+        $value = $case.GetProperty('value').GetString()
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-TrimmedNonEmpty -Value $value) -ne $valid) {
+            Stop-Test "Trimmed required-string validation produced the wrong result for '$value'."
+        }
+    }
+    foreach ($case in $exemptionValidationRoot.GetProperty('rfc3339UtcTimestamps').EnumerateArray()) {
+        $value = $case.GetProperty('value').GetString()
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-CanonicalRfc3339UtcTimestamp -Value $value) -ne $valid) {
+            Stop-Test "RFC3339 UTC validation produced the wrong result for '$value'."
+        }
+    }
+    foreach ($case in $exemptionValidationRoot.GetProperty('policyAssignmentScopeContracts').EnumerateArray()) {
+        $contractCase = [pscustomobject]@{
+            scopeType = $case.GetProperty('scopeType').GetString()
+            managementGroupName = $case.GetProperty('managementGroupName').GetString()
+            subscriptionId = $case.GetProperty('subscriptionId').GetString()
+            resourceGroupName = $case.GetProperty('resourceGroupName').GetString()
+            permittedAncestorAssignmentScopeIds = @($case.GetProperty('permittedAncestorAssignmentScopeIds').EnumerateArray() | ForEach-Object { $_.GetString() })
+            policyAssignmentId = $case.GetProperty('policyAssignmentId').GetString()
+        }
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-PolicyAssignmentScopeContract -Case $contractCase) -ne $valid) {
+            Stop-Test "policyAssignmentId scope/ancestry validation produced the wrong result for '$($contractCase.policyAssignmentId)'."
+        }
+    }
+    foreach ($case in $exemptionValidationRoot.GetProperty('policyDefinitionReferenceContracts').EnumerateArray()) {
+        $allowed = @($case.GetProperty('allowed').EnumerateArray() | ForEach-Object { $_.GetString() })
+        $provided = @($case.GetProperty('provided').EnumerateArray() | ForEach-Object { $_.GetString() })
+        $contractCase = [pscustomobject]@{
+            allowed = $allowed
+            provided = $provided
+        }
+        $valid = $case.GetProperty('valid').GetBoolean()
+        if ((Test-PolicyDefinitionReferenceContract -Case $contractCase) -ne $valid) {
+            Stop-Test 'policyDefinitionReferenceIds allowlist validation produced the wrong result for a contract case.'
+        }
+    }
+    $exemptionValidationDocument.Dispose()
 
     $mainJson = Get-Content -LiteralPath $CompiledMainTemplate -Raw | ConvertFrom-Json
     if ($mainJson.resources -is [System.Management.Automation.PSCustomObject]) {
@@ -508,6 +770,100 @@ try {
         $expectedFragment = "if(not(empty(parameters('$optionalProperty'))), createObject('$optionalProperty'"
         if (-not ([string]$resource.properties).Contains($expectedFragment)) {
             Stop-Test "Compiled assignment does not conditionally omit empty $optionalProperty."
+        }
+    }
+
+    $exemptionShapesJson = Get-Content -LiteralPath $compiledExemptionShapes -Raw | ConvertFrom-Json
+    $exemptionShapeDeployments = @(
+        Find-JsonObjects -Node $exemptionShapesJson -Predicate {
+            param($node)
+            $node.PSObject.Properties['type'] -and
+                $node.type -eq 'Microsoft.Resources/deployments' -and
+                $node.PSObject.Properties['name'] -and
+            $node.name -in @('example-management-group-exemption', 'example-subscription-exemption', 'example-resource-group-exemption', 'example-inherited-assignment-exemption')
+        }
+    )
+    if ($exemptionShapeDeployments.Count -ne 4) {
+        Stop-Test 'Expected compiled management-group, subscription, resource-group, and inherited-assignment policy exemption examples.'
+    }
+    $managementGroupExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-management-group-exemption'
+    $subscriptionExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-subscription-exemption'
+    $resourceGroupExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-resource-group-exemption'
+    $inheritedAssignmentExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-inherited-assignment-exemption'
+
+    Assert-ExactNames `
+        -Actual @($managementGroupExemption.properties.parameters.PSObject.Properties.Name) `
+        -Expected @('approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'justification', 'managementGroupName', 'owner', 'policyAssignmentId', 'reviewedOn', 'ticketReference') `
+        -Message 'Management-group exemption example must include required accountability and expiry properties.'
+    Assert-ExactNames `
+        -Actual @($subscriptionExemption.properties.parameters.PSObject.Properties.Name) `
+        -Expected @('approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'justification', 'owner', 'policyAssignmentId', 'reviewedOn', 'subscriptionId', 'ticketReference') `
+        -Message 'Subscription exemption example must include required accountability and expiry properties.'
+    Assert-ExactNames `
+        -Actual @($resourceGroupExemption.properties.parameters.PSObject.Properties.Name) `
+        -Expected @('allowedPolicyDefinitionReferenceIds', 'approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'governanceOwner', 'justification', 'owner', 'policyAssignmentId', 'policyDefinitionReferenceIds', 'resourceGroupName', 'reviewedOn', 'source', 'subscriptionId', 'ticketReference') `
+        -Message 'Resource-group exemption example must include initiative reference IDs and governance metadata overrides.'
+
+    if ($managementGroupExemption.properties.parameters.exemptionCategory.value -ne 'Waiver' -or
+        $subscriptionExemption.properties.parameters.exemptionCategory.value -ne 'Mitigated' -or
+        (Compare-Object @($inheritedAssignmentExemption.properties.parameters.permittedAncestorAssignmentScopeIds.value) @('/subscriptions/44444444-4444-4444-4444-444444444444')) -or
+        $inheritedAssignmentExemption.properties.parameters.policyAssignmentId.value -ne '/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative' -or
+        (Compare-Object @($resourceGroupExemption.properties.parameters.allowedPolicyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg')) -or
+        (Compare-Object @($resourceGroupExemption.properties.parameters.policyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg'))) {
+        Stop-Test 'Exemption categories, policyDefinitionReferenceIds, or allowedPolicyDefinitionReferenceIds are invalid.'
+    }
+
+    $exemptionModuleTemplate = $managementGroupExemption.properties.template
+    $managementGroupExemptionResource = $exemptionModuleTemplate.resources.managementGroupExemption.properties.template.resources.exemption
+    if ($managementGroupExemptionResource.type -ne 'Microsoft.Authorization/policyExemptions' -or
+        $managementGroupExemptionResource.apiVersion -ne '2024-12-01-preview' -or
+        $managementGroupExemptionResource.name -ne "[parameters('exemptionName')]") {
+        Stop-Test 'Policy exemption module must emit a policyExemptions resource using the expected API and naming.'
+    }
+    $exemptionResourcePropertiesExpression = [string]$managementGroupExemptionResource.properties
+    foreach ($requiredPropertyText in @(
+        'policyAssignmentId',
+        'exemptionCategory',
+        'expiresOn',
+        'ticketReference',
+        'governanceVersion',
+        'policyDefinitionReferenceIds'
+    )) {
+        if (-not $exemptionResourcePropertiesExpression.Contains($requiredPropertyText)) {
+            Stop-Test "Policy exemption properties are missing required content: $requiredPropertyText"
+        }
+    }
+    if ($exemptionModuleTemplate.parameters.owner.minLength -ne 1 -or
+        $exemptionModuleTemplate.parameters.expiresOn.minLength -ne 1 -or
+        $exemptionModuleTemplate.parameters.ticketReference.minLength -ne 1 -or
+        $exemptionModuleTemplate.parameters.subscriptionId.defaultValue -ne '' -or
+        $exemptionModuleTemplate.parameters.resourceGroupName.defaultValue -ne '' -or
+        @($exemptionModuleTemplate.parameters.permittedAncestorAssignmentScopeIds.defaultValue).Count -ne 0 -or
+        @($exemptionModuleTemplate.parameters.allowedPolicyDefinitionReferenceIds.defaultValue).Count -ne 0 -or
+        $exemptionModuleTemplate.parameters.source.defaultValue -ne 'Bicep' -or
+        $exemptionModuleTemplate.parameters.governanceOwner.defaultValue -ne 'eslz-v2-governance') {
+        Stop-Test 'Policy exemption parameter defaults or required-field constraints changed.'
+    }
+    Assert-ExactNames `
+        -Actual @($exemptionModuleTemplate.parameters.exemptionCategory.allowedValues) `
+        -Expected @('Mitigated', 'Waiver') `
+        -Message 'Policy exemption category allowlist is incomplete.'
+    foreach ($validation in @{
+        validatedDisplayName = "fail('displayName must be non-empty and cannot include leading or trailing whitespace."
+        validatedPolicyAssignmentId = "fail('policyAssignmentId must be an exact Azure Policy assignment resource ID without trailing separators or whitespace."
+        validatedScopedPolicyAssignmentId = "fail('resourceGroup exemptions require policyAssignmentId at the target scope or an explicitly permitted ancestor scope."
+        validatedPermittedAncestorAssignmentScopeIds = "fail('permittedAncestorAssignmentScopeIds must include only supported ancestor scope IDs for the selected exemptionScopeType."
+        validatedExpiresOn = "fail('expiresOn must be a canonical RFC3339 UTC timestamp with a valid calendar date"
+        validatedScopeType = "fail('resourceGroup exemptions require valid subscriptionId and resourceGroupName"
+        validatedPolicyDefinitionReferenceIds = "fail('policyDefinitionReferenceIds must be present in allowedPolicyDefinitionReferenceIds."
+    }.GetEnumerator()) {
+        if (-not ([string]$exemptionModuleTemplate.variables.($validation.Key)).Contains($validation.Value)) {
+            Stop-Test "Compiled exemption validation missing from $($validation.Key)."
+        }
+    }
+    foreach ($deploymentNameVariable in @('managementGroupDeploymentName', 'subscriptionDeploymentName', 'resourceGroupDeploymentName')) {
+        if (-not ([string]$exemptionModuleTemplate.variables.$deploymentNameVariable).Contains('uniqueString(')) {
+            Stop-Test "Nested exemption deployment variable $deploymentNameVariable must include deterministic uniqueString entropy."
         }
     }
 
