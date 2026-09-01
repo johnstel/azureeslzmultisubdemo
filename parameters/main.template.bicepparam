@@ -24,3 +24,6 @@ param centralLogAnalyticsRetentionInDays = 30
 param centralLogAnalyticsDailyQuotaGb = -1
 param enableCriticalInfrastructure = false
 param criticalInfrastructureSubscriptionIds = []
+param enableDefenderCspm = false
+param enableDefenderForServers = false
+param enableDefenderForStorage = false

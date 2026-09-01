@@ -180,6 +180,52 @@ and skips deleting any resource group — including the generated
 `rg-<namePrefix>-connectivity` group — whose subscription and name match the
 supplied existing workspace, even if the names happen to collide.
 
+### Optional Microsoft Defender for Cloud plans
+
+By default (`enableDefenderCspm=false`, `enableDefenderForServers=false`,
+`enableDefenderForStorage=false`), the project assigns Microsoft Defender for
+Cloud plan policies with their `effect` parameter forced to `Disabled`, so
+**no** paid Defender plan is enabled and no license cost is incurred. A
+free, audit-only policy that checks for a supported vulnerability assessment
+solution on virtual machines is always assigned (no parameter); it never
+deploys a scanner and never depends on a paid plan.
+
+Each paid plan has its own independent opt-in parameter:
+
+- `enableDefenderCspm` — Microsoft Defender CSPM (Cloud Security Posture
+  Management), including CIEM (Cloud Infrastructure Entitlement Management)
+  findings, assigned at the demo root.
+- `enableDefenderForServers` — Microsoft Defender for Servers, assigned on the
+  Landing Zones branch, using current agentless scanning and the Azure
+  Monitor Agent rather than the deprecated Log Analytics (MMA) agent.
+- `enableDefenderForStorage` — Microsoft Defender for Storage, assigned on the
+  Landing Zones branch.
+
+Setting any of these to `true` changes the corresponding assignment's
+`effect` to `DeployIfNotExists`, which requires Azure Policy to attach a
+managed identity for remediation — this template always creates that
+identity, but **never** grants it a role. Each of these built-in policies
+requires the Owner role at the subscription scope to remediate, and this
+project's automatic RBAC granting deliberately refuses to grant Owner or User
+Access Administrator to any managed identity (see
+`modules/remediating-policy-assignment.bicep`) as a privilege-escalation
+guardrail. Before setting any of these parameters to `true`, a subscription
+Owner must:
+
+1. review current Microsoft Defender for Cloud plan licensing and per-resource
+   pricing, since these are metered, paid plans billed outside this project;
+2. manually grant the Owner role, at the target subscription(s), to the
+   principal ID output by the corresponding assignment module
+   (`identityPrincipalId`) so the `DeployIfNotExists` effect can remediate.
+
+This project never enables Defender plans, configures Microsoft Sentinel
+analytics/incidents, or claims that any of these controls alone prove
+Microsoft Cloud Security Benchmark (MCSB) or regulatory-compliance-dashboard
+compliance; see `docs/CONTROL-MATRIX.md` for the full REQ-DEF-01 through
+REQ-DEF-06 mapping, including why the all-or-nothing "Configure Microsoft
+Defender for Cloud plans" initiative and the deprecated Log Analytics (MMA)
+auto-provisioning policy are intentionally never assigned.
+
 ## Required permissions
 
 The person or service principal running the deployment must have:
