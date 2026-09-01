@@ -51,7 +51,8 @@ jq -e '
   deployment("workload-evidence") as $workloadEvidence |
   ($initiative.properties.parameters.policyDefinitionReferences.value |
     map({key: .policyDefinitionReferenceId, value: .parameters.tagName.value}) | from_entries) as $tagsByReference |
-  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.parameters.tagName.value)) == $requiredTags and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.parameters.tagName.value) | sort) ==
+    ($requiredTags | sort) and
   ($initiative.properties.parameters.policyDefinitionReferences.value | length) == 6 and
   ([$initiative.properties.parameters.policyDefinitionReferences.value[].policyDefinitionId] | unique) ==
     ["[variables(\u0027requireResourceGroupTagPolicyDefinitionId\u0027)]"] and

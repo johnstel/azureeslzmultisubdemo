@@ -94,11 +94,12 @@ try {
     if ($tagReferences.Count -ne 6) {
         Stop-Test 'Required resource-group tag initiative must contain exactly six policy references.'
     }
-    for ($index = 0; $index -lt $requiredTags.Count; $index++) {
-        if ($tagReferences[$index].parameters.tagName.value -cne $requiredTags[$index]) {
-            Stop-Test "Required resource-group tag at index $index must be exactly $($requiredTags[$index])."
-        }
-        if ($tagReferences[$index].policyDefinitionId -cne "[variables('requireResourceGroupTagPolicyDefinitionId')]") {
+    $actualTags = @($tagReferences.parameters.tagName.value)
+    if (Compare-Object -ReferenceObject $requiredTags -DifferenceObject $actualTags -CaseSensitive) {
+        Stop-Test 'Required resource-group tag initiative must contain the exact six case-sensitive tag names.'
+    }
+    foreach ($tagReference in $tagReferences) {
+        if ($tagReference.policyDefinitionId -cne "[variables('requireResourceGroupTagPolicyDefinitionId')]") {
             Stop-Test 'Every required tag must use the verified built-in resource-group tag policy.'
         }
     }
