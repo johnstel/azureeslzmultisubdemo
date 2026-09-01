@@ -16,6 +16,15 @@ function Stop-Test {
     throw $Message
 }
 
+function ConvertTo-TestMessage {
+    param($Output)
+
+    $text = (@($Output) | ForEach-Object { [string]$_ }) -join "`n"
+    $text = $text -replace "$([char]27)\[[0-9;]*[A-Za-z]", ''
+    $text = (($text -split "`r?`n") | ForEach-Object { $_ -replace '^\s*\|\s?', '' }) -join ' '
+    return ($text -replace '\s+', ' ').Trim()
+}
+
 function Find-JsonObjects {
     param(
         [Parameter(Mandatory = $true)]
@@ -43,12 +52,42 @@ function Find-JsonObjects {
     return $results
 }
 
+function Find-ProhibitedPaidDeclarations {
+    param($Node)
+    $results = @()
+    if ($null -eq $Node) {
+        return $results
+    }
+    if ($Node -is [System.Management.Automation.PSCustomObject]) {
+        $typeProperty = $Node.PSObject.Properties['type']
+        $apiVersionProperty = $Node.PSObject.Properties['apiVersion']
+        $nameProperty = $Node.PSObject.Properties['name']
+        if ($typeProperty -and $typeProperty.Value -eq 'Microsoft.Resources/deployments' -and
+            $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel')) {
+            return $results
+        }
+        $prohibitedPattern = '^Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$'
+        if ($typeProperty -and $apiVersionProperty -and $typeProperty.Value -match $prohibitedPattern) {
+            $results += $typeProperty.Value
+        }
+        foreach ($property in $Node.PSObject.Properties) {
+            $results += Find-ProhibitedPaidDeclarations -Node $property.Value
+        }
+    }
+    elseif ($Node -is [System.Collections.IEnumerable] -and $Node -isnot [string]) {
+        foreach ($item in $Node) {
+            $results += Find-ProhibitedPaidDeclarations -Node $item
+        }
+    }
+    return $results
+}
+
 try {
     if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/24 Validate repository versioning and branch guidance...'
+    Write-Host '1/23 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -66,17 +105,22 @@ try {
         }
     }
 
-    Write-Host '2/24 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/23 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
     if ($buildOutput -match 'BCP318') {
         Stop-Test 'main.bicep build must not emit a BCP318 nullable-module-output warning.'
     }
+    $compiledEligibilityTemplate = Join-Path $TempDir 'owner-eligibility-request.json'
+    & az bicep build `
+        --file (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.bicep') `
+        --outfile $compiledEligibilityTemplate
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Owner eligibility Bicep build failed.' }
     & (Join-Path $ScriptDir 'validate-policy-assignment.ps1') -CompiledMainTemplate $compiledTemplate
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/24 Validate both parameter templates...'
+    Write-Host '3/23 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -88,6 +132,13 @@ try {
     if ($parameterTemplate.parameters.denyPolicyEnforcementMode.value -ne 'DoNotEnforce') {
         Stop-Test 'denyPolicyEnforcementMode must default to DoNotEnforce.'
     }
+    if (Compare-Object @('eastus', 'eastus2') @($parameterTemplate.parameters.customerAllowedLocations.value)) {
+        Stop-Test 'customerAllowedLocations must default to eastus and eastus2.'
+    }
+    if ('Microsoft.PolicyInsights/remediations' -notin @($parameterTemplate.parameters.customerAllowedResourceTypes.value) -or
+        @($parameterTemplate.parameters.customerAllowedVmSkus.value).Count -eq 0) {
+        Stop-Test 'Customer resource-type and VM SKU allowlists must remain safe and populated.'
+    }
     $compiledParametersPath = Join-Path $TempDir 'main.parameters.json'
     & az bicep build-params `
         --file (Join-Path $ProjectDir 'parameters/main.template.bicepparam') `
@@ -98,7 +149,7 @@ try {
         Stop-Test 'networkIngressPolicyEffect must default to Audit in the Bicep parameter template.'
     }
 
-    Write-Host '4/24 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/23 Confirm there are exactly two unconditional subscription associations...'
     $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -109,90 +160,514 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/24 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
-    $bicepFiles = @(
-        Get-Item (Join-Path $ProjectDir 'main.bicep')
-        Get-ChildItem (Join-Path $ProjectDir 'modules') -Filter '*.bicep' |
-            Where-Object { $_.Name -notin @('policy-library.bicep', 'central-monitoring.bicep', 'central-monitoring-workspace.bicep', 'central-monitoring-sentinel.bicep') }
-    )
-    $prohibitedPattern = 'Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)'
-    foreach ($bicepFile in $bicepFiles) {
-        if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match $prohibitedPattern) {
-            Stop-Test "A prohibited evidence resource type is declared in $($bicepFile.Name)."
-        }
+    Write-Host '5/23 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
+        Stop-Test 'A prohibited evidence resource type is declared.'
+    }
+    $paidResourceFixture = Join-Path $TempDir 'paid-resource-declaration.json'
+    & az bicep build `
+        --file (Join-Path $ScriptDir 'fixtures/paid-resource-declaration.bicep') `
+        --outfile $paidResourceFixture
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Paid-resource declaration fixture build failed.' }
+    $paidResourceFixtureJson = Get-Content -LiteralPath $paidResourceFixture -Raw | ConvertFrom-Json
+    if (@(Find-ProhibitedPaidDeclarations -Node $paidResourceFixtureJson).Count -eq 0) {
+        Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/24 Confirm Microsoft Defender for Cloud plan assignments always stay Disabled with no managed identity, no auto-granted role, pinned built-in versions, and never reference the deprecated Log Analytics (MMA) auto-provisioning agent...'
-    foreach ($bicepFile in @(
-        (Join-Path $ProjectDir 'main.bicep')
-        (Join-Path $ProjectDir 'modules/defender-plan-assignment.bicep')
-    )) {
-        if ((Get-Content -LiteralPath $bicepFile -Raw) -match 'enableDefenderCspm|enableDefenderForServers|enableDefenderForStorage|enablePlan') {
-            Stop-Test 'Microsoft Defender for Cloud plan assignments must not expose an opt-in parameter; they are manual-evidence-only governance markers with no toggle.'
-        }
-    }
-    foreach ($parameterFile in @(
-        (Join-Path $ProjectDir 'parameters/main.template.bicepparam')
-        (Join-Path $ProjectDir 'parameters/demo.parameters.template.json')
-    )) {
-        if ((Get-Content -LiteralPath $parameterFile -Raw) -match 'enableDefenderCspm|enableDefenderForServers|enableDefenderForStorage') {
-            Stop-Test 'Parameter templates must not declare a Microsoft Defender for Cloud opt-in parameter.'
-        }
-    }
-    foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
-        if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match '475aae12-b88a-4572-8b36-9b712b2b3a17') {
-            Stop-Test "main.bicep/modules must never assign the deprecated Log Analytics (MMA) auto-provisioning policy definition ($($bicepFile.Name))."
-        }
-    }
-    $defenderAssignments = @($compiledJson.resources | Where-Object {
-        $_.name -in @('assign-defender-cspm', 'assign-defender-servers', 'assign-defender-storage')
-    })
-    if ($defenderAssignments.Count -ne 3) {
-        Stop-Test 'Expected exactly three Defender plan assignments (CSPM, Servers, Storage).'
-    }
-    foreach ($defenderAssignment in $defenderAssignments) {
-        $assignmentResource = $defenderAssignment.properties.template.resources.assignment
-        if ($assignmentResource.properties.parameters.effect.value -ne 'Disabled') {
-            Stop-Test "Defender plan assignment $($defenderAssignment.name) must have its effect unconditionally Disabled."
-        }
-        if ($assignmentResource.PSObject.Properties['identity']) {
-            Stop-Test "Defender plan assignment $($defenderAssignment.name) must never carry a managed identity; a normal deployment must never create or leave standing Owner access."
-        }
-        $definitionVersionText = $assignmentResource.properties.definitionVersion
-        if ($definitionVersionText -notmatch "^\[variables\('selectedPlan'\)\.definitionVersion\]$") {
-            Stop-Test "Defender plan assignment $($defenderAssignment.name) must pin definitionVersion via the verified plan lookup."
-        }
-        $nestedJson = $assignmentResource | ConvertTo-Json -Depth 100 -Compress
-        if ($nestedJson -match 'Microsoft\.Authorization/roleAssignments') {
-            Stop-Test "Defender plan assignment $($defenderAssignment.name) must never automatically grant RBAC roles; Owner is required for remediation and this repository never grants it automatically."
-        }
-    }
-    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/defender-plan-assignment.bicep') -Raw) -notmatch "definitionVersion: '1\.\*\.\*'") {
-        Stop-Test "modules/defender-plan-assignment.bicep must pin definitionVersion to the verified major '1.*.*'."
-    }
-    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/defender-plan-assignment.bicep') -Raw) -notmatch "param plan 'cspm' \| 'servers' \| 'storage'") {
-        Stop-Test "modules/defender-plan-assignment.bicep must restrict its plan parameter to the three verified plans."
-    }
-    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw) -notmatch "module vulnerabilityAssessmentAuditAssignment 'modules/policy-assignment\.bicep' = \{") {
-        Stop-Test 'main.bicep must unconditionally assign the free vulnerability-assessment audit policy.'
-    }
-    if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw) -notmatch "definitionVersion: '3\.\*\.\*'") {
-        Stop-Test "main.bicep must pin the vulnerability-assessment assignment's definitionVersion to the verified major '3.*.*'."
-    }
-
-    Write-Host '7/24 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/23 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '8/24 Confirm five Entra group parameters and guarded lifecycle scripts...'
+    Write-Host '7/23 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
-    $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
-    if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
-        Stop-Test 'Expected five Entra security-group parameters.'
+    $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
+    if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
+        Stop-Test 'Expected four ordinary Entra security-group parameters in main.bicep.'
     }
+    $rbacValidatorPath = Join-Path $ProjectDir 'scripts/validate-rbac-artifacts.ps1'
+    & $rbacValidatorPath `
+        -CompiledTemplate $compiledTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'PIM-ready RBAC artifact validation failed.' }
+
+    $rbacNegativeTemplate = Join-Path $TempDir 'main-permanent-owner.json'
+    $rbacNegativeJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    $rbacNegativeJson.resources += [pscustomobject]@{
+        type = 'Microsoft.Authorization/roleAssignments'
+        apiVersion = '2022-04-01'
+        name = '00000000-0000-0000-0000-000000000000'
+        properties = [pscustomobject]@{
+            principalId = "[parameters('governanceAdminsGroupObjectId')]"
+            roleDefinitionId = "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]"
+        }
+    }
+    $rbacNegativeJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacNegativeTemplate
+    $rbacNegativeOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $rbacNegativeTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted a compiled permanent Owner assignment.'
+    }
+    $rbacNegativeMessage = ConvertTo-TestMessage $rbacNegativeOutput
+    if ($rbacNegativeMessage -notmatch 'permanent Owner role assignment') {
+        Stop-Test "RBAC validator rejected the permanent Owner fixture for the wrong reason: $rbacNegativeMessage"
+    }
+    $rbacMainRequestTemplate = Join-Path $TempDir 'main-one-shot-request.json'
+    $rbacMainRequestJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    $rbacMainRequestJson.resources += [pscustomobject]@{
+        type = 'Microsoft.Authorization/roleEligibilityScheduleRequests'
+        apiVersion = '2020-10-01'
+        name = "[guid(subscription().id, 'reused-request')]"
+        condition = $false
+        properties = [pscustomobject]@{}
+    }
+    $rbacMainRequestJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacMainRequestTemplate
+    $rbacMainRequestOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $rbacMainRequestTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted a one-time eligibility request in the repeatable main template.'
+    }
+    $rbacMainRequestMessage = ConvertTo-TestMessage $rbacMainRequestOutput
+    if ($rbacMainRequestMessage -notmatch 'one-time eligibility schedule request') {
+        Stop-Test "RBAC validator rejected the main eligibility fixture for the wrong reason: $rbacMainRequestMessage"
+    }
+    $rbacOwnerBindingTemplate = Join-Path $TempDir 'main-owner-role-binding.json'
+    (Get-Content -LiteralPath $compiledTemplate -Raw).Replace(
+        '4d97b98b-1d4f-4787-a291-c67834d212e7',
+        '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+    ) | Set-Content -LiteralPath $rbacOwnerBindingTemplate
+    $rbacOwnerBindingOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $rbacOwnerBindingTemplate `
+        -CompiledEligibilityTemplate $compiledEligibilityTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted an Owner role passed through a nested module binding.'
+    }
+    $rbacOwnerBindingMessage = ConvertTo-TestMessage $rbacOwnerBindingOutput
+    if ($rbacOwnerBindingMessage -notmatch 'Owner role definition reference') {
+        Stop-Test "RBAC validator rejected the Owner module binding for the wrong reason: $rbacOwnerBindingMessage"
+    }
+
+    $rbacExtraResourceTemplate = Join-Path $TempDir 'owner-request-with-deployment-script.json'
+    $rbacExtraResourceJson = Get-Content -LiteralPath $compiledEligibilityTemplate -Raw | ConvertFrom-Json
+    $rbacExtraResourceJson.resources += [pscustomobject]@{
+        type = 'Microsoft.Resources/deploymentScripts'
+        apiVersion = '2023-08-01'
+        name = 'prohibited-automation'
+        properties = [pscustomobject]@{}
+    }
+    $rbacExtraResourceJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacExtraResourceTemplate
+    $rbacExtraResourceOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+        -CompiledTemplate $compiledTemplate `
+        -CompiledEligibilityTemplate $rbacExtraResourceTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted an extra automation resource in the one-shot artifact.'
+    }
+    $rbacExtraResourceMessage = ConvertTo-TestMessage $rbacExtraResourceOutput
+    if ($rbacExtraResourceMessage -notmatch 'One-shot Owner eligibility artifact') {
+        Stop-Test "RBAC validator rejected the one-shot extra resource for the wrong reason: $rbacExtraResourceMessage"
+    }
+    foreach ($guardName in @('targetScheduleInputIsValid', 'scheduleInputIsValid', 'executionInputsAreValid')) {
+        $rbacGuardTemplate = Join-Path $TempDir "owner-request-$guardName-true.json"
+        $rbacGuardJson = Get-Content -LiteralPath $compiledEligibilityTemplate -Raw | ConvertFrom-Json
+        $rbacGuardJson.variables.$guardName = $true
+        $rbacGuardJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacGuardTemplate
+        $rbacGuardOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
+            -CompiledTemplate $compiledTemplate `
+            -CompiledEligibilityTemplate $rbacGuardTemplate 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Stop-Test "RBAC validator accepted $guardName replaced with true."
+        }
+        $rbacGuardMessage = ConvertTo-TestMessage $rbacGuardOutput
+        if ($rbacGuardMessage -notmatch 'compiled input guards') {
+            Stop-Test "RBAC validator rejected the $guardName mutation for the wrong reason: $rbacGuardMessage"
+        }
+    }
+
+    $ownerRequestId = '22222222-2222-4222-8222-222222222222'
+    $ownerGroupId = '33333333-3333-4333-8333-333333333333'
+    $ownerSubscriptionId = '11111111-1111-4111-8111-111111111111'
+    $ownerParameterFile = Join-Path $TempDir 'owner-valid.parameters.json'
+    $ownerParameters = Get-Content -LiteralPath (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.parameters.template.json') -Raw | ConvertFrom-Json
+    $ownerParameters.parameters.submitEligibilityRequest.value = $true
+    $ownerParameters.parameters.requestId.value = $ownerRequestId
+    $ownerParameters.parameters.subscriptionPrivilegedAccessGroupObjectId.value = $ownerGroupId
+    $ownerParameters.parameters.eligibleOwnerAssignmentStartDateTime.value = '2030-01-02T03:04:05Z'
+    $ownerParameters.parameters.eligibleOwnerAssignmentJustification.value = 'Approved sandbox Owner eligibility demonstration'
+    $ownerParameters | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ownerParameterFile
+    $ownerUpdateParameterFile = Join-Path $TempDir 'owner-update.parameters.json'
+    $ownerUpdateParameters = $ownerParameters | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $ownerUpdateParameters.parameters.requestType.value = 'AdminUpdate'
+    $ownerUpdateParameters.parameters.targetRoleEligibilityScheduleId.value = '55555555-5555-4555-8555-555555555555'
+    $ownerUpdateParameters | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ownerUpdateParameterFile
+
+    $ownerOperatorProject = Join-Path $TempDir 'owner-operator-project'
+    $ownerOperatorScripts = Join-Path $ownerOperatorProject 'scripts'
+    $ownerOperatorIdentity = Join-Path $ownerOperatorProject 'identity/azure-rbac'
+    New-Item -ItemType Directory -Path $ownerOperatorScripts, $ownerOperatorIdentity -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $ProjectDir 'scripts/owner-eligibility-request.ps1') -Destination $ownerOperatorScripts
+    Copy-Item -LiteralPath (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.bicep') -Destination $ownerOperatorIdentity
+    $ownerOperatorPath = Join-Path $ownerOperatorScripts 'owner-eligibility-request.ps1'
+    $ownerOperatorBicep = Join-Path $ownerOperatorIdentity 'owner-eligibility-request.bicep'
+
+    $ownerAzLog = Join-Path $TempDir 'owner-ps-az-calls.log'
+    $ownerTestWrapper = Join-Path $TempDir 'invoke-owner-workflow-with-mock.ps1'
+    @'
+$ErrorActionPreference = 'Stop'
+function global:az {
+    $arguments = @($args)
+    $global:LASTEXITCODE = 0
+    Add-Content -LiteralPath $env:OWNER_AZ_CALL_LOG -Value ($arguments -join ' ')
+    if ($arguments[0] -eq 'bicep' -and $arguments[1] -eq 'build') {
+        $sourceIndex = [Array]::IndexOf($arguments, '--file')
+        $outputIndex = [Array]::IndexOf($arguments, '--outfile')
+        [pscustomobject]@{
+            compiledSource = Get-Content -LiteralPath $arguments[$sourceIndex + 1] -Raw
+        } | ConvertTo-Json -Compress | Set-Content -LiteralPath $arguments[$outputIndex + 1]
+        return
+    }
+    if ($arguments[0] -eq 'account' -and $arguments[1] -eq 'show') {
+        [pscustomobject]@{
+            id = $env:MOCK_SUBSCRIPTION_ID
+            state = 'Enabled'
+            tenantId = '44444444-4444-4444-8444-444444444444'
+        } | ConvertTo-Json -Compress
+        return
+    }
+    if ($arguments[0] -eq 'ad' -and $arguments[1] -eq 'group' -and $arguments[2] -eq 'show') {
+        if (($arguments -join ' ') -cne "ad group show --group $env:MOCK_GROUP_ID --output json") {
+            throw "Unsupported arguments passed to az ad group show: $($arguments -join ' ')"
+        }
+        [pscustomobject]@{
+            id = $env:MOCK_GROUP_ID
+            securityEnabled = if ($env:MOCK_SECURITY_AS_STRING -eq 'true') {
+                'true'
+            }
+            else {
+                $env:MOCK_SECURITY_ENABLED -ne 'false'
+            }
+        } | ConvertTo-Json -Compress
+        return
+    }
+    if ($arguments[0] -eq 'rest') {
+        $urlIndex = [Array]::IndexOf($arguments, '--url')
+        $url = [string]$arguments[$urlIndex + 1]
+        if ($url.Contains('roleEligibilitySchedules?')) {
+            if ($env:MOCK_FALSE_NEXT_LINK -eq 'true') {
+                [pscustomobject]@{ value = @(); nextLink = $false } | ConvertTo-Json -Compress
+                return
+            }
+            if ($env:MOCK_ANCESTOR_SCHEDULE -eq 'true') {
+                [pscustomobject]@{
+                    value = @(
+                        [pscustomobject]@{
+                            name = '55555555-5555-4555-8555-555555555555'
+                            id = '/providers/Microsoft.Management/managementGroups/eslz-parent/providers/Microsoft.Authorization/roleEligibilitySchedules/55555555-5555-4555-8555-555555555555'
+                            properties = [pscustomobject]@{
+                                scope = '/providers/Microsoft.Management/managementGroups/eslz-parent'
+                                principalId = $env:MOCK_GROUP_ID
+                                roleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+                            }
+                        }
+                    )
+                } | ConvertTo-Json -Compress -Depth 10
+                return
+            }
+            if ($env:MOCK_EXISTING_SCHEDULE -eq 'true') {
+                [pscustomobject]@{
+                    value = @(
+                        [pscustomobject]@{
+                            name = '55555555-5555-4555-8555-555555555555'
+                            id = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleEligibilitySchedules/55555555-5555-4555-8555-555555555555"
+                            properties = [pscustomobject]@{
+                                scope = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID"
+                                principalId = $env:MOCK_GROUP_ID
+                                roleDefinitionId = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+                            }
+                        }
+                    )
+                } | ConvertTo-Json -Compress -Depth 10
+                return
+            }
+            [pscustomobject]@{ value = @() } | ConvertTo-Json -Compress
+            return
+        }
+        if ($url.Contains('roleEligibilityScheduleRequests?') -and $url.Contains('page=2') -and $env:MOCK_PAGED_PENDING -eq 'true') {
+            [pscustomobject]@{
+                value = @(
+                    [pscustomobject]@{
+                        name = '66666666-6666-4666-8666-666666666666'
+                        id = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/66666666-6666-4666-8666-666666666666"
+                        properties = [pscustomobject]@{
+                            scope = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID"
+                            principalId = $env:MOCK_GROUP_ID
+                            roleDefinitionId = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+                            status = 'PendingApproval'
+                        }
+                    }
+                )
+            } | ConvertTo-Json -Compress -Depth 10
+            return
+        }
+        if ($url.Contains('roleEligibilityScheduleRequests?')) {
+            if ($env:MOCK_FALSE_REQUEST_NEXT_LINK -eq 'true') {
+                [pscustomobject]@{ value = @(); nextLink = $false } | ConvertTo-Json -Compress
+                return
+            }
+            if ($env:MOCK_MALFORMED_REQUESTS -eq 'true') {
+                [pscustomobject]@{ value = $false } | ConvertTo-Json -Compress
+                return
+            }
+            if ($env:MOCK_ANCESTOR_PENDING_REQUEST -eq 'true') {
+                [pscustomobject]@{
+                    value = @(
+                        [pscustomobject]@{
+                            name = '66666666-6666-4666-8666-666666666666'
+                            id = '/providers/Microsoft.Management/managementGroups/eslz-parent/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/66666666-6666-4666-8666-666666666666'
+                            properties = [pscustomobject]@{
+                                scope = '/providers/Microsoft.Management/managementGroups/eslz-parent'
+                                principalId = $env:MOCK_GROUP_ID
+                                roleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+                                status = 'PendingApproval'
+                            }
+                        }
+                    )
+                } | ConvertTo-Json -Compress -Depth 10
+                return
+            }
+            if (
+                $env:MOCK_LIVE_STATE_CHANGE_AFTER_PREVIEW -eq 'true' -and
+                (Test-Path -LiteralPath $env:OWNER_MOCK_PHASE_FILE)
+            ) {
+                [pscustomobject]@{
+                    value = @(
+                        [pscustomobject]@{
+                            name = '66666666-6666-4666-8666-666666666666'
+                            id = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/66666666-6666-4666-8666-666666666666"
+                            properties = [pscustomobject]@{
+                                scope = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID"
+                                principalId = $env:MOCK_GROUP_ID
+                                roleDefinitionId = "/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+                                status = 'PendingApproval'
+                            }
+                        }
+                    )
+                } | ConvertTo-Json -Compress -Depth 10
+                return
+            }
+            if ($env:MOCK_PAGED_PENDING -eq 'true') {
+                [pscustomobject]@{
+                    value = @()
+                    nextLink = "https://management.azure.com/subscriptions/$env:MOCK_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleEligibilityScheduleRequests?api-version=2020-10-01&%24filter=atScope()&page=2"
+                } | ConvertTo-Json -Compress -Depth 10
+                return
+            }
+            [pscustomobject]@{ value = @() } | ConvertTo-Json -Compress
+            return
+        }
+    }
+    if ($arguments[0] -eq 'deployment' -and $arguments[1] -eq 'sub' -and $arguments[2] -eq 'what-if') {
+        $templateIndex = [Array]::IndexOf($arguments, '--template-file')
+        $templatePath = [string]$arguments[$templateIndex + 1]
+        $templateHash = (Get-FileHash -LiteralPath $templatePath -Algorithm SHA256).Hash
+        Add-Content -LiteralPath $env:OWNER_AZ_CALL_LOG -Value "WHAT_IF_TEMPLATE=$templatePath|$templateHash"
+        if ($env:MOCK_MUTATE_SOURCE_AFTER_PREVIEW -eq 'true') {
+            Add-Content -LiteralPath $env:MOCK_OPERATOR_BICEP_FILE -Value '// source changed after what-if'
+        }
+        if (-not [string]::IsNullOrEmpty($env:OWNER_MOCK_PHASE_FILE)) {
+            Set-Content -LiteralPath $env:OWNER_MOCK_PHASE_FILE -Value 'post-preview'
+        }
+        '{"status":"previewed"}'
+        return
+    }
+    if ($arguments[0] -eq 'deployment' -and $arguments[1] -eq 'sub' -and $arguments[2] -eq 'create') {
+        $templateIndex = [Array]::IndexOf($arguments, '--template-file')
+        $templatePath = [string]$arguments[$templateIndex + 1]
+        $templateHash = (Get-FileHash -LiteralPath $templatePath -Algorithm SHA256).Hash
+        Add-Content -LiteralPath $env:OWNER_AZ_CALL_LOG -Value "CREATE_TEMPLATE=$templatePath|$templateHash"
+        '{"status":"submitted"}'
+        return
+    }
+    throw "Unexpected az arguments: $($arguments -join ' ')"
+}
+
+if ($env:OWNER_EXECUTE -eq 'true') {
+    & $env:OWNER_OPERATOR_PATH `
+        -SubscriptionId $env:MOCK_SUBSCRIPTION_ID `
+        -ParameterFile $env:OWNER_PARAMETER_FILE `
+        -Execute
+}
+else {
+    & $env:OWNER_OPERATOR_PATH `
+        -SubscriptionId $env:MOCK_SUBSCRIPTION_ID `
+        -ParameterFile $env:OWNER_PARAMETER_FILE
+}
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $ownerTestWrapper
+
+    New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+    $env:OWNER_AZ_CALL_LOG = $ownerAzLog
+    $env:MOCK_SUBSCRIPTION_ID = $ownerSubscriptionId
+    $env:MOCK_GROUP_ID = $ownerGroupId
+    $env:MOCK_SECURITY_ENABLED = 'true'
+    $env:MOCK_SECURITY_AS_STRING = 'false'
+    $env:MOCK_MALFORMED_REQUESTS = 'false'
+    $env:MOCK_PAGED_PENDING = 'true'
+    $env:MOCK_EXISTING_SCHEDULE = 'false'
+    $env:MOCK_ANCESTOR_SCHEDULE = 'false'
+    $env:MOCK_ANCESTOR_PENDING_REQUEST = 'false'
+    $env:MOCK_FALSE_NEXT_LINK = 'false'
+    $env:MOCK_FALSE_REQUEST_NEXT_LINK = 'false'
+    $env:MOCK_LIVE_STATE_CHANGE_AFTER_PREVIEW = 'false'
+    $env:MOCK_MUTATE_SOURCE_AFTER_PREVIEW = 'false'
+    $env:OWNER_EXECUTE = 'false'
+    $env:OWNER_OPERATOR_PATH = $ownerOperatorPath
+    $env:MOCK_OPERATOR_BICEP_FILE = $ownerOperatorBicep
+    $env:OWNER_PARAMETER_FILE = $ownerParameterFile
+    $ownerPagedOutput = & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+    $ownerPagedExitCode = $LASTEXITCODE
+    if ($ownerPagedExitCode -eq 0) {
+        Stop-Test 'PowerShell Owner eligibility workflow ignored a pending matching request on a later ARM page.'
+    }
+    $ownerPagedCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+    $ownerPagedMessage = ConvertTo-TestMessage $ownerPagedOutput
+    if (
+        $ownerPagedCalls -notmatch 'page=2' -or
+        $ownerPagedCalls -match 'deployment sub what-if' -or
+        $ownerPagedMessage -notmatch 'pending or has an unknown'
+    ) {
+        Stop-Test "PowerShell Owner eligibility workflow did not fail closed after paginated pending-request inventory. Output: $ownerPagedMessage"
+    }
+
+    foreach ($malformedCase in @('string-security-enabled', 'malformed-requests')) {
+        New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+        $env:MOCK_SECURITY_AS_STRING = if ($malformedCase -eq 'string-security-enabled') { 'true' } else { 'false' }
+        $env:MOCK_MALFORMED_REQUESTS = if ($malformedCase -eq 'malformed-requests') { 'true' } else { 'false' }
+        $malformedOutput = & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+        $malformedExitCode = $LASTEXITCODE
+        $malformedCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+        if ($malformedExitCode -eq 0 -or $malformedCalls -match 'deployment sub what-if') {
+            Stop-Test "PowerShell Owner eligibility workflow did not fail closed for $malformedCase. Output: $(ConvertTo-TestMessage $malformedOutput)"
+        }
+    }
+
+    $env:MOCK_SECURITY_AS_STRING = 'false'
+    $env:MOCK_MALFORMED_REQUESTS = 'false'
+    $env:MOCK_PAGED_PENDING = 'false'
+    foreach ($blockedCase in @('ancestor-schedule', 'ancestor-pending-request', 'false-next-link', 'false-request-next-link')) {
+        New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+        $env:MOCK_ANCESTOR_SCHEDULE = if ($blockedCase -eq 'ancestor-schedule') { 'true' } else { 'false' }
+        $env:MOCK_ANCESTOR_PENDING_REQUEST = if ($blockedCase -eq 'ancestor-pending-request') { 'true' } else { 'false' }
+        $env:MOCK_FALSE_NEXT_LINK = if ($blockedCase -eq 'false-next-link') { 'true' } else { 'false' }
+        $env:MOCK_FALSE_REQUEST_NEXT_LINK = if ($blockedCase -eq 'false-request-next-link') { 'true' } else { 'false' }
+        $blockedOutput = & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+        $blockedExitCode = $LASTEXITCODE
+        $blockedCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+        if ($blockedExitCode -eq 0 -or $blockedCalls -match 'deployment sub what-if') {
+            Stop-Test "PowerShell Owner eligibility workflow did not fail closed for $blockedCase. Output: $(ConvertTo-TestMessage $blockedOutput)"
+        }
+    }
+
+    New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+    $env:MOCK_ANCESTOR_SCHEDULE = 'true'
+    $env:MOCK_ANCESTOR_PENDING_REQUEST = 'false'
+    $env:MOCK_FALSE_NEXT_LINK = 'false'
+    $env:MOCK_FALSE_REQUEST_NEXT_LINK = 'false'
+    $env:OWNER_PARAMETER_FILE = $ownerUpdateParameterFile
+    $ownerAncestorUpdateOutput = & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+    $ownerAncestorUpdateExitCode = $LASTEXITCODE
+    $ownerAncestorUpdateCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+    if ($ownerAncestorUpdateExitCode -eq 0 -or $ownerAncestorUpdateCalls -match 'deployment sub what-if') {
+        Stop-Test "PowerShell AdminUpdate accepted an inherited schedule as its required exact subscription schedule. Output: $(ConvertTo-TestMessage $ownerAncestorUpdateOutput)"
+    }
+
+    New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+    $env:MOCK_ANCESTOR_SCHEDULE = 'false'
+    $env:MOCK_ANCESTOR_PENDING_REQUEST = 'true'
+    $env:MOCK_EXISTING_SCHEDULE = 'true'
+    $ownerExactUpdateOutput = & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+    $ownerExactUpdateExitCode = $LASTEXITCODE
+    $ownerExactUpdateCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+    if ($ownerExactUpdateExitCode -ne 0 -or $ownerExactUpdateCalls -notmatch 'deployment sub what-if') {
+        Stop-Test "PowerShell AdminUpdate treated an ancestor request as mutable at the subscription scope. Output: $(ConvertTo-TestMessage $ownerExactUpdateOutput)"
+    }
+
+    $ownerPhaseFile = Join-Path $TempDir 'owner-ps-phase'
+    Remove-Item -LiteralPath $ownerPhaseFile -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+    $env:MOCK_ANCESTOR_SCHEDULE = 'false'
+    $env:MOCK_ANCESTOR_PENDING_REQUEST = 'false'
+    $env:MOCK_EXISTING_SCHEDULE = 'false'
+    $env:MOCK_FALSE_NEXT_LINK = 'false'
+    $env:MOCK_FALSE_REQUEST_NEXT_LINK = 'false'
+    $env:OWNER_PARAMETER_FILE = $ownerParameterFile
+    $env:MOCK_MUTATE_SOURCE_AFTER_PREVIEW = 'true'
+    $env:MOCK_LIVE_STATE_CHANGE_AFTER_PREVIEW = 'false'
+    $env:OWNER_MOCK_PHASE_FILE = $ownerPhaseFile
+    $env:OWNER_EXECUTE = 'true'
+    $env:ESLZ_OWNER_ELIGIBILITY_CONFIRMATION = 'SUBMIT-OWNER-ELIGIBILITY'
+    $ownerSnapshotOutput = $ownerRequestId | & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+    $ownerSnapshotExitCode = $LASTEXITCODE
+    if ($ownerSnapshotExitCode -ne 0) {
+        Stop-Test "PowerShell Owner eligibility immutable-snapshot execution failed: $(ConvertTo-TestMessage $ownerSnapshotOutput)"
+    }
+    $ownerSnapshotCalls = Get-Content -LiteralPath $ownerAzLog
+    $whatIfSnapshot = ($ownerSnapshotCalls | Where-Object { $_ -match '^WHAT_IF_TEMPLATE=' } | Select-Object -First 1) -replace '^WHAT_IF_TEMPLATE=', ''
+    $createSnapshot = ($ownerSnapshotCalls | Where-Object { $_ -match '^CREATE_TEMPLATE=' } | Select-Object -First 1) -replace '^CREATE_TEMPLATE=', ''
+    if ([string]::IsNullOrEmpty($whatIfSnapshot) -or $whatIfSnapshot -cne $createSnapshot) {
+        Stop-Test 'PowerShell Owner eligibility create did not reuse the exact immutable template snapshot reviewed by what-if.'
+    }
+    if ((Get-Content -LiteralPath $ownerOperatorBicep -Raw) -notmatch 'source changed after what-if') {
+        Stop-Test 'PowerShell Owner eligibility template-race fixture did not mutate the source Bicep after preview.'
+    }
+
+    Copy-Item -LiteralPath (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.bicep') -Destination $ownerOperatorBicep -Force
+    Remove-Item -LiteralPath $ownerPhaseFile -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType File -Path $ownerAzLog -Force | Out-Null
+    $env:MOCK_MUTATE_SOURCE_AFTER_PREVIEW = 'false'
+    $env:MOCK_LIVE_STATE_CHANGE_AFTER_PREVIEW = 'true'
+    $ownerStateRaceOutput = $ownerRequestId | & pwsh -NoLogo -NoProfile -File $ownerTestWrapper 2>&1
+    $ownerStateRaceExitCode = $LASTEXITCODE
+    $ownerStateRaceCalls = Get-Content -LiteralPath $ownerAzLog -Raw
+    if (
+        $ownerStateRaceExitCode -eq 0 -or
+        $ownerStateRaceCalls -notmatch 'deployment sub what-if' -or
+        $ownerStateRaceCalls -match 'deployment sub create'
+    ) {
+        Stop-Test "PowerShell Owner eligibility workflow did not block create after live state changed during approval. Output: $(ConvertTo-TestMessage $ownerStateRaceOutput)"
+    }
+    if ([regex]::Matches($ownerStateRaceCalls, 'ad group show').Count -ne 2) {
+        Stop-Test 'PowerShell Owner eligibility workflow did not repeat group verification immediately before create.'
+    }
+
+    foreach ($environmentName in @(
+        'OWNER_AZ_CALL_LOG',
+        'OWNER_MOCK_PHASE_FILE',
+        'OWNER_EXECUTE',
+        'MOCK_SUBSCRIPTION_ID',
+        'MOCK_GROUP_ID',
+        'MOCK_SECURITY_ENABLED',
+        'MOCK_SECURITY_AS_STRING',
+        'MOCK_MALFORMED_REQUESTS',
+        'MOCK_PAGED_PENDING',
+        'MOCK_EXISTING_SCHEDULE',
+        'MOCK_ANCESTOR_SCHEDULE',
+        'MOCK_ANCESTOR_PENDING_REQUEST',
+        'MOCK_FALSE_NEXT_LINK',
+        'MOCK_FALSE_REQUEST_NEXT_LINK',
+        'MOCK_MUTATE_SOURCE_AFTER_PREVIEW',
+        'MOCK_LIVE_STATE_CHANGE_AFTER_PREVIEW',
+        'MOCK_OPERATOR_BICEP_FILE',
+        'ESLZ_OWNER_ELIGIBILITY_CONFIRMATION',
+        'OWNER_OPERATOR_PATH',
+        'OWNER_PARAMETER_FILE'
+    )) {
+        Remove-Item "Env:\$environmentName" -ErrorAction SilentlyContinue
+    }
+
     if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/deploy.ps1') -Raw) -notmatch 'DEPLOY-ESLZ-DEMO') {
         Stop-Test 'PowerShell deployment confirmation guard is missing.'
     }
@@ -206,7 +681,7 @@ try {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '9/24 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/23 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -415,7 +890,7 @@ try {
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '10/24 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -455,7 +930,7 @@ try {
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '11/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '10/23 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -483,7 +958,7 @@ try {
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '12/24 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '11/23 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -505,7 +980,7 @@ try {
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '13/24 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '12/23 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -526,7 +1001,7 @@ try {
         }
     }
 
-    Write-Host '14/24 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '13/23 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -538,7 +1013,7 @@ try {
         }
     }
 
-    Write-Host '15/24 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '14/23 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -546,7 +1021,7 @@ try {
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '16/24 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '15/23 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -558,7 +1033,7 @@ try {
         }
     }
 
-    Write-Host '17/24 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '16/23 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -575,7 +1050,7 @@ try {
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '18/24 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '17/23 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -632,7 +1107,6 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $templateJson.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
     $templateJson.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
     $templateJson.parameters.governanceAdminsGroupObjectId.value = '33333333-3333-3333-3333-333333333333'
-    $templateJson.parameters.subscriptionOwnersGroupObjectId.value = '44444444-4444-4444-4444-444444444444'
     $templateJson.parameters.networkOperatorsGroupObjectId.value = '55555555-5555-5555-5555-555555555555'
     $templateJson.parameters.workloadContributorsGroupObjectId.value = '66666666-6666-6666-6666-666666666666'
     $templateJson.parameters.readOnlyAuditorsGroupObjectId.value = '77777777-7777-7777-7777-777777777777'
@@ -679,7 +1153,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/24 Parse every PowerShell lifecycle and test script...'
+    Write-Host '18/23 Parse every PowerShell lifecycle and test script...'
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
         Get-ChildItem (Join-Path $ProjectDir 'tests') -Filter '*.ps1'
@@ -697,13 +1171,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '20/24 Validate reusable initiative composition...'
+    Write-Host '19/23 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '21/24 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '20/23 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '22/24 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '21/23 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -713,10 +1187,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '23/24 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '22/23 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '24/24 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '23/23 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'

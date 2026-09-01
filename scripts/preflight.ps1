@@ -85,7 +85,6 @@ if ($connectivitySubscription.Equals($workloadSubscription, [System.StringCompar
 
 $groupParameters = @(
     'governanceAdminsGroupObjectId',
-    'subscriptionOwnersGroupObjectId',
     'networkOperatorsGroupObjectId',
     'workloadContributorsGroupObjectId',
     'readOnlyAuditorsGroupObjectId'
@@ -153,4 +152,4 @@ Write-Host "  Tenant root MG: $tenantRoot"
 Write-Host "  Connectivity subscription: $connectivitySubscription"
 Write-Host "  Workload subscription: $workloadSubscription"
 Write-Host "  Tenant deployment location: $deploymentLocation"
-Write-Host '  Entra group IDs: GUID format and uniqueness verified (directory group type is not queried).'
+Write-Host '  Entra group IDs: GUID format and uniqueness verified where supplied (directory group type is not queried).'

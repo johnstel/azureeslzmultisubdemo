@@ -21,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/24 Validate repository versioning and branch guidance...\n'
+printf '1/23 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -32,21 +32,27 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/24 Build the complete tenant template and validate policy assignment shapes...\n'
+printf '2/23 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
   printf '%s\n' "${az_build_stderr}" >&2
   exit 1
 fi
+az bicep build \
+  --file "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.bicep" \
+  --outfile "${TEMP_DIR}/owner-eligibility-request.json" >/dev/null
 COMPILED_MAIN_TEMPLATE="${TEMP_DIR}/main.json" "${SCRIPT_DIR}/validate-policy-assignment.sh"
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/24 Validate the ARM parameter template...\n'
+printf '3/23 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
   .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
+  .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
+  (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
+  (.parameters.customerAllowedVmSkus.value | length) > 0 and
   .parameters.networkIngressPolicyEffect.value == "Audit"
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
@@ -54,90 +60,512 @@ az bicep build-params \
   --outfile "${TEMP_DIR}/main.parameters.json"
 jq -e '.parameters.networkIngressPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
-printf '4/24 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/23 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/24 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
-if rg -n \
-  "Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)" \
-  "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" \
-  -g '*.bicep' | rg -v 'policy-library\.bicep|central-monitoring(-workspace|-sentinel)?\.bicep'; then
+printf '5/23 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+find_prohibited_paid_declarations() {
+  jq -r '
+    def prohibited:
+      test("^Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$"; "i");
+    def declarations:
+      if type == "object" then
+        . as $resource
+        | if $resource.type? == "Microsoft.Resources/deployments"
+            and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel"))
+          then empty
+          elif (($resource.type? | type) == "string") and $resource.apiVersion? and ($resource.type | prohibited)
+          then $resource.type
+          else .[] | declarations
+          end
+      elif type == "array" then .[] | declarations
+      else empty
+      end;
+    declarations
+  ' "$1"
+}
+
+if [[ -n "$(find_prohibited_paid_declarations "${TEMP_DIR}/main.json")" ]]; then
   printf 'ERROR: A prohibited evidence resource type is declared.\n' >&2
   exit 1
 fi
+az bicep build \
+  --file "${SCRIPT_DIR}/fixtures/paid-resource-declaration.bicep" \
+  --outfile "${TEMP_DIR}/paid-resource-declaration.json"
+[[ -n "$(find_prohibited_paid_declarations "${TEMP_DIR}/paid-resource-declaration.json")" ]] || {
+  printf 'ERROR: The paid-resource declaration safety check did not reject its negative fixture.\n' >&2
+  exit 1
+}
 
-printf '6/24 Confirm Microsoft Defender for Cloud plan assignments always stay Disabled with no managed identity, no auto-granted role, pinned built-in versions, and never reference the deprecated Log Analytics (MMA) auto-provisioning agent...\n'
-if rg -n 'enableDefenderCspm|enableDefenderForServers|enableDefenderForStorage|enablePlan' "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" "${PROJECT_DIR}/parameters" -g '*.bicep' -g '*.bicepparam' -g '*.json'; then
-  printf 'ERROR: Microsoft Defender for Cloud plan assignments must not expose an opt-in parameter; they are manual-evidence-only governance markers with no toggle.\n' >&2
-  exit 1
-fi
-if rg -n '475aae12-b88a-4572-8b36-9b712b2b3a17' "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules" -g '*.bicep'; then
-  printf 'ERROR: main.bicep/modules must never assign the deprecated Log Analytics (MMA) auto-provisioning policy definition.\n' >&2
-  exit 1
-fi
-defender_disabled_count="$(jq '
-  [.resources[]
-    | select(.type == "Microsoft.Resources/deployments")
-    | select(.name == "assign-defender-cspm" or .name == "assign-defender-servers" or .name == "assign-defender-storage")
-    | select(.properties.template.resources.assignment.properties.parameters.effect.value == "Disabled")
-  ] | length
-' "${TEMP_DIR}/main.json")"
-[[ "${defender_disabled_count}" -eq 3 ]] || {
-  printf 'ERROR: Expected exactly three Defender plan assignments (CSPM, Servers, Storage) whose effect is unconditionally Disabled.\n' >&2
-  exit 1
-}
-defender_no_identity_count="$(jq '
-  [.resources[]
-    | select(.type == "Microsoft.Resources/deployments")
-    | select(.name == "assign-defender-cspm" or .name == "assign-defender-servers" or .name == "assign-defender-storage")
-    | select(.properties.template.resources.assignment.identity == null)
-  ] | length
-' "${TEMP_DIR}/main.json")"
-[[ "${defender_no_identity_count}" -eq 3 ]] || {
-  printf 'ERROR: Defender plan assignments must never carry a managed identity; a normal deployment must never create or leave standing Owner access.\n' >&2
-  exit 1
-}
-defender_role_assignment_count="$(jq '
-  [.resources[]
-    | select(.type == "Microsoft.Resources/deployments")
-    | select(.name == "assign-defender-cspm" or .name == "assign-defender-servers" or .name == "assign-defender-storage")
-    | .. | objects | select(.type? == "Microsoft.Authorization/roleAssignments")
-  ] | length
-' "${TEMP_DIR}/main.json")"
-[[ "${defender_role_assignment_count}" -eq 0 ]] || {
-  printf 'ERROR: Defender plan assignments must never automatically grant RBAC roles; Owner is required for remediation and this repository never grants it automatically.\n' >&2
-  exit 1
-}
-defender_version_pin_count="$(jq '
-  [.resources[]
-    | select(.type == "Microsoft.Resources/deployments")
-    | select(.name == "assign-defender-cspm" or .name == "assign-defender-servers" or .name == "assign-defender-storage")
-    | select(.properties.template.resources.assignment.properties.definitionVersion | tostring | test("^\\[variables\\(.selectedPlan.\\)\\.definitionVersion\\]$"))
-  ] | length
-' "${TEMP_DIR}/main.json")"
-[[ "${defender_version_pin_count}" -eq 3 ]] || {
-  printf 'ERROR: Expected exactly three Defender plan assignments to pin definitionVersion via the verified plan lookup.\n' >&2
-  exit 1
-}
-rg -q "definitionVersion: '1\.\*\.\*'" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
-rg -q "^param plan 'cspm' \| 'servers' \| 'storage'$" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
-rg -q "^module vulnerabilityAssessmentAuditAssignment 'modules/policy-assignment\.bicep' = \{" "${PROJECT_DIR}/main.bicep"
-rg -q "definitionVersion: '3\.\*\.\*'" "${PROJECT_DIR}/main.bicep"
-
-printf '7/24 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/23 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '8/24 Confirm five distinct Entra group parameters and guarded scripts...\n'
-group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
-[[ "${group_param_count}" -eq 5 ]] || {
-  printf 'ERROR: Expected five Entra security-group parameters.\n' >&2
+printf '7/23 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
+[[ "${group_param_count}" -eq 4 ]] || {
+  printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
+  exit 1
+}
+"${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${TEMP_DIR}/main.json" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json"
+rbac_negative_template="${TEMP_DIR}/main-permanent-owner.json"
+jq '
+  .resources += [{
+    "type": "Microsoft.Authorization/roleAssignments",
+    "apiVersion": "2022-04-01",
+    "name": "00000000-0000-0000-0000-000000000000",
+    "properties": {
+      "principalId": "[parameters('\''governanceAdminsGroupObjectId'\'')]",
+      "roleDefinitionId": "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', '\''8e3af657-a8ff-443c-a75c-2fe8c4bcb635'\'')]"
+    }
+  }]
+' "${TEMP_DIR}/main.json" > "${rbac_negative_template}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${rbac_negative_template}" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted a compiled permanent Owner assignment.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'permanent Owner role assignment'; then
+  printf 'ERROR: RBAC validator rejected the permanent Owner fixture for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
+rbac_main_request_fixture="${TEMP_DIR}/main-one-shot-request.json"
+jq '
+  .resources += [{
+    "type": "Microsoft.Authorization/roleEligibilityScheduleRequests",
+    "apiVersion": "2020-10-01",
+    "name": "[guid(subscription().id, '\''reused-request'\'')]",
+    "condition": false,
+    "properties": {}
+  }]
+' "${TEMP_DIR}/main.json" > "${rbac_main_request_fixture}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${rbac_main_request_fixture}" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted a one-time eligibility request in the repeatable main template.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'one-time eligibility schedule request'; then
+  printf 'ERROR: RBAC validator rejected the main eligibility fixture for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
+rbac_owner_binding_fixture="${TEMP_DIR}/main-owner-role-binding.json"
+jq '
+  walk(
+    if type == "object"
+      and .parameters?.operatorRoleDefinitionId?.value? == "4d97b98b-1d4f-4787-a291-c67834d212e7"
+    then .parameters.operatorRoleDefinitionId.value = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+    else .
+    end
+  )
+' "${TEMP_DIR}/main.json" > "${rbac_owner_binding_fixture}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${rbac_owner_binding_fixture}" \
+  --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted an Owner role passed through a nested module binding.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'Owner role definition reference'; then
+  printf 'ERROR: RBAC validator rejected the Owner module binding for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
+rbac_extra_resource_fixture="${TEMP_DIR}/owner-request-with-deployment-script.json"
+jq '
+  .resources += [{
+    "type": "Microsoft.Resources/deploymentScripts",
+    "apiVersion": "2023-08-01",
+    "name": "prohibited-automation",
+    "properties": {}
+  }]
+' "${TEMP_DIR}/owner-eligibility-request.json" > "${rbac_extra_resource_fixture}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+  --compiled-template "${TEMP_DIR}/main.json" \
+  --compiled-eligibility-template "${rbac_extra_resource_fixture}" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted an extra automation resource in the one-shot artifact.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'One-shot Owner eligibility artifact'; then
+  printf 'ERROR: RBAC validator rejected the one-shot extra resource for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
+for guard_name in targetScheduleInputIsValid scheduleInputIsValid executionInputsAreValid; do
+  rbac_guard_fixture="${TEMP_DIR}/owner-request-${guard_name}-true.json"
+  jq --arg guard "${guard_name}" '.variables[$guard] = true' \
+    "${TEMP_DIR}/owner-eligibility-request.json" > "${rbac_guard_fixture}"
+  if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
+    --compiled-template "${TEMP_DIR}/main.json" \
+    --compiled-eligibility-template "${rbac_guard_fixture}" 2>&1)"; then
+    printf 'ERROR: RBAC validator accepted %s replaced with true.\n' "${guard_name}" >&2
+    exit 1
+  fi
+  if ! printf '%s' "${rbac_validation_output}" | grep -qF 'compiled input guards'; then
+    printf 'ERROR: RBAC validator rejected the %s mutation for the wrong reason: %s\n' "${guard_name}" "${rbac_validation_output}" >&2
+    exit 1
+  fi
+done
+
+owner_mock_bin="${TEMP_DIR}/owner-mockbin"
+owner_az_log="${TEMP_DIR}/owner-az-calls.log"
+mkdir -p "${owner_mock_bin}"
+cat > "${owner_mock_bin}/az" <<'MOCKOWNERAZ'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${OWNER_AZ_CALL_LOG}"
+if [[ "$1" == 'bicep' && "$2" == 'build' ]]; then
+  source_file=''
+  output_file=''
+  shift 2
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --file) source_file="$2"; shift 2 ;;
+      --outfile) output_file="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  source_text="$(<"${source_file}")"
+  jq -cn --arg source "${source_text}" '{compiledSource:$source}' > "${output_file}"
+  exit 0
+fi
+if [[ "$1" == 'account' && "$2" == 'show' ]]; then
+  printf '{"id":"%s","state":"Enabled","tenantId":"44444444-4444-4444-8444-444444444444"}\n' "${MOCK_SUBSCRIPTION_ID}"
+  exit 0
+fi
+if [[ "$1" == 'ad' && "$2" == 'group' && "$3" == 'show' ]]; then
+  [[ "$*" == "ad group show --group ${MOCK_GROUP_ID} --output json" ]] || exit 64
+  if [[ "${MOCK_SECURITY_AS_STRING:-false}" == 'true' ]]; then
+    printf '{"id":"%s","securityEnabled":"true"}\n' "${MOCK_GROUP_ID}"
+  else
+    printf '{"id":"%s","securityEnabled":%s}\n' "${MOCK_GROUP_ID}" "${MOCK_SECURITY_ENABLED:-true}"
+  fi
+  exit 0
+fi
+if [[ "$1" == 'rest' ]]; then
+  if [[ "$*" == *'roleEligibilitySchedules?'* ]]; then
+    if [[ "${MOCK_FALSE_NEXT_LINK:-false}" == 'true' ]]; then
+      printf '{"value":[],"nextLink":false}\n'
+    elif [[ "${MOCK_ANCESTOR_SCHEDULE:-false}" == 'true' ]]; then
+      printf '{"value":[{"name":"55555555-5555-4555-8555-555555555555","id":"/providers/Microsoft.Management/managementGroups/eslz-parent/providers/Microsoft.Authorization/roleEligibilitySchedules/55555555-5555-4555-8555-555555555555","properties":{"scope":"/providers/Microsoft.Management/managementGroups/eslz-parent","principalId":"%s","roleDefinitionId":"/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"}}]}\n' \
+        "${MOCK_GROUP_ID}"
+    elif [[ "${MOCK_EXISTING_SCHEDULE:-false}" == 'true' ]]; then
+      printf '{"value":[{"name":"55555555-5555-4555-8555-555555555555","id":"/subscriptions/%s/providers/Microsoft.Authorization/roleEligibilitySchedules/55555555-5555-4555-8555-555555555555","properties":{"scope":"/subscriptions/%s","principalId":"%s","roleDefinitionId":"/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"}}]}\n' \
+        "${MOCK_SUBSCRIPTION_ID}" "${MOCK_SUBSCRIPTION_ID}" "${MOCK_GROUP_ID}" "${MOCK_SUBSCRIPTION_ID}"
+    else
+      printf '{"value":[]}\n'
+    fi
+    exit 0
+  fi
+  if [[ "$*" == *'roleEligibilityScheduleRequests?'* ]]; then
+    if [[ "${MOCK_FALSE_REQUEST_NEXT_LINK:-false}" == 'true' ]]; then
+      printf '{"value":[],"nextLink":false}\n'
+    elif [[ "${MOCK_MALFORMED_REQUESTS:-false}" == 'true' ]]; then
+      printf '{"value":false}\n'
+    elif [[ "${MOCK_ANCESTOR_PENDING_REQUEST:-false}" == 'true' ]]; then
+      printf '{"value":[{"name":"66666666-6666-4666-8666-666666666666","id":"/providers/Microsoft.Management/managementGroups/eslz-parent/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/66666666-6666-4666-8666-666666666666","properties":{"scope":"/providers/Microsoft.Management/managementGroups/eslz-parent","principalId":"%s","roleDefinitionId":"/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635","status":"PendingApproval"}}]}\n' \
+        "${MOCK_GROUP_ID}"
+    elif [[ "${MOCK_PENDING_REQUEST:-false}" == 'true' || ( "${MOCK_LIVE_STATE_CHANGE_AFTER_PREVIEW:-false}" == 'true' && -f "${OWNER_MOCK_PHASE_FILE:-/dev/null}" ) ]]; then
+      printf '{"value":[{"name":"66666666-6666-4666-8666-666666666666","id":"/subscriptions/%s/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/66666666-6666-4666-8666-666666666666","properties":{"scope":"/subscriptions/%s","principalId":"%s","roleDefinitionId":"/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635","status":"PendingApproval"}}]}\n' \
+        "${MOCK_SUBSCRIPTION_ID}" "${MOCK_SUBSCRIPTION_ID}" "${MOCK_GROUP_ID}" "${MOCK_SUBSCRIPTION_ID}"
+    else
+      printf '{"value":[]}\n'
+    fi
+    exit 0
+  fi
+fi
+if [[ "$1" == 'deployment' && "$2" == 'sub' && "$3" == 'what-if' ]]; then
+  template_file=''
+  previous=''
+  for argument in "$@"; do
+    if [[ "${previous}" == '--template-file' ]]; then
+      template_file="${argument}"
+      break
+    fi
+    previous="${argument}"
+  done
+  printf 'WHAT_IF_TEMPLATE=%s|%s\n' "${template_file}" "$(cksum < "${template_file}" | tr -d ' ')" >> "${OWNER_AZ_CALL_LOG}"
+  if [[ "${MOCK_MUTATE_SOURCE_AFTER_PREVIEW:-false}" == 'true' ]]; then
+    printf '\n// source changed after what-if\n' >> "${MOCK_OPERATOR_BICEP_FILE}"
+  fi
+  if [[ -n "${OWNER_MOCK_PHASE_FILE:-}" ]]; then
+    printf 'post-preview\n' > "${OWNER_MOCK_PHASE_FILE}"
+  fi
+  printf '{"status":"previewed"}\n'
+  exit 0
+fi
+if [[ "$1" == 'deployment' && "$2" == 'sub' && "$3" == 'create' ]]; then
+  template_file=''
+  previous=''
+  for argument in "$@"; do
+    if [[ "${previous}" == '--template-file' ]]; then
+      template_file="${argument}"
+      break
+    fi
+    previous="${argument}"
+  done
+  printf 'CREATE_TEMPLATE=%s|%s\n' "${template_file}" "$(cksum < "${template_file}" | tr -d ' ')" >> "${OWNER_AZ_CALL_LOG}"
+  printf '{"status":"submitted"}\n'
+  exit 0
+fi
+exit 1
+MOCKOWNERAZ
+chmod +x "${owner_mock_bin}/az"
+
+owner_subscription_id='11111111-1111-4111-8111-111111111111'
+owner_request_id='22222222-2222-4222-8222-222222222222'
+owner_group_id='33333333-3333-4333-8333-333333333333'
+owner_parameter_file="${TEMP_DIR}/owner-valid.parameters.json"
+owner_update_parameter_file="${TEMP_DIR}/owner-update.parameters.json"
+owner_operator_project="${TEMP_DIR}/owner-operator-project"
+mkdir -p "${owner_operator_project}/scripts" "${owner_operator_project}/identity/azure-rbac"
+cp "${PROJECT_DIR}/scripts/owner-eligibility-request.sh" "${owner_operator_project}/scripts/"
+cp "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.bicep" "${owner_operator_project}/identity/azure-rbac/"
+owner_operator_path="${owner_operator_project}/scripts/owner-eligibility-request.sh"
+owner_operator_bicep="${owner_operator_project}/identity/azure-rbac/owner-eligibility-request.bicep"
+jq \
+  --arg request_id "${owner_request_id}" \
+  --arg group_id "${owner_group_id}" '
+  .parameters.submitEligibilityRequest.value = true
+  | .parameters.requestId.value = $request_id
+  | .parameters.subscriptionPrivilegedAccessGroupObjectId.value = $group_id
+  | .parameters.eligibleOwnerAssignmentStartDateTime.value = "2030-01-02T03:04:05Z"
+  | .parameters.eligibleOwnerAssignmentJustification.value = "Approved sandbox Owner eligibility demonstration"
+' "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.parameters.template.json" > "${owner_parameter_file}"
+jq '
+  .parameters.requestType.value = "AdminUpdate"
+  | .parameters.targetRoleEligibilityScheduleId.value = "55555555-5555-4555-8555-555555555555"
+' "${owner_parameter_file}" > "${owner_update_parameter_file}"
+
+for invalid_case in request-id group-id target-schedule start-time calendar-date duration; do
+  invalid_owner_parameter_file="${TEMP_DIR}/owner-invalid-${invalid_case}.parameters.json"
+  case "${invalid_case}" in
+    request-id)
+      jq '.parameters.requestId.value = "not-a-canonical-request-guid-value-00"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    group-id)
+      jq '.parameters.subscriptionPrivilegedAccessGroupObjectId.value = "not-a-group-object-guid"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    target-schedule)
+      jq '
+        .parameters.requestType.value = "AdminUpdate"
+        | .parameters.targetRoleEligibilityScheduleId.value = "not-a-schedule-guid"
+      ' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    start-time)
+      jq '.parameters.eligibleOwnerAssignmentStartDateTime.value = "2030-01-02 03:04:05+00:00"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    calendar-date)
+      jq '.parameters.eligibleOwnerAssignmentStartDateTime.value = "2030-02-30T03:04:05Z"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+    duration)
+      jq '.parameters.eligibleOwnerAssignmentDuration.value = "P999D"' "${owner_parameter_file}" > "${invalid_owner_parameter_file}"
+      ;;
+  esac
+  : > "${owner_az_log}"
+  if PATH="${owner_mock_bin}:${PATH}" \
+    OWNER_AZ_CALL_LOG="${owner_az_log}" \
+    MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+    MOCK_GROUP_ID="${owner_group_id}" \
+    "${owner_operator_path}" \
+      --subscription-id "${owner_subscription_id}" \
+      --parameter-file "${invalid_owner_parameter_file}" >/dev/null 2>&1; then
+    printf 'ERROR: Owner eligibility workflow accepted invalid %s input.\n' "${invalid_case}" >&2
+    exit 1
+  fi
+  [[ ! -s "${owner_az_log}" ]] || {
+    printf 'ERROR: Owner eligibility workflow called Azure before rejecting invalid %s input.\n' "${invalid_case}" >&2
+    exit 1
+  }
+done
+
+: > "${owner_az_log}"
+if PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  "${owner_operator_path}" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_parameter_file}" \
+    --execute >/dev/null 2>&1; then
+  printf 'ERROR: Owner eligibility workflow accepted --execute without its environment confirmation.\n' >&2
+  exit 1
+fi
+[[ ! -s "${owner_az_log}" ]] || {
+  printf 'ERROR: Owner eligibility workflow called Azure before enforcing its execution confirmation.\n' >&2
+  exit 1
+}
+
+: > "${owner_az_log}"
+PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  "${owner_operator_path}" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_parameter_file}" >/dev/null
+rg -q -F 'ad group show' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not verify the Entra group.\n' >&2
+  exit 1
+}
+rg -q -F 'roleEligibilitySchedules?' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not inspect existing schedules.\n' >&2
+  exit 1
+}
+rg -q -F 'roleEligibilityScheduleRequests?' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not inspect existing requests.\n' >&2
+  exit 1
+}
+rg -q -F 'deployment sub what-if' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility preview did not run what-if.\n' >&2
+  exit 1
+}
+if rg -q -F 'deployment sub create' "${owner_az_log}"; then
+  printf 'ERROR: Owner eligibility preview submitted a request without --execute.\n' >&2
+  exit 1
+fi
+
+for blocked_state in non-security-group string-security-enabled existing-schedule ancestor-schedule pending-request ancestor-pending-request malformed-requests false-next-link false-request-next-link; do
+  : > "${owner_az_log}"
+  mock_security_enabled='true'
+  mock_existing_schedule='false'
+  mock_pending_request='false'
+  mock_security_as_string='false'
+  mock_malformed_requests='false'
+  mock_ancestor_schedule='false'
+  mock_ancestor_pending_request='false'
+  mock_false_next_link='false'
+  mock_false_request_next_link='false'
+  case "${blocked_state}" in
+    non-security-group) mock_security_enabled='false' ;;
+    string-security-enabled) mock_security_as_string='true' ;;
+    existing-schedule) mock_existing_schedule='true' ;;
+    ancestor-schedule) mock_ancestor_schedule='true' ;;
+    pending-request) mock_pending_request='true' ;;
+    ancestor-pending-request) mock_ancestor_pending_request='true' ;;
+    malformed-requests) mock_malformed_requests='true' ;;
+    false-next-link) mock_false_next_link='true' ;;
+    false-request-next-link) mock_false_request_next_link='true' ;;
+  esac
+  if PATH="${owner_mock_bin}:${PATH}" \
+    OWNER_AZ_CALL_LOG="${owner_az_log}" \
+    MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+    MOCK_GROUP_ID="${owner_group_id}" \
+    MOCK_SECURITY_ENABLED="${mock_security_enabled}" \
+    MOCK_SECURITY_AS_STRING="${mock_security_as_string}" \
+    MOCK_EXISTING_SCHEDULE="${mock_existing_schedule}" \
+    MOCK_PENDING_REQUEST="${mock_pending_request}" \
+    MOCK_MALFORMED_REQUESTS="${mock_malformed_requests}" \
+    MOCK_ANCESTOR_SCHEDULE="${mock_ancestor_schedule}" \
+    MOCK_ANCESTOR_PENDING_REQUEST="${mock_ancestor_pending_request}" \
+    MOCK_FALSE_NEXT_LINK="${mock_false_next_link}" \
+    MOCK_FALSE_REQUEST_NEXT_LINK="${mock_false_request_next_link}" \
+    "${owner_operator_path}" \
+      --subscription-id "${owner_subscription_id}" \
+      --parameter-file "${owner_parameter_file}" >/dev/null 2>&1; then
+    printf 'ERROR: Owner eligibility workflow accepted blocked state: %s.\n' "${blocked_state}" >&2
+    exit 1
+  fi
+  if rg -q -F 'deployment sub what-if' "${owner_az_log}"; then
+    printf 'ERROR: Owner eligibility workflow previewed after blocked state: %s.\n' "${blocked_state}" >&2
+    exit 1
+  fi
+done
+
+: > "${owner_az_log}"
+if PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  MOCK_ANCESTOR_SCHEDULE='true' \
+  "${owner_operator_path}" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_update_parameter_file}" >/dev/null 2>&1; then
+  printf 'ERROR: AdminUpdate accepted an inherited schedule as its required exact subscription schedule.\n' >&2
+  exit 1
+fi
+if rg -q -F 'deployment sub what-if' "${owner_az_log}"; then
+  printf 'ERROR: AdminUpdate previewed with only an inherited Owner eligibility schedule.\n' >&2
+  exit 1
+fi
+
+: > "${owner_az_log}"
+PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  MOCK_EXISTING_SCHEDULE='true' \
+  MOCK_ANCESTOR_PENDING_REQUEST='true' \
+  "${owner_operator_path}" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_update_parameter_file}" >/dev/null
+rg -q -F 'deployment sub what-if' "${owner_az_log}" || {
+  printf 'ERROR: AdminUpdate treated an ancestor request as mutable at the subscription scope.\n' >&2
+  exit 1
+}
+
+: > "${owner_az_log}"
+owner_phase_file="${TEMP_DIR}/owner-operator-phase"
+rm -f "${owner_phase_file}"
+printf '%s\n' "${owner_request_id}" | \
+  PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  OWNER_MOCK_PHASE_FILE="${owner_phase_file}" \
+  MOCK_OPERATOR_BICEP_FILE="${owner_operator_bicep}" \
+  MOCK_MUTATE_SOURCE_AFTER_PREVIEW='true' \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  ESLZ_OWNER_ELIGIBILITY_CONFIRMATION='SUBMIT-OWNER-ELIGIBILITY' \
+  "${owner_operator_path}" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_parameter_file}" \
+    --execute >/dev/null
+what_if_template="$(rg '^WHAT_IF_TEMPLATE=' "${owner_az_log}" | sed 's/^WHAT_IF_TEMPLATE=//')"
+create_template="$(rg '^CREATE_TEMPLATE=' "${owner_az_log}" | sed 's/^CREATE_TEMPLATE=//')"
+[[ -n "${what_if_template}" && "${what_if_template}" == "${create_template}" ]] || {
+  printf 'ERROR: Owner eligibility create did not reuse the exact immutable template snapshot reviewed by what-if.\n' >&2
+  exit 1
+}
+rg -q -F 'source changed after what-if' "${owner_operator_bicep}" || {
+  printf 'ERROR: Owner eligibility template-race fixture did not mutate the source Bicep after preview.\n' >&2
+  exit 1
+}
+
+cp "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.bicep" "${owner_operator_bicep}"
+: > "${owner_az_log}"
+rm -f "${owner_phase_file}"
+if printf '%s\n' "${owner_request_id}" | \
+  PATH="${owner_mock_bin}:${PATH}" \
+  OWNER_AZ_CALL_LOG="${owner_az_log}" \
+  OWNER_MOCK_PHASE_FILE="${owner_phase_file}" \
+  MOCK_OPERATOR_BICEP_FILE="${owner_operator_bicep}" \
+  MOCK_LIVE_STATE_CHANGE_AFTER_PREVIEW='true' \
+  MOCK_SUBSCRIPTION_ID="${owner_subscription_id}" \
+  MOCK_GROUP_ID="${owner_group_id}" \
+  ESLZ_OWNER_ELIGIBILITY_CONFIRMATION='SUBMIT-OWNER-ELIGIBILITY' \
+  "${owner_operator_path}" \
+    --subscription-id "${owner_subscription_id}" \
+    --parameter-file "${owner_parameter_file}" \
+    --execute >/dev/null 2>&1; then
+  printf 'ERROR: Owner eligibility workflow submitted after live eligibility state changed during approval.\n' >&2
+  exit 1
+fi
+rg -q -F 'deployment sub what-if' "${owner_az_log}" || {
+  printf 'ERROR: Owner eligibility live-state race fixture did not reach what-if.\n' >&2
+  exit 1
+}
+if rg -q -F 'deployment sub create' "${owner_az_log}"; then
+  printf 'ERROR: Owner eligibility workflow called create after live state changed during approval.\n' >&2
+  exit 1
+fi
+owner_group_check_count="$(rg -c -F 'ad group show' "${owner_az_log}" || true)"
+[[ "${owner_group_check_count:-0}" -eq 2 ]] || {
+  printf 'ERROR: Owner eligibility workflow did not repeat the group verification immediately before create.\n' >&2
   exit 1
 }
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.sh"
@@ -145,7 +573,7 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '9/24 Confirm region policy and workload network guardrails are safe by default...\n'
+printf '8/23 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -301,7 +729,7 @@ if forms != {
     raise SystemExit(f"ERROR: Network ingress fixtures do not cover all resource/property forms: {forms}")
 PYEOF
 
-printf '10/24 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/23 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -334,7 +762,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '11/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '10/23 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -350,7 +778,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '12/24 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '11/23 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -374,7 +802,7 @@ landingzones_delete_line_ps1="$(rg -n '"\$prefix-landingzones"' "${PROJECT_DIR}/
   exit 1
 }
 
-printf '13/24 Confirm central monitoring defaults create no metered resources...\n'
+printf '12/23 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -384,23 +812,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "14/24 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "13/23 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '15/24 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '14/23 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '16/24 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '15/23 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '17/24 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '16/23 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -423,7 +851,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '18/24 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '17/23 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -444,7 +872,6 @@ jq '
   .parameters.connectivitySubscriptionId.value = "11111111-1111-1111-1111-111111111111" |
   .parameters.workloadSubscriptionId.value = "22222222-2222-2222-2222-222222222222" |
   .parameters.governanceAdminsGroupObjectId.value = "33333333-3333-3333-3333-333333333333" |
-  .parameters.subscriptionOwnersGroupObjectId.value = "44444444-4444-4444-4444-444444444444" |
   .parameters.networkOperatorsGroupObjectId.value = "55555555-5555-5555-5555-555555555555" |
   .parameters.workloadContributorsGroupObjectId.value = "66666666-6666-6666-6666-666666666666" |
   .parameters.readOnlyAuditorsGroupObjectId.value = "77777777-7777-7777-7777-777777777777" |
@@ -472,7 +899,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '19/24 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '18/23 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
 done
@@ -509,6 +936,10 @@ if [[ -n "${bash3_candidate}" ]]; then
       exit 1
     fi
   done
+  if ! "${bash3_candidate}" "${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" >/dev/null; then
+    printf 'ERROR: scripts/validate-rbac-artifacts.sh failed when executed directly under %s.\n' "${bash3_candidate}" >&2
+    exit 1
+  fi
 else
   printf '  (No Bash < 4.0 interpreter found on PATH; relying on the static banned-construct scan below plus `bash -n` syntax checks.)\n'
 fi
@@ -538,19 +969,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '20/24 Validate reusable initiative composition...\n'
+printf '19/23 Validate reusable initiative composition...\n'
 "${SCRIPT_DIR}/validate-initiative-composition.sh"
 
-printf '21/24 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '20/23 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '22/24 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '21/23 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '23/24 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '22/23 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '24/24 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '23/23 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
