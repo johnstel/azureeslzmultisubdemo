@@ -56,6 +56,14 @@ function Assert-ExactNames {
     }
 }
 
+function Get-TemplateResources {
+    param($Resources)
+    if ($Resources -is [array]) {
+        return $Resources
+    }
+    return @($Resources.PSObject.Properties.Value)
+}
+
 function Test-AssignmentName {
     param([string]$Value)
     if ($Value.Length -lt 1 -or $Value.Length -gt 24 -or $Value.EndsWith('.') -or $Value.EndsWith(' ')) {
@@ -284,6 +292,89 @@ try {
         if (@($assignmentsByName[$name].properties.parameters.parameters.value.PSObject.Properties).Count -ne 0) {
             Stop-Test "$name no longer passes an empty parameter object."
         }
+    }
+
+    $rootRestrictions = @($mainJson.resources | Where-Object {
+        $_.type -eq 'Microsoft.Resources/deployments' -and $_.name -eq 'root-deployment-restrictions'
+    })
+    if ($rootRestrictions.Count -ne 1) {
+        Stop-Test 'Expected exactly one root deployment-restrictions module.'
+    }
+    $rootRestrictions = $rootRestrictions[0]
+    if (-not $rootRestrictions.scope.Contains("variables('demoRootManagementGroupId')") -or
+        $rootRestrictions.properties.parameters.allowedLocations.value -ne "[parameters('customerAllowedLocations')]" -or
+        $rootRestrictions.properties.parameters.allowedResourceTypes.value -ne "[parameters('customerAllowedResourceTypes')]" -or
+        $rootRestrictions.properties.parameters.allowedVmSkus.value -ne "[parameters('customerAllowedVmSkus')]" -or
+        $rootRestrictions.properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        -not $rootRestrictions.properties.parameters.allowedResourceTypesPolicyDefinitionId.value.Contains('allowedResourceTypesAllPolicyDefinitionId')) {
+        Stop-Test 'Root deployment-restrictions scope or parameter wiring is invalid.'
+    }
+    if ((Compare-Object @('eastus', 'eastus2') @($mainJson.parameters.customerAllowedLocations.defaultValue)) -or
+        @($mainJson.parameters.allowedLocations.defaultValue).Count -ne 9) {
+        Stop-Test 'Customer location defaults must remain separate from the existing safe demo profile.'
+    }
+    $restrictionDeployments = @(Get-TemplateResources -Resources $rootRestrictions.properties.template.resources)
+    $restrictionInitiative = @($restrictionDeployments | Where-Object name -eq 'root-deployment-restrictions')
+    $restrictionAssignment = @($restrictionDeployments | Where-Object name -eq 'assign-root-deployment-restrictions')
+    if ($restrictionInitiative.Count -ne 1 -or $restrictionAssignment.Count -ne 1) {
+        Stop-Test 'Root deployment-restrictions must compose one initiative and one assignment.'
+    }
+    $references = @($restrictionInitiative[0].properties.parameters.policyDefinitionReferences.value)
+    $expectedReferenceIds = @('allowed-locations', 'allowed-resource-types', 'allowed-vm-skus', 'audit-managed-disks', 'audit-public-ip')
+    Assert-ExactNames -Actual @($references.policyDefinitionReferenceId) -Expected $expectedReferenceIds -Message 'Root deployment-restrictions policy references changed.'
+    $policyLibrary = @($mainJson.resources | Where-Object {
+        $_.type -eq 'Microsoft.Resources/deployments' -and $_.name.Contains('policy-library')
+    })
+    $policyLibraryResources = @(Get-TemplateResources -Resources $policyLibrary[0].properties.template.resources)
+    $allowedResourceTypesPolicy = @($policyLibraryResources | Where-Object {
+        $_.properties.displayName -eq 'Demo - allowed resource types (all resources)'
+    })
+    if ($allowedResourceTypesPolicy.Count -ne 1 -or
+        $allowedResourceTypesPolicy[0].properties.mode -ne 'All' -or
+        $allowedResourceTypesPolicy[0].properties.parameters.allowedResourceTypes.type -ne 'Array' -or
+        $allowedResourceTypesPolicy[0].properties.policyRule.if.field -ne 'type' -or
+        $allowedResourceTypesPolicy[0].properties.policyRule.if.notIn -ne "[[parameters('allowedResourceTypes')]" -or
+        $allowedResourceTypesPolicy[0].properties.policyRule.then.effect -ne 'deny') {
+        Stop-Test 'The custom allowed-resource-types policy must evaluate all resource types.'
+    }
+    if ($references[0].parameters.listOfAllowedLocations.value -ne "[[parameters('allowedLocations')]" -or
+        $references[0].parameters.effect.value -ne 'Deny' -or
+        $references[1].policyDefinitionId -ne "[parameters('allowedResourceTypesPolicyDefinitionId')]" -or
+        $references[1].parameters.allowedResourceTypes.value -ne "[[parameters('allowedResourceTypes')]" -or
+        $references[2].parameters.listOfAllowedSKUs.value -ne "[[parameters('allowedVmSkus')]") {
+        Stop-Test 'Root deployment-restrictions initiative parameter mappings are invalid.'
+    }
+    $restrictionAssignmentParameters = $restrictionAssignment[0].properties.parameters
+    $messages = @($restrictionAssignmentParameters.nonComplianceMessages.value)
+    if ($restrictionAssignmentParameters.assignmentName.value -ne 'demo-deploy-restrictions' -or
+        $restrictionAssignmentParameters.enforcementMode.value -ne "[parameters('enforcementMode')]" -or
+        $messages.Count -ne 5) {
+        Stop-Test 'Root deployment-restrictions assignment is not safely configured.'
+    }
+    Assert-ExactNames -Actual @($messages.policyDefinitionReferenceId) -Expected $expectedReferenceIds -Message 'Root deployment-restrictions noncompliance messages are incomplete.'
+    $requiredResourceTypes = @(
+        'Microsoft.Authorization/policyDefinitions'
+        'Microsoft.Authorization/policyExemptions'
+        'Microsoft.Authorization/policySetDefinitions'
+        'Microsoft.Insights/diagnosticSettings'
+        'Microsoft.Compute/virtualMachines/extensions'
+        'Microsoft.Network/networkInterfaces'
+        'Microsoft.Network/privateEndpoints'
+        'Microsoft.Network/privateEndpoints/privateDnsZoneGroups'
+        'Microsoft.Network/privateDnsZones/virtualNetworkLinks'
+        'Microsoft.Network/publicIPAddresses'
+        'Microsoft.RecoveryServices/vaults/backupPolicies'
+        'Microsoft.RecoveryServices/vaults/backupFabrics'
+        'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers'
+        'Microsoft.PolicyInsights/remediations'
+        'Microsoft.Resources/resourceGroups'
+        'Microsoft.Network/networkSecurityGroups'
+        'Microsoft.Network/virtualNetworks'
+        'Microsoft.SecurityInsights/onboardingStates'
+    )
+    if (Compare-Object $requiredResourceTypes @($mainJson.parameters.customerAllowedResourceTypes.defaultValue) |
+        Where-Object SideIndicator -eq '<=') {
+        Stop-Test 'Customer resource-type defaults omit required child, remediation, or evidence resource types.'
     }
 
     $shapesJson = Get-Content -LiteralPath $compiledShapes -Raw | ConvertFrom-Json

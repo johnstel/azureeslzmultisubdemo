@@ -67,6 +67,37 @@ resource allowedLocations 'Microsoft.Authorization/policyDefinitions@2025-03-01'
   }
 }
 
+resource allowedResourceTypesAll 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-allowed-resource-types-all'
+  properties: {
+    displayName: 'Demo - allowed resource types (all resources)'
+    description: 'Restricts every resource to a change-controlled type allowlist, including child and locationless resources.'
+    mode: 'All'
+    metadata: {
+      category: 'Demo Landing Zone'
+      version: '1.0.0'
+    }
+    parameters: {
+      allowedResourceTypes: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Allowed resource types'
+          description: 'Resource types allowed by this assignment.'
+        }
+      }
+    }
+    policyRule: {
+      if: {
+        field: 'type'
+        notIn: '[parameters(\'allowedResourceTypes\')]'
+      }
+      then: {
+        effect: 'deny'
+      }
+    }
+  }
+}
+
 resource auditPublicIp 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   name: '${namePrefix}-audit-public-ip'
   properties: {
@@ -726,6 +757,7 @@ resource workloadResourceGroupTags 'Microsoft.Authorization/policyDefinitions@20
 }
 
 output allowedLocationsPolicyDefinitionId string = allowedLocations.id
+output allowedResourceTypesAllPolicyDefinitionId string = allowedResourceTypesAll.id
 output auditPublicIpPolicyDefinitionId string = auditPublicIp.id
 output publicManagementIngressPolicyDefinitionId string = publicManagementIngress.id
 output requireSubnetNsgPolicyDefinitionId string = requireSubnetNsg.id
