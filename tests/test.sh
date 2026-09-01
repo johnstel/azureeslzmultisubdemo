@@ -40,6 +40,31 @@ if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   exit 1
 fi
 COMPILED_MAIN_TEMPLATE="${TEMP_DIR}/main.json" "${SCRIPT_DIR}/validate-policy-assignment.sh"
+printf '    Confirm the exact six-tag initiative and compliant evidence resource groups...\n'
+jq -e '
+  def deployment($name):
+    first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
+  ["CostCenter", "ApplicationName", "Owner", "Environment", "DataClassification", "SSP-ID"] as $requiredTags |
+  deployment("resource-group-tags-initiative") as $initiative |
+  deployment("assign-resource-group-tags") as $assignment |
+  deployment("connectivity-evidence") as $connectivityEvidence |
+  deployment("workload-evidence") as $workloadEvidence |
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.parameters.tagName.value)) == $requiredTags and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | length) == 6 and
+  ([$initiative.properties.parameters.policyDefinitionReferences.value[].policyDefinitionId] | unique) ==
+    ["[variables(\u0027requireResourceGroupTagPolicyDefinitionId\u0027)]"] and
+  ($assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]") and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId)) ==
+    ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId)) and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.message)) ==
+    ($requiredTags | map("Resource groups must include the \(.) tag.")) and
+  (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
+  (first($workloadEvidence.properties.template.resources[] |
+    select(.type == "Microsoft.Resources/resourceGroups")).tags | keys | sort) == ($requiredTags | sort)
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Required resource-group tag initiative or evidence tags are invalid.\n' >&2
+  exit 1
+}
 
 printf '3/23 Validate the ARM parameter template...\n'
 jq -e '

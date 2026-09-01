@@ -74,6 +74,62 @@ try {
         Stop-Test 'main.bicep build must not emit a BCP318 nullable-module-output warning.'
     }
     & (Join-Path $ScriptDir 'validate-policy-assignment.ps1') -CompiledMainTemplate $compiledTemplate
+    $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    Write-Host '    Confirm the exact six-tag initiative and compliant evidence resource groups...'
+    $requiredTags = @('CostCenter', 'ApplicationName', 'Owner', 'Environment', 'DataClassification', 'SSP-ID')
+    $initiativeDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'resource-group-tags-initiative'
+    } | Select-Object -First 1
+    $assignmentDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-resource-group-tags'
+    } | Select-Object -First 1
+    if ($null -eq $initiativeDeployment -or $null -eq $assignmentDeployment) {
+        Stop-Test 'Required resource-group tag initiative or assignment deployment is missing.'
+    }
+    $tagReferences = @($initiativeDeployment.properties.parameters.policyDefinitionReferences.value)
+    if ($tagReferences.Count -ne 6) {
+        Stop-Test 'Required resource-group tag initiative must contain exactly six policy references.'
+    }
+    for ($index = 0; $index -lt $requiredTags.Count; $index++) {
+        if ($tagReferences[$index].parameters.tagName.value -cne $requiredTags[$index]) {
+            Stop-Test "Required resource-group tag at index $index must be exactly $($requiredTags[$index])."
+        }
+        if ($tagReferences[$index].policyDefinitionId -cne "[variables('requireResourceGroupTagPolicyDefinitionId')]") {
+            Stop-Test 'Every required tag must use the verified built-in resource-group tag policy.'
+        }
+    }
+    if ($assignmentDeployment.properties.parameters.enforcementMode.value -cne "[parameters('denyPolicyEnforcementMode')]") {
+        Stop-Test 'Required resource-group tag assignment must use the safe deny enforcement parameter.'
+    }
+    $nonComplianceMessages = @($assignmentDeployment.properties.parameters.nonComplianceMessages.value)
+    for ($index = 0; $index -lt $requiredTags.Count; $index++) {
+        if ($nonComplianceMessages[$index].policyDefinitionReferenceId -cne $tagReferences[$index].policyDefinitionReferenceId -or
+            $nonComplianceMessages[$index].message -cne "Resource groups must include the $($requiredTags[$index]) tag.") {
+            Stop-Test "Required resource-group tag $($requiredTags[$index]) must have a matching noncompliance message."
+        }
+    }
+    foreach ($evidenceDeploymentName in @('connectivity-evidence', 'workload-evidence')) {
+        $evidenceDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+            param($node)
+            $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+            $node.PSObject.Properties['name'] -and $node.name -eq $evidenceDeploymentName
+        } | Select-Object -First 1
+        if ($evidenceDeploymentName -eq 'connectivity-evidence') {
+            $evidenceTags = $evidenceDeployment.properties.template.variables.commonTags
+        } else {
+            $evidenceTags = @($evidenceDeployment.properties.template.resources |
+                Where-Object { $_.type -eq 'Microsoft.Resources/resourceGroups' })[0].tags
+        }
+        foreach ($requiredTag in $requiredTags) {
+            if (-not $evidenceTags.PSObject.Properties[$requiredTag]) {
+                Stop-Test "$evidenceDeploymentName resource group is missing the exact $requiredTag tag."
+            }
+        }
+    }
 
     Write-Host '3/23 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
@@ -93,7 +149,6 @@ try {
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
 
     Write-Host '4/23 Confirm there are exactly two unconditional subscription associations...'
-    $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'

@@ -671,12 +671,14 @@ Scope: Platform branch.
 
 Taggable Platform resources are audited for `Owner` and `CostCenter`.
 
-### 5. Require workload resource-group tags
+### 5. Require landing-zone resource-group tags
 
-Scope: Corp or Online workload branch.
+Scope: Landing Zones branch.
 
-Workload resource groups must have `Application`, `Environment`, and `Owner`
-tags. Its assignment starts in `DoNotEnforce`.
+Resource groups must have the exact `CostCenter`, `ApplicationName`, `Owner`,
+`Environment`, `DataClassification`, and `SSP-ID` tags. The tagging initiative
+provides a tag-specific noncompliance message for each requirement. Its
+assignment starts in `DoNotEnforce`.
 
 Azure Policy is inherited from parent scopes and evaluates resources beneath
 management groups. See

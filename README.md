@@ -58,14 +58,16 @@ root:
 | Demo root | Audit creation of public IP address resources | Audit |
 | Demo root | Block common costly service types and VM SKUs outside an intentionally small allowlist | Deny assignment in `DoNotEnforce` |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
-| Corp/Online | Require `Application`, `Environment`, and `Owner` tags on resource groups | Deny assignment in `DoNotEnforce` |
+| Landing Zones | Require `CostCenter`, `ApplicationName`, `Owner`, `Environment`, `DataClassification`, and `SSP-ID` tags on resource groups | Initiative assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
 safe shape of Azure's built-in allowed-locations control. Resource groups are
-governed separately by workload tag policy. Change
+governed separately by the Landing Zones tagging initiative. Change
 `denyPolicyEnforcementMode` to `Default` only after reviewing what-if and the
-policy impact.
+policy impact. The resource-group tagging initiative composes six instances of
+Azure's built-in **Require a tag on resource groups** definition and provides a
+tag-specific noncompliance message for each requirement.
 
 ### Reusable initiative composition
 
