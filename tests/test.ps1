@@ -1968,7 +1968,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
             $node.PSObject.Properties['name'] -and $node.name -eq $auditOnlyDeploymentName
         } | Select-Object -First 1
-        $identityAssignments = @($auditOnlyDeployment.properties.template.resources |
+        $identityAssignments = @($auditOnlyDeployment.properties.template.resources.PSObject.Properties.Value |
             Where-Object { $_.type -eq 'Microsoft.Authorization/policyAssignments' -and $_.PSObject.Properties['identity'] })
         if ($identityAssignments.Count -ne 0) {
             Stop-Test "$auditOnlyDeploymentName must not request a managed identity for an audit-only benchmark."

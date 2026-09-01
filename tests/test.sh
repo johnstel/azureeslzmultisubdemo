@@ -1518,9 +1518,9 @@ fi
 printf '    Confirm every enabled/disabled benchmark combination compiles with the expected assignments...\n'
 for benchmark_case in 'true,false,false' 'false,false,false' 'true,true,true' 'false,true,false' 'false,false,true'; do
   mcsb_enabled="${benchmark_case%%,*}"
-  nist_enabled="${benchmark_case##*,}"
   cis_enabled="${benchmark_case#*,}"
   cis_enabled="${cis_enabled%%,*}"
+  nist_enabled="${benchmark_case##*,}"
   benchmark_params="${TEMP_DIR}/benchmark-${mcsb_enabled}-${cis_enabled}-${nist_enabled}.bicepparam"
   sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
     -e 's/^param enableMicrosoftCloudSecurityBenchmark = .*$/param enableMicrosoftCloudSecurityBenchmark = '"${mcsb_enabled}"'/' \
