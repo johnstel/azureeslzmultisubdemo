@@ -1783,6 +1783,33 @@
       "notes": "GA (non-preview), audit-only, no managed identity, no role. See REQ-DEF-07's notes; this is the Linux counterpart, verified independently against the same upstream repository."
     },
     {
+      "id": "REQ-DEF-09",
+      "domain": "defender-for-cloud",
+      "customerRequirement": "Represent Foundational CSPM (issue #20) as an explicit, independent control distinct from the paid Defender CSPM plan (REQ-DEF-02), rather than letting REQ-DEF-02's paid CIEM/CSPM plan stand in for it.",
+      "scope": "landingzones",
+      "classification": "manual-evidence",
+      "mechanism": {
+        "kind": "platform-default-capability",
+        "builtIn": false,
+        "displayName": "Foundational CSPM (free, always-on Microsoft Defender for Cloud baseline; not an assignable Azure Policy resource)",
+        "definitionId": null,
+        "sourceUrl": "https://learn.microsoft.com/en-us/azure/defender-for-cloud/concept-cloud-security-posture-management",
+        "verifiedOn": "2026-09-01",
+        "verificationMethod": "ms-learn-page",
+        "notes": "Confirmed via Microsoft Learn: Foundational CSPM is automatically enabled at no cost on every Azure subscription (Free pricing tier or higher) and is not exposed as a Microsoft.Security/pricings pricing-tier value or any other assignable Azure Policy resource -- there is no built-in DINE/Audit policy definition distinct from the paid CloudPosture ('Standard' pricingTier) built-ins that represents only the free tier. Both 'Configure Microsoft Defender CSPM to be enabled' (689f7782-ef2c-4270-a6d0-7664869076bd) and REQ-DEF-02's full-features variant (72f8cee7-2937-403d-84a1-a4e3e57f3c21) exist solely to set the paid Standard pricingTier; neither audits or represents the free tier itself (verified from each policy's raw source JSON: both existence conditions check pricingTier == 'Standard')."
+      },
+      "supportedEffects": [
+        "Disabled"
+      ],
+      "requiredParameters": [],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "manual-evidence",
+      "evidenceSource": "Not independently assignable; recorded here so the catalog documents Foundational CSPM as a distinct, no-cost, always-on capability rather than conflating it with the paid Defender CSPM plan.",
+      "notes": "This record deliberately has no policyDefinition/policySetDefinition (definitionId is null), because Foundational CSPM cannot be toggled or assigned via Azure Policy -- it is always on regardless of pricing tier. supportedEffects lists only 'Disabled' as a placeholder (there is no policy to assign, so no effect ever actually applies); this record exists purely to give the catalog an explicit, independent line item for Foundational CSPM. It is the free capability that populates REQ-DEF-06 (vulnerability-assessment audit), REQ-DEF-07/08 (AMA audit), and the network/compute security recommendations referenced in REQ-NET-01/03's notes, none of which require REQ-DEF-02 (paid Defender CSPM/CIEM) or REQ-DEF-01 (the unsafe all-plans initiative) to be assigned. Opting in to REQ-DEF-02 adds Defender CSPM's paid intelligent cloud security graph and CIEM (Entra Permissions Management) features on top of this always-on baseline; it does not create Foundational CSPM, which was already present before any opt-in."
+    },
+    {
       "id": "REQ-BKP-01",
       "domain": "backup",
       "customerRequirement": "Audit that virtual machines have Azure Backup coverage.",

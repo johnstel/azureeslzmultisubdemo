@@ -825,6 +825,9 @@ rg -q "value: enablePlan \\? 'DeployIfNotExists' : 'Disabled'" "${PROJECT_DIR}/m
   printf 'ERROR: modules/defender-plan-assignment.bicep must never create a role assignment.\n' >&2
   exit 1
 }
+rg -q "^param enableDefenderCiem bool = true$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param defenderForServersSubPlan string = 'P2'$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param defenderForServersAgentlessVmScanningEnabled bool = true$" "${PROJECT_DIR}/main.bicep"
 defender_plan_assignments="$(jq '
   [.. | objects
     | select(.type? == "Microsoft.Resources/deployments")
@@ -835,15 +838,70 @@ defender_plan_assignments="$(jq '
   printf 'ERROR: Expected exactly three Defender plan assignment module deployments (cspm/servers/storage).\n' >&2
   exit 1
 }
-printf '%s' "${defender_plan_assignments}" | jq -e '
-  all(.[]; .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderCspm\u0027)]"
-    or .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderForServers\u0027)]"
-    or .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderForStorage\u0027)]")
-' >/dev/null
+# Each of the three deployments must map to its own distinct plan/scope/opt-in
+# wiring; an "any of the three" style assertion could pass even if, for
+# example, the CSPM deployment were accidentally wired to the Storage GUID.
+cspm_deployment="$(printf '%s' "${defender_plan_assignments}" | jq -c '.[] | select(.name == "assign-defender-cspm")')"
+servers_deployment="$(printf '%s' "${defender_plan_assignments}" | jq -c '.[] | select(.name == "assign-defender-servers")')"
+storage_deployment="$(printf '%s' "${defender_plan_assignments}" | jq -c '.[] | select(.name == "assign-defender-storage")')"
+printf '%s' "${cspm_deployment}" | jq -e '
+  .properties.parameters.plan.value == "cspm" and
+  .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderCspm\u0027)]" and
+  .properties.parameters.cspmEntraPermissionsManagementEnabled.value == "[parameters(\u0027enableDefenderCiem\u0027)]" and
+  (.scope | contains("demoRootManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-defender-cspm must be scoped to the demo root management group and wired to enableDefenderCspm/enableDefenderCiem.\n' >&2
+  exit 1
+}
+printf '%s' "${servers_deployment}" | jq -e '
+  .properties.parameters.plan.value == "servers" and
+  .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderForServers\u0027)]" and
+  .properties.parameters.serversSubPlan.value == "[parameters(\u0027defenderForServersSubPlan\u0027)]" and
+  .properties.parameters.serversAgentlessVmScanningEnabled.value == "[parameters(\u0027defenderForServersAgentlessVmScanningEnabled\u0027)]" and
+  (.scope | contains("landingZonesManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-defender-servers must be scoped to the Landing Zones management group and wired to enableDefenderForServers/defenderForServersSubPlan/defenderForServersAgentlessVmScanningEnabled.\n' >&2
+  exit 1
+}
+printf '%s' "${storage_deployment}" | jq -e '
+  .properties.parameters.plan.value == "storage" and
+  .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderForStorage\u0027)]" and
+  (.scope | contains("landingZonesManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage.\n' >&2
+  exit 1
+}
+# The module itself must map each verified plan to its own distinct
+# definitionId/definitionVersion/parameter-object entry ("switch"), not a
+# shared/ambiguous shape.
 rg -q "definitionId: .72f8cee7-2937-403d-84a1-a4e3e57f3c21." "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
 rg -q "definitionId: .5eb6d64a-4086-4d7a-92da-ec51aed0332d." "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
 rg -q "definitionId: .cfdc5972-75b3-4418-8ae1-7f5c36839390." "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
 rg -c "definitionVersion: '1\.\*\.\*'" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" | rg -q '^3$'
+printf '%s' "${cspm_deployment}" | jq -e '
+  .properties.template.variables.planDefinitions.cspm.definitionId == "72f8cee7-2937-403d-84a1-a4e3e57f3c21" and
+  .properties.template.variables.planDefinitions.cspm.definitionVersion == "1.*.*" and
+  (.properties.template.variables.planParameters.cspm | has("isSensitiveDataDiscoveryEnabled") and has("isContainerRegistriesVulnerabilityAssessmentsEnabled") and has("isAgentlessDiscoveryForKubernetesEnabled") and has("isAgentlessVmScanningEnabled") and has("isEntraPermissionsManagementEnabled"))
+' >/dev/null || {
+  printf 'ERROR: The compiled CSPM plan definition/parameter switch is missing an expected field.\n' >&2
+  exit 1
+}
+printf '%s' "${servers_deployment}" | jq -e '
+  .properties.template.variables.planDefinitions.servers.definitionId == "5eb6d64a-4086-4d7a-92da-ec51aed0332d" and
+  .properties.template.variables.planDefinitions.servers.definitionVersion == "1.*.*" and
+  (.properties.template.variables.planParameters.servers | has("subPlan") and has("isAgentlessVmScanningEnabled") and has("isMdeDesignatedSubscriptionEnabled"))
+' >/dev/null || {
+  printf 'ERROR: The compiled Servers plan definition/parameter switch is missing an expected field.\n' >&2
+  exit 1
+}
+printf '%s' "${storage_deployment}" | jq -e '
+  .properties.template.variables.planDefinitions.storage.definitionId == "cfdc5972-75b3-4418-8ae1-7f5c36839390" and
+  .properties.template.variables.planDefinitions.storage.definitionVersion == "1.*.*" and
+  (.properties.template.variables.planParameters.storage | has("isOnUploadMalwareScanningEnabled") and has("capGBPerMonthPerStorageAccount") and has("isSensitiveDataDiscoveryEnabled"))
+' >/dev/null || {
+  printf 'ERROR: The compiled Storage plan definition/parameter switch is missing an expected field.\n' >&2
+  exit 1
+}
 ! rg -q "475aae12-b88a-4572-8b36-9b712b2b3a17" "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" || {
   printf 'ERROR: The deprecated Log Analytics (MMA) auto-provisioning policy definition must never be referenced.\n' >&2
   exit 1
@@ -860,8 +918,25 @@ ama_audit_assignments="$(jq '
   printf 'ERROR: Expected exactly two Azure Monitor Agent audit policy assignment module deployments (Windows/Linux).\n' >&2
   exit 1
 }
+printf '%s' "${ama_audit_assignments}" | jq -e '
+  (.[] | select(.name == "assign-defender-ama-audit-windows") | .properties.parameters.policyDefinitionId.value) == "[variables(\u0027windowsAmaAuditPolicyDefinitionId\u0027)]" and
+  (.[] | select(.name == "assign-defender-ama-audit-linux") | .properties.parameters.policyDefinitionId.value) == "[variables(\u0027linuxAmaAuditPolicyDefinitionId\u0027)]"
+' >/dev/null || {
+  printf 'ERROR: The Windows/Linux AMA audit assignments must each be wired to their own dedicated policyDefinitionId variable.\n' >&2
+  exit 1
+}
+jq -e '
+  .variables.windowsAmaAuditPolicyDefinitionId == "[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, \u0027c02729e5-e5e7-4458-97fa-2b5ad0661f28\u0027)]" and
+  .variables.linuxAmaAuditPolicyDefinitionId == "[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, \u00271afdc4b6-581a-45fb-b630-f1e6051e3e7a\u0027)]"
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The Windows/Linux AMA audit policy definition IDs must each resolve to their own verified built-in GUID.\n' >&2
+  exit 1
+}
 printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.parameters.definitionVersion.value == "3.*.*")' >/dev/null
 printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.template.resources.assignment.identity == null)' >/dev/null
+
+rg -q '"REQ-DEF-09"' "${PROJECT_DIR}/policy/control-catalog.json"
+rg -q "Foundational CSPM" "${PROJECT_DIR}/README.md"
 
 printf '11/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"

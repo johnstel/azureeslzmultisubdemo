@@ -1038,6 +1038,15 @@ exit $LASTEXITCODE
         $compiledParameters.parameters.enableDefenderForStorage.value -ne $false) {
         Stop-Test 'Compiled Bicep parameter template enableDefender* values must all be false.'
     }
+    if ($mainBicepText -notmatch '(?m)^param enableDefenderCiem bool = true$') {
+        Stop-Test 'enableDefenderCiem parameter must default to true.'
+    }
+    if ($mainBicepText -notmatch "(?m)^param defenderForServersSubPlan string = 'P2'$") {
+        Stop-Test 'defenderForServersSubPlan parameter must default to P2.'
+    }
+    if ($mainBicepText -notmatch '(?m)^param defenderForServersAgentlessVmScanningEnabled bool = true$') {
+        Stop-Test 'defenderForServersAgentlessVmScanningEnabled parameter must default to true.'
+    }
     $defenderPlanBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/defender-plan-assignment.bicep') -Raw
     if ($defenderPlanBicepText -notmatch "(?m)^param plan 'cspm' \| 'servers' \| 'storage'$") {
         Stop-Test 'defender-plan-assignment.bicep must restrict plan to the cspm/servers/storage enum.'
@@ -1079,13 +1088,62 @@ exit $LASTEXITCODE
     if (@($defenderPlanDeployments).Count -ne 3) {
         Stop-Test 'Expected exactly three Defender plan assignment module deployments (cspm/servers/storage).'
     }
-    foreach ($deployment in $defenderPlanDeployments) {
-        $enablePlanValue = $deployment.properties.parameters.enablePlan.value
-        if ($enablePlanValue -ne "[parameters('enableDefenderCspm')]" -and
-            $enablePlanValue -ne "[parameters('enableDefenderForServers')]" -and
-            $enablePlanValue -ne "[parameters('enableDefenderForStorage')]") {
-            Stop-Test "Defender plan assignment '$($deployment.name)' enablePlan must be wired to its own enableDefender* parameter."
-        }
+    # Each of the three deployments must map to its own distinct plan/scope/
+    # opt-in wiring; an "any of the three" style assertion could pass even if,
+    # for example, the CSPM deployment were accidentally wired to the Storage
+    # GUID.
+    $cspmDeployment = $defenderPlanDeployments | Where-Object { $_.name -eq 'assign-defender-cspm' } | Select-Object -First 1
+    $serversDeployment = $defenderPlanDeployments | Where-Object { $_.name -eq 'assign-defender-servers' } | Select-Object -First 1
+    $storageDeployment = $defenderPlanDeployments | Where-Object { $_.name -eq 'assign-defender-storage' } | Select-Object -First 1
+    if ($cspmDeployment.properties.parameters.plan.value -ne 'cspm' -or
+        $cspmDeployment.properties.parameters.enablePlan.value -ne "[parameters('enableDefenderCspm')]" -or
+        $cspmDeployment.properties.parameters.cspmEntraPermissionsManagementEnabled.value -ne "[parameters('enableDefenderCiem')]" -or
+        $cspmDeployment.scope -notmatch 'demoRootManagementGroupId') {
+        Stop-Test 'assign-defender-cspm must be scoped to the demo root management group and wired to enableDefenderCspm/enableDefenderCiem.'
+    }
+    if ($serversDeployment.properties.parameters.plan.value -ne 'servers' -or
+        $serversDeployment.properties.parameters.enablePlan.value -ne "[parameters('enableDefenderForServers')]" -or
+        $serversDeployment.properties.parameters.serversSubPlan.value -ne "[parameters('defenderForServersSubPlan')]" -or
+        $serversDeployment.properties.parameters.serversAgentlessVmScanningEnabled.value -ne "[parameters('defenderForServersAgentlessVmScanningEnabled')]" -or
+        $serversDeployment.scope -notmatch 'landingZonesManagementGroupId') {
+        Stop-Test 'assign-defender-servers must be scoped to the Landing Zones management group and wired to enableDefenderForServers/defenderForServersSubPlan/defenderForServersAgentlessVmScanningEnabled.'
+    }
+    if ($storageDeployment.properties.parameters.plan.value -ne 'storage' -or
+        $storageDeployment.properties.parameters.enablePlan.value -ne "[parameters('enableDefenderForStorage')]" -or
+        $storageDeployment.scope -notmatch 'landingZonesManagementGroupId') {
+        Stop-Test 'assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage.'
+    }
+    # The module itself must map each verified plan to its own distinct
+    # definitionId/definitionVersion/parameter-object entry ("switch"), not a
+    # shared/ambiguous shape.
+    $cspmPlanDefinition = $cspmDeployment.properties.template.variables.planDefinitions.cspm
+    $cspmPlanParameters = $cspmDeployment.properties.template.variables.planParameters.cspm
+    if ($cspmPlanDefinition.definitionId -ne '72f8cee7-2937-403d-84a1-a4e3e57f3c21' -or
+        $cspmPlanDefinition.definitionVersion -ne '1.*.*' -or
+        -not $cspmPlanParameters.PSObject.Properties['isSensitiveDataDiscoveryEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isContainerRegistriesVulnerabilityAssessmentsEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isAgentlessDiscoveryForKubernetesEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isAgentlessVmScanningEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isEntraPermissionsManagementEnabled']) {
+        Stop-Test 'The compiled CSPM plan definition/parameter switch is missing an expected field.'
+    }
+    $serversPlanDefinition = $serversDeployment.properties.template.variables.planDefinitions.servers
+    $serversPlanParameters = $serversDeployment.properties.template.variables.planParameters.servers
+    if ($serversPlanDefinition.definitionId -ne '5eb6d64a-4086-4d7a-92da-ec51aed0332d' -or
+        $serversPlanDefinition.definitionVersion -ne '1.*.*' -or
+        -not $serversPlanParameters.PSObject.Properties['subPlan'] -or
+        -not $serversPlanParameters.PSObject.Properties['isAgentlessVmScanningEnabled'] -or
+        -not $serversPlanParameters.PSObject.Properties['isMdeDesignatedSubscriptionEnabled']) {
+        Stop-Test 'The compiled Servers plan definition/parameter switch is missing an expected field.'
+    }
+    $storagePlanDefinition = $storageDeployment.properties.template.variables.planDefinitions.storage
+    $storagePlanParameters = $storageDeployment.properties.template.variables.planParameters.storage
+    if ($storagePlanDefinition.definitionId -ne 'cfdc5972-75b3-4418-8ae1-7f5c36839390' -or
+        $storagePlanDefinition.definitionVersion -ne '1.*.*' -or
+        -not $storagePlanParameters.PSObject.Properties['isOnUploadMalwareScanningEnabled'] -or
+        -not $storagePlanParameters.PSObject.Properties['capGBPerMonthPerStorageAccount'] -or
+        -not $storagePlanParameters.PSObject.Properties['isSensitiveDataDiscoveryEnabled']) {
+        Stop-Test 'The compiled Storage plan definition/parameter switch is missing an expected field.'
     }
     $amaAuditDeployments = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -1095,6 +1153,16 @@ exit $LASTEXITCODE
     if (@($amaAuditDeployments).Count -ne 2) {
         Stop-Test 'Expected exactly two Azure Monitor Agent audit policy assignment module deployments (Windows/Linux).'
     }
+    $windowsAmaDeployment = $amaAuditDeployments | Where-Object { $_.name -eq 'assign-defender-ama-audit-windows' } | Select-Object -First 1
+    $linuxAmaDeployment = $amaAuditDeployments | Where-Object { $_.name -eq 'assign-defender-ama-audit-linux' } | Select-Object -First 1
+    if ($windowsAmaDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('windowsAmaAuditPolicyDefinitionId')]" -or
+        $linuxAmaDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('linuxAmaAuditPolicyDefinitionId')]") {
+        Stop-Test 'The Windows/Linux AMA audit assignments must each be wired to their own dedicated policyDefinitionId variable.'
+    }
+    if ($compiledJson.variables.windowsAmaAuditPolicyDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policyDefinitions', 'c02729e5-e5e7-4458-97fa-2b5ad0661f28')]" -or
+        $compiledJson.variables.linuxAmaAuditPolicyDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '1afdc4b6-581a-45fb-b630-f1e6051e3e7a')]") {
+        Stop-Test 'The Windows/Linux AMA audit policy definition IDs must each resolve to their own verified built-in GUID.'
+    }
     foreach ($deployment in $amaAuditDeployments) {
         if ($deployment.properties.parameters.definitionVersion.value -ne '3.*.*') {
             Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must pin definitionVersion to 3.*.*."
@@ -1102,6 +1170,14 @@ exit $LASTEXITCODE
         if ($deployment.properties.template.resources.assignment.PSObject.Properties['identity']) {
             Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must never create a managed identity."
         }
+    }
+    $catalogText = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw
+    if ($catalogText -notmatch '"REQ-DEF-09"') {
+        Stop-Test 'policy/control-catalog.json must include the REQ-DEF-09 Foundational CSPM record.'
+    }
+    $readmeText = Get-Content -LiteralPath (Join-Path $ProjectDir 'README.md') -Raw
+    if ($readmeText -notmatch 'Foundational CSPM') {
+        Stop-Test 'README.md must document Foundational CSPM.'
     }
 
     Write-Host '11/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'

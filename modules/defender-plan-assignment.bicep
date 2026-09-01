@@ -45,6 +45,15 @@ targetScope = 'managementGroup'
 // free-text parameters. The `plan` parameter is restricted to the three
 // verified built-in plans below so this module can never be pointed at an
 // unverified definition or an unpinned version.
+//
+// Each of these built-ins also exposes its own extension parameters beyond
+// `effect` (for example Servers' `subPlan`/agentless-scanning toggle, or
+// CSPM's Entra Permissions Management/CIEM toggle). Rather than omitting
+// those from the assignment and silently inheriting whatever the built-in's
+// own default happens to be, this module accepts an explicit, documented
+// parameter for every one of them (defaulting to the built-in's own
+// verified default so behavior is unchanged) and maps each verified `plan`
+// value to its own parameter object below (see `planParameters`).
 
 var planDefinitions = {
   cspm: {
@@ -118,6 +127,43 @@ param plan 'cspm' | 'servers' | 'storage'
 @sys.description('Explicit, independent opt-in for this paid plan. Defaults to false (effect stays Disabled, no managed identity is created). Setting true switches effect to DeployIfNotExists and creates a SystemAssigned identity, but this module never grants that identity any role.')
 param enablePlan bool = false
 
+@sys.description('CSPM plan only. Enables the built-in\'s sensitive-data-discovery extension. Defaults to true, matching the built-in\'s own verified default (ASC_Azure_Defender_CSPM_Full_Features_DINE.json).')
+param cspmSensitiveDataDiscoveryEnabled bool = true
+
+@sys.description('CSPM plan only. Enables the built-in\'s container-registries vulnerability-assessment extension. Defaults to true, matching the built-in\'s own verified default.')
+param cspmContainerRegistriesVulnerabilityAssessmentsEnabled bool = true
+
+@sys.description('CSPM plan only. Enables the built-in\'s agentless discovery for Kubernetes extension. Defaults to true, matching the built-in\'s own verified default.')
+param cspmAgentlessDiscoveryForKubernetesEnabled bool = true
+
+@sys.description('CSPM plan only. Enables the built-in\'s agentless VM scanning extension. Defaults to true, matching the built-in\'s own verified default.')
+param cspmAgentlessVmScanningEnabled bool = true
+
+@sys.description('CSPM plan only. Enables the built-in\'s Entra Permissions Management (CIEM) extension -- this is the CIEM feature scoped by issue #20. Defaults to true, matching the built-in\'s own verified default.')
+param cspmEntraPermissionsManagementEnabled bool = true
+
+@sys.description('Servers plan only. Explicit sub-plan choice passed to the built-in; it defaults to P2 (matching the built-in\'s own verified default), which is not the same as P1. Override to P1 if the customer wants the lower-cost sub-plan instead.')
+@allowed([
+  'P1'
+  'P2'
+])
+param serversSubPlan string = 'P2'
+
+@sys.description('Servers plan only. Enables the built-in\'s agentless VM scanning extension; only takes effect when serversSubPlan is P2, per the built-in\'s own existence condition. Defaults to true, matching the built-in\'s own verified default.')
+param serversAgentlessVmScanningEnabled bool = true
+
+@sys.description('Servers plan only. Enables the built-in\'s MDE-designated-subscription setting. Defaults to false, matching the built-in\'s own verified default.')
+param serversMdeDesignatedSubscriptionEnabled bool = false
+
+@sys.description('Storage plan only. Enables the built-in\'s on-upload malware-scanning extension. Defaults to true, matching the built-in\'s own verified default.')
+param storageOnUploadMalwareScanningEnabled bool = true
+
+@sys.description('Storage plan only. Monthly GB cap per storage account for the built-in\'s malware-scanning extension. Defaults to 10000, matching the built-in\'s own verified default.')
+param storageCapGBPerMonthPerStorageAccount int = 10000
+
+@sys.description('Storage plan only. Enables the built-in\'s sensitive-data-discovery extension. Defaults to true, matching the built-in\'s own verified default.')
+param storageSensitiveDataDiscoveryEnabled bool = true
+
 @sys.description('Non-global Azure region used to store the policy assignment and its managed identity when enablePlan is true.')
 @minLength(1)
 param location string
@@ -141,6 +187,55 @@ var validatedLocation = !empty(trim(location)) && toLower(trim(location)) != 'gl
 var selectedPlan = planDefinitions[plan]
 var policyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', selectedPlan.definitionId)
 
+// Every built-in below exposes extension parameters beyond "effect". Rather
+// than silently accepting whatever the built-in's own defaults are when
+// those parameters are simply omitted from an assignment, this module maps
+// each verified `plan` value to its own explicit parameter object -- so the
+// compiled ARM template always shows a named, documented value for every
+// choice the built-in supports (issue #20), even when that value matches
+// the built-in's own verified default.
+var planParameters = {
+  cspm: {
+    isSensitiveDataDiscoveryEnabled: {
+      value: cspmSensitiveDataDiscoveryEnabled ? 'true' : 'false'
+    }
+    isContainerRegistriesVulnerabilityAssessmentsEnabled: {
+      value: cspmContainerRegistriesVulnerabilityAssessmentsEnabled ? 'true' : 'false'
+    }
+    isAgentlessDiscoveryForKubernetesEnabled: {
+      value: cspmAgentlessDiscoveryForKubernetesEnabled ? 'true' : 'false'
+    }
+    isAgentlessVmScanningEnabled: {
+      value: cspmAgentlessVmScanningEnabled ? 'true' : 'false'
+    }
+    isEntraPermissionsManagementEnabled: {
+      value: cspmEntraPermissionsManagementEnabled ? 'true' : 'false'
+    }
+  }
+  servers: {
+    subPlan: {
+      value: serversSubPlan
+    }
+    isAgentlessVmScanningEnabled: {
+      value: serversAgentlessVmScanningEnabled ? 'true' : 'false'
+    }
+    isMdeDesignatedSubscriptionEnabled: {
+      value: serversMdeDesignatedSubscriptionEnabled ? 'true' : 'false'
+    }
+  }
+  storage: {
+    isOnUploadMalwareScanningEnabled: {
+      value: storageOnUploadMalwareScanningEnabled ? 'true' : 'false'
+    }
+    capGBPerMonthPerStorageAccount: {
+      value: storageCapGBPerMonthPerStorageAccount
+    }
+    isSensitiveDataDiscoveryEnabled: {
+      value: storageSensitiveDataDiscoveryEnabled ? 'true' : 'false'
+    }
+  }
+}
+
 resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
   name: validatedAssignmentName
   location: validatedLocation
@@ -153,11 +248,14 @@ resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
     policyDefinitionId: policyDefinitionId
     definitionVersion: selectedPlan.definitionVersion
     enforcementMode: 'Default'
-    parameters: {
-      effect: {
-        value: enablePlan ? 'DeployIfNotExists' : 'Disabled'
-      }
-    }
+    parameters: union(
+      {
+        effect: {
+          value: enablePlan ? 'DeployIfNotExists' : 'Disabled'
+        }
+      },
+      planParameters[plan]
+    )
     metadata: metadata
   }
 }

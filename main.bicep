@@ -178,8 +178,21 @@ param criticalInfrastructureSubscriptionIds array = []
 @description('Set true to opt in to Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role; see modules/defender-plan-assignment.bicep and docs/CONTROL-MATRIX.md for the fail-closed, no-standing-Owner remediation workflow required before the built-in policy can actually remediate anything.')
 param enableDefenderCspm bool = false
 
-@description('Set true to opt in to Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role. Whether the plan itself provisions agentless scanning or the Azure Monitor Agent depends on the sub-plan/settings a customer chooses directly in Microsoft Defender for Cloud; this assignment does not configure or claim that. See the unconditional Azure Monitor Agent audit assignments below (REQ-DEF-07/08) for a free, no-identity audit of current (non-deprecated) agent presence.')
+@description('Only applies when enableDefenderCspm is true. Explicit toggle for the Defender CSPM plan\'s Entra Permissions Management (CIEM) extension, called out by name in issue #20. Defaults to true, matching the built-in\'s own verified default; set false to opt the CSPM plan in without CIEM.')
+param enableDefenderCiem bool = true
+
+@description('Set true to opt in to Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role. This assignment explicitly configures the sub-plan and agentless-scanning extension via defenderForServersSubPlan/defenderForServersAgentlessVmScanningEnabled below rather than silently inheriting the built-in\'s own defaults. See the unconditional Azure Monitor Agent audit assignments below (REQ-DEF-07/08) for a free, no-identity audit of current (non-deprecated) agent presence.')
 param enableDefenderForServers bool = false
+
+@description('Only applies when enableDefenderForServers is true. Explicit Defender for Servers sub-plan choice (P1 or P2) passed to the built-in. Defaults to P2, matching the built-in\'s own verified default; P1 is the lower-cost sub-plan and does not support agentless VM scanning.')
+@allowed([
+  'P1'
+  'P2'
+])
+param defenderForServersSubPlan string = 'P2'
+
+@description('Only applies when enableDefenderForServers is true and defenderForServersSubPlan is P2, per the built-in\'s own existence condition. Explicit toggle for the Defender for Servers plan\'s agentless VM scanning extension. Defaults to true, matching the built-in\'s own verified default.')
+param defenderForServersAgentlessVmScanningEnabled bool = true
 
 @description('Set true to opt in to Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role.')
 param enableDefenderForStorage bool = false
@@ -538,9 +551,10 @@ module defenderCspmAssignment 'modules/defender-plan-assignment.bicep' = {
   params: {
     assignmentName: 'demo-defender-cspm'
     displayName: 'Demo - Microsoft Defender CSPM (opt-in, paid)'
-    description: 'Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Defaults Disabled with no managed identity; enableDefenderCspm opts in per plan. This template never grants the resulting identity any role -- remediation requires a separate, customer-run, time-bounded authorization outside this template.'
+    description: 'Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Defaults Disabled with no managed identity; enableDefenderCspm opts in per plan. This template never grants the resulting identity any role -- remediation requires a separate, customer-run, time-bounded authorization outside this template. The plan\'s Entra Permissions Management (CIEM) extension is explicitly wired to enableDefenderCiem rather than silently inheriting the built-in\'s own default.'
     plan: 'cspm'
     enablePlan: enableDefenderCspm
+    cspmEntraPermissionsManagementEnabled: enableDefenderCiem
     location: deploymentLocation
   }
   dependsOn: [
@@ -554,9 +568,11 @@ module defenderForServersAssignment 'modules/defender-plan-assignment.bicep' = {
   params: {
     assignmentName: 'demo-defender-servers'
     displayName: 'Demo - Microsoft Defender for Servers (opt-in, paid)'
-    description: 'Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Defaults Disabled, no managed identity; enableDefenderForServers opts in. Never grants the resulting identity a role. Whether the plan itself provisions agentless scanning or Azure Monitor Agent depends on the sub-plan a customer chooses in Defender for Cloud; not configured or claimed here. See REQ-DEF-07/08 for a free, no-identity audit of current agent presence.'
+    description: 'Microsoft Defender for Servers (REQ-DEF-03) on the Landing Zones branch. Defaults Disabled, no managed identity; enableDefenderForServers opts in. Never grants the resulting identity a role. Explicitly configures the sub-plan (defenderForServersSubPlan, default P2) and agentless VM scanning extension (defenderForServersAgentlessVmScanningEnabled, default true) rather than silently inheriting the built-in\'s own defaults. See REQ-DEF-07/08 for a free, no-identity audit of current agent presence.'
     plan: 'servers'
     enablePlan: enableDefenderForServers
+    serversSubPlan: defenderForServersSubPlan
+    serversAgentlessVmScanningEnabled: defenderForServersAgentlessVmScanningEnabled
     location: deploymentLocation
   }
   dependsOn: [

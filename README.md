@@ -256,21 +256,36 @@ and scope and is not invoked directly by these assignments, but is the
 established precedent to follow rather than granting standing Owner).
 Enabling any of these plans still requires the customer to review current
 Defender plan licensing/per-resource pricing and any role assignments
-Microsoft's own tooling then requires. Whether that action provisions
-agentless scanning or the Azure Monitor Agent for Defender for Servers
-depends on the sub-plan and settings the customer selects at that time; this
-project does not configure or claim to configure either one — the two AMA
-audit policies above only audit current agent presence, independent of any
-paid plan.
+Microsoft's own tooling then requires.
+
+Each built-in's own extension parameters beyond `effect` are explicitly
+modeled in `modules/defender-plan-assignment.bicep` — defaulted to match the
+built-in's own verified default so behavior is unchanged, but now named,
+documented, and auditable rather than silently inherited. Two of these are
+also exposed at the top level of this project: `enableDefenderCiem` (default
+`true`, only applies when `enableDefenderCspm` is `true`) explicitly toggles
+the CSPM plan's Entra Permissions Management (CIEM) extension by name, per
+issue #20; `defenderForServersSubPlan` (default `P2`) and
+`defenderForServersAgentlessVmScanningEnabled` (default `true`) explicitly
+choose the Defender for Servers sub-plan and its agentless-VM-scanning
+extension, so this project makes and documents that choice itself instead of
+leaving it to whatever a customer separately selects in Defender for Cloud
+later. This project still never configures or claims to configure the Azure
+Monitor Agent itself — the two AMA audit policies above only audit current
+agent presence, independent of any paid plan.
 
 This project never silently enables Defender plans, configures Microsoft
 Sentinel analytics/incidents, or claims that any of these controls alone
 prove Microsoft Cloud Security Benchmark (MCSB) or
 regulatory-compliance-dashboard compliance; see `docs/CONTROL-MATRIX.md` for
-the full REQ-DEF-01 through REQ-DEF-08 mapping, including why the
+the full REQ-DEF-01 through REQ-DEF-09 mapping, including why the
 all-or-nothing "Configure Microsoft Defender for Cloud plans" initiative and
 the deprecated Log Analytics (MMA) auto-provisioning policy are intentionally
-never assigned.
+never assigned. REQ-DEF-09 separately documents Foundational CSPM — the
+free, always-on Defender for Cloud baseline that populates the audit-only
+controls above — as its own catalog entry distinct from the paid Defender
+CSPM plan (REQ-DEF-02): Foundational CSPM is not an assignable Azure Policy
+resource and is present whether or not REQ-DEF-02 is ever opted in.
 
 ## Required permissions
 
