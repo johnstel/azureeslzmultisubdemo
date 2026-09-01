@@ -205,7 +205,8 @@ jq -e '
       "Microsoft.PolicyInsights/remediations",
       "Microsoft.Resources/resourceGroups",
       "Microsoft.Network/networkSecurityGroups",
-      "Microsoft.Network/virtualNetworks"
+      "Microsoft.Network/virtualNetworks",
+      "Microsoft.SecurityInsights/onboardingStates"
     ] - $root.parameters.customerAllowedResourceTypes.defaultValue | length) == 0
 ' "${compiled_main}" >/dev/null || {
   printf 'ERROR: Root deployment-restrictions initiative is not safely scoped, parameterized, or composed.\n' >&2

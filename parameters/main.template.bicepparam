@@ -47,6 +47,7 @@ param customerAllowedResourceTypes = [
   'Microsoft.RecoveryServices/vaults/backupPolicies'
   'Microsoft.Resources/deployments'
   'Microsoft.Resources/resourceGroups'
+  'Microsoft.SecurityInsights/onboardingStates'
 ]
 param customerAllowedVmSkus = [
   'Standard_B1ls'

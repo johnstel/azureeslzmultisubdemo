@@ -370,6 +370,7 @@ try {
         'Microsoft.Resources/resourceGroups'
         'Microsoft.Network/networkSecurityGroups'
         'Microsoft.Network/virtualNetworks'
+        'Microsoft.SecurityInsights/onboardingStates'
     )
     if (Compare-Object $requiredResourceTypes @($mainJson.parameters.customerAllowedResourceTypes.defaultValue) |
         Where-Object SideIndicator -eq '<=') {

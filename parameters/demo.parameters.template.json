@@ -77,7 +77,8 @@
         "Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems",
         "Microsoft.RecoveryServices/vaults/backupPolicies",
         "Microsoft.Resources/deployments",
-        "Microsoft.Resources/resourceGroups"
+        "Microsoft.Resources/resourceGroups",
+        "Microsoft.SecurityInsights/onboardingStates"
       ]
     },
     "customerAllowedVmSkus": {
