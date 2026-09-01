@@ -90,7 +90,26 @@ try {
     if (@($permanentOwners).Count -ne 0) {
         Stop-Validation "Compiled default contains $(@($permanentOwners).Count) permanent Owner role assignment(s)."
     }
-    if ($compiledText -match [regex]::Escape($ownerRoleDefinitionId)) {
+    # modules/remediating-policy-assignment.bicep stores the Owner and User
+    # Access Administrator IDs only as deny-list constants that make the
+    # deployment fail when a caller asks for either role. Those guard constants
+    # are ignored here (and only when the guard that rejects them is present in
+    # the same template); every other Owner reference remains an error.
+    $guardedCompiled = $compiledText | ConvertFrom-Json
+    $remediationGuards = Find-JsonObjects -Node $guardedCompiled -Predicate {
+        param($node)
+        $node.PSObject.Properties['variables'] -and
+        $node.variables -and
+        $node.variables.PSObject.Properties['ownerRoleDefinitionId'] -and
+        $node.variables.PSObject.Properties['userAccessAdministratorRoleDefinitionId'] -and
+        [string]$node.variables.invalidRoleDefinitionIds -match 'ownerRoleDefinitionId' -and
+        [string]$node.variables.validatedRoleDefinitionIds -match 'fail\('
+    }
+    foreach ($remediationGuard in @($remediationGuards)) {
+        $remediationGuard.variables.PSObject.Properties.Remove('ownerRoleDefinitionId')
+        $remediationGuard.variables.PSObject.Properties.Remove('userAccessAdministratorRoleDefinitionId')
+    }
+    if (($guardedCompiled | ConvertTo-Json -Depth 100) -match [regex]::Escape($ownerRoleDefinitionId)) {
         Stop-Validation 'Compiled main contains an Owner role definition reference.'
     }
 
@@ -98,9 +117,17 @@ try {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Authorization/roleAssignments'
     }
-    if (@($ordinaryRoleAssignments).Count -ne 5 -or
-        @($ordinaryRoleAssignments | Where-Object { $_.properties.principalType -ne 'Group' }).Count -ne 0) {
-        Stop-Validation 'Every ordinary role assignment must target a group, and exactly five lower-privilege assignments are expected.'
+    $groupRoleAssignments = @($ordinaryRoleAssignments | Where-Object { $_.properties.principalType -eq 'Group' })
+    $remediationRoleAssignments = @($ordinaryRoleAssignments |
+        Where-Object { [string]$_.properties.principalId -eq "[parameters('principalId')]" })
+    $invalidRemediationRoleAssignments = @($remediationRoleAssignments | Where-Object {
+        $_.properties.principalType -ne 'ServicePrincipal' -or
+        [string]$_.properties.roleDefinitionId -notmatch "parameters\('roleDefinitionIds'\)"
+    })
+    if ($groupRoleAssignments.Count -ne 5 -or
+        @($ordinaryRoleAssignments).Count -ne ($groupRoleAssignments.Count + $remediationRoleAssignments.Count) -or
+        $invalidRemediationRoleAssignments.Count -ne 0) {
+        Stop-Validation 'Ordinary role assignments must target groups (exactly five lower-privilege assignments), and any remediation assignment must bind a policy-assignment service principal to verified role definition IDs.'
     }
 
     $activeOwnerSchedules = Find-JsonObjects -Node $compiled -Predicate {

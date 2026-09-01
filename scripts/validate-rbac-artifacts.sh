@@ -72,16 +72,39 @@ permanent_owner_count="$(jq --arg owner "${owner_role_definition_id}" '
   || fail "Compiled default contains ${permanent_owner_count} permanent Owner role assignment(s)."
 
 owner_reference_count="$(jq --arg owner "${owner_role_definition_id}" '
-  [.. | strings | select(ascii_downcase | contains($owner))] | length
+  # modules/remediating-policy-assignment.bicep stores the Owner and User
+  # Access Administrator IDs only as deny-list constants that make the
+  # deployment fail when a caller asks for either role. Those guard constants
+  # are ignored here (and only when the guard that rejects them is present in
+  # the same template); every other Owner reference remains an error.
+  def strip_remediation_guard_constants:
+    walk(
+      if type == "object"
+        and (.variables? | type) == "object"
+        and (.variables | has("ownerRoleDefinitionId"))
+        and (.variables | has("userAccessAdministratorRoleDefinitionId"))
+        and ((.variables.invalidRoleDefinitionIds? // "") | contains("ownerRoleDefinitionId"))
+        and ((.variables.validatedRoleDefinitionIds? // "") | contains("fail("))
+      then .variables |= del(.ownerRoleDefinitionId, .userAccessAdministratorRoleDefinitionId)
+      else .
+      end
+    );
+  [strip_remediation_guard_constants | .. | strings | select(ascii_downcase | contains($owner))] | length
 ' "${COMPILED_TEMPLATE}")"
 [[ "${owner_reference_count}" -eq 0 ]] \
   || fail "Compiled main contains ${owner_reference_count} Owner role definition reference(s)."
 
 jq -e '
-  [.. | objects | select(.type? == "Microsoft.Authorization/roleAssignments")]
-  | length == 5 and all(.properties.principalType == "Group")
+  [.. | objects | select(.type? == "Microsoft.Authorization/roleAssignments")] as $assignments
+  | ($assignments | map(select(.properties.principalType == "Group"))) as $groupAssignments
+  | ($assignments | map(select(.properties.principalId == "[parameters(\u0027principalId\u0027)]"))) as $remediationAssignments
+  | ($groupAssignments | length) == 5
+    and ($assignments | length) == (($groupAssignments | length) + ($remediationAssignments | length))
+    and all($remediationAssignments[];
+      .properties.principalType == "ServicePrincipal"
+      and (.properties.roleDefinitionId | contains("parameters(\u0027roleDefinitionIds\u0027)")))
 ' "${COMPILED_TEMPLATE}" >/dev/null \
-  || fail 'Every ordinary role assignment must target a group, and exactly five lower-privilege assignments are expected.'
+  || fail 'Ordinary role assignments must target groups (exactly five lower-privilege assignments), and any remediation assignment must bind a policy-assignment service principal to verified role definition IDs.'
 
 active_owner_schedule_count="$(jq --arg owner "${owner_role_definition_id}" '
   [..
