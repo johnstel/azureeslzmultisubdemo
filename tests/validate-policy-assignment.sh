@@ -181,6 +181,9 @@ jq -e '
     and ($messages | length) == 5
     and (($messages | map(.policyDefinitionReferenceId) | sort) == ($references | map(.policyDefinitionReferenceId) | sort))
     and ([
+      "Microsoft.Authorization/policyDefinitions",
+      "Microsoft.Authorization/policyExemptions",
+      "Microsoft.Authorization/policySetDefinitions",
       "Microsoft.Insights/diagnosticSettings",
       "Microsoft.Compute/virtualMachines/extensions",
       "Microsoft.Network/privateEndpoints",

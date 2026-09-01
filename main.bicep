@@ -72,7 +72,10 @@ param customerAllowedLocations array = [
 
 @description('Change-controlled customer-control resource-type allowlist. Keep required diagnostics, extensions, private endpoint, backup, and policy-remediation child types before enforcement.')
 param customerAllowedResourceTypes array = [
+  'Microsoft.Authorization/policyDefinitions'
+  'Microsoft.Authorization/policyExemptions'
   'Microsoft.Authorization/policyAssignments'
+  'Microsoft.Authorization/policySetDefinitions'
   'Microsoft.Authorization/roleAssignments'
   'Microsoft.Compute/disks'
   'Microsoft.Compute/virtualMachines'

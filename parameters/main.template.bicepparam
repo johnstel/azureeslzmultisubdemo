@@ -18,7 +18,10 @@ param customerAllowedLocations = [
   'eastus2'
 ]
 param customerAllowedResourceTypes = [
+  'Microsoft.Authorization/policyDefinitions'
+  'Microsoft.Authorization/policyExemptions'
   'Microsoft.Authorization/policyAssignments'
+  'Microsoft.Authorization/policySetDefinitions'
   'Microsoft.Authorization/roleAssignments'
   'Microsoft.Compute/disks'
   'Microsoft.Compute/virtualMachines'

@@ -329,6 +329,9 @@ try {
     }
     Assert-ExactNames -Actual @($messages.policyDefinitionReferenceId) -Expected $expectedReferenceIds -Message 'Root deployment-restrictions noncompliance messages are incomplete.'
     $requiredResourceTypes = @(
+        'Microsoft.Authorization/policyDefinitions'
+        'Microsoft.Authorization/policyExemptions'
+        'Microsoft.Authorization/policySetDefinitions'
         'Microsoft.Insights/diagnosticSettings'
         'Microsoft.Compute/virtualMachines/extensions'
         'Microsoft.Network/privateEndpoints'
