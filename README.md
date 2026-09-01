@@ -394,6 +394,7 @@ modules/
   policy-initiative.bicep
   policy-assignment.bicep
   remediating-policy-assignment.bicep
+  remediating-policy-rbac.bicep
   management-group-rbac.bicep
   subscription-rbac.bicep
   evidence-connectivity.bicep

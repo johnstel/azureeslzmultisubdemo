@@ -28,7 +28,6 @@ module userAssigned '../../modules/remediating-policy-assignment.bicep' = {
     identity: {
       type: 'UserAssigned'
       resourceId: '/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/identities/providers/Microsoft.ManagedIdentity/userAssignedIdentities/policy-remediation'
-      principalId: '55555555-5555-5555-5555-555555555555'
     }
     verifiedRoleDefinitionIds: [
       '66666666-6666-6666-6666-666666666666'
