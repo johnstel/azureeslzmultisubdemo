@@ -1945,7 +1945,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         if ($deployment.condition -ne "[parameters('$($benchmark.ParameterName)')]") {
             Stop-Test "$($benchmark.DeploymentName) must be gated by $($benchmark.ParameterName)."
         }
-        if ($deployment.scope -notmatch 'demoRootManagementGroupId') {
+        if ($deployment.scope -cne "[format('Microsoft.Management/managementGroups/{0}', variables('demoRootManagementGroupId'))]") {
             Stop-Test "$($benchmark.DeploymentName) must be assigned at the dedicated demo root."
         }
         $expectedDefinitionId = "[tenantResourceId('Microsoft.Authorization/policySetDefinitions', '$($control.mechanism.definitionId)')]"

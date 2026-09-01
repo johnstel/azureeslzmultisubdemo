@@ -1459,7 +1459,7 @@ jq -e --slurpfile catalog "${control_catalog}" '
   def pinned_version($id):
     "\(control($id).mechanism.majorVersion).*.*";
   def assigned_at_demo_root($deployment):
-    $deployment.scope | contains("demoRootManagementGroupId");
+    $deployment.scope == "[format(\u0027Microsoft.Management/managementGroups/{0}\u0027, variables(\u0027demoRootManagementGroupId\u0027))]";
   deployment("assign-mcsb-baseline") as $mcsb |
   deployment("assign-cis-foundations") as $cis |
   deployment("assign-nist-sp-800-53-r5") as $nist |
