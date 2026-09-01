@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$CatalogPathOverride
+    [string]$CatalogPathOverride,
+    [ValidateSet('auto', 'python', 'native')]
+    [string]$SchemaBackend = 'auto',
+    [switch]$SchemaOnly
 )
 
 # Offline structural validation for policy/control-catalog.json.
@@ -136,13 +139,36 @@ foreach ($control in $controls) {
 
 Write-Host '9/10 Validate the catalog against policy/control-catalog.schema.json...'
 $SchemaPath = Join-Path $ProjectDir 'policy/control-catalog.schema.json'
+# -SchemaBackend selects which of the two schema-equivalent implementations
+# runs (rather than silently auto-detecting), so callers -- notably
+# tests/uri-grammar-forced-fallback-tests.sh -- can assert that a *specific*
+# backend actually executed instead of accidentally exercising the native
+# fallback twice under two different invocations that both happened to lack
+# python3+jsonschema:
+#   - 'python': require python3 + the jsonschema module; exit 2 (a distinct
+#     "skipped, backend unavailable" code, not a validation failure) if
+#     either is missing, rather than silently falling back to native.
+#   - 'native': always use the native-PowerShell fallback, regardless of
+#     what is on PATH.
+#   - 'auto' (default): auto-detect, preserving prior behavior.
 $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
 $jsonschemaAvailable = $false
 if ($pythonCmd) {
     & python3 -c 'import jsonschema' 2>$null
     $jsonschemaAvailable = ($LASTEXITCODE -eq 0)
 }
-if ($jsonschemaAvailable) {
+switch ($SchemaBackend) {
+    'python' {
+        if (-not $jsonschemaAvailable) {
+            Write-Host "  SKIPPED: -SchemaBackend python requested but python3 and/or the jsonschema module is not available."
+            exit 2
+        }
+        $usePython = $true
+    }
+    'native' { $usePython = $false }
+    default { $usePython = $jsonschemaAvailable }
+}
+if ($usePython) {
     $pyScript = @'
 import json
 import sys
@@ -173,7 +199,7 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
     Remove-Item -LiteralPath $tmpPy -ErrorAction SilentlyContinue
     if ($schemaExit -ne 0) { Stop-Test 'Catalog failed JSON Schema validation.' }
 } else {
-    Write-Host '  (python3 + jsonschema not available; falling back to the full schema-equivalent native-PowerShell re-implementation below.)'
+    Write-Host '  (using the full schema-equivalent native-PowerShell re-implementation below.)'
 
     $schemaDocument = Get-Content -LiteralPath $SchemaPath -Raw | ConvertFrom-Json
     $classificationEnum = @('azure-policy', 'entra-pim', 'defender-cspm-ciem', 'shared-service-architecture', 'manual-evidence')
@@ -391,6 +417,11 @@ jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
         $formattedErrors = ($schemaErrors | ForEach-Object { "  - $_" }) -join "`n"
         Stop-Test "Catalog failed the offline schema-equivalent validation:`n${formattedErrors}"
     }
+}
+
+if ($SchemaOnly) {
+    Write-Host 'Schema-only validation passed (-SchemaOnly; skipping matrix consistency checks).'
+    exit 0
 }
 
 Write-Host '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...'

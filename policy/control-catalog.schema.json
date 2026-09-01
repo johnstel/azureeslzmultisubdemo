@@ -21,7 +21,7 @@
     "catalogVersion": { "type": "string" },
     "generatedOn": { "type": "string", "format": "date" },
     "purpose": { "type": "string", "minLength": 1 },
-    "sourceIssue": { "type": "string", "format": "uri", "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}(?:/(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/])*)?(?:\\?(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?:#(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?$" },
+    "sourceIssue": { "type": "string", "format": "uri", "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}(?:/(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/])*)?(?:\\?(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?:#(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?![\\s\\S])" },
     "classificationValues": {
       "type": "array",
       "items": { "type": "string" },
@@ -76,7 +76,7 @@
         },
         "majorVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
         "verifiedVersion": { "type": "string", "minLength": 1, "not": { "enum": ["unknown", "n/a"] } },
-        "sourceUrl": { "type": ["string", "null"], "format": "uri", "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}(?:/(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/])*)?(?:\\?(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?:#(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?$" },
+        "sourceUrl": { "type": ["string", "null"], "format": "uri", "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}(?:/(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/])*)?(?:\\?(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?:#(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9\\-._~!$&'()*+,;=:@/?])*)?(?![\\s\\S])" },
         "verifiedOn": { "type": "string", "format": "date" },
         "verificationMethod": {
           "type": "string",

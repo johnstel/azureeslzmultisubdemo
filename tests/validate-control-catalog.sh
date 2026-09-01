@@ -108,7 +108,42 @@ jq -e '
 ' "${CATALOG}" >/dev/null || fail "A control record sets remediationIdentityRequired=true but has neither a populated roleDefinitionIds array nor rolesVaryByMember=true."
 
 printf '9/10 Validate the catalog against policy/control-catalog.schema.json...\n'
-if command -v python3 >/dev/null 2>&1 && python3 -c 'import jsonschema' >/dev/null 2>&1; then
+# SCHEMA_BACKEND selects which of the two schema-equivalent implementations
+# runs (rather than silently auto-detecting), so callers -- notably
+# tests/uri-grammar-forced-fallback-tests.sh -- can assert that a *specific*
+# backend actually executed instead of accidentally exercising the jq
+# fallback twice under two different invocations that both happened to lack
+# python3+jsonschema:
+#   - "python": require python3 + the jsonschema module; exit 2 (a distinct
+#     "skipped, backend unavailable" code, not a validation failure) if
+#     either is missing, rather than silently falling back to jq.
+#   - "jq": always use the jq fallback, regardless of what is on PATH.
+#   - unset (default): auto-detect, preserving prior behavior.
+schema_backend="${SCHEMA_BACKEND:-auto}"
+case "${schema_backend}" in
+  python)
+    if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import jsonschema' >/dev/null 2>&1; then
+      printf '  SKIPPED: SCHEMA_BACKEND=python requested but python3 and/or the jsonschema module is not available.\n' >&2
+      exit 2
+    fi
+    use_python=1
+    ;;
+  jq)
+    use_python=0
+    ;;
+  auto)
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import jsonschema' >/dev/null 2>&1; then
+      use_python=1
+    else
+      use_python=0
+    fi
+    ;;
+  *)
+    fail "Unknown SCHEMA_BACKEND value \"${schema_backend}\"; expected \"python\", \"jq\", or unset."
+    ;;
+esac
+
+if [[ "${use_python}" -eq 1 ]]; then
   python3 - "${CATALOG}" "${SCHEMA:-${PROJECT_DIR}/policy/control-catalog.schema.json}" <<'PYEOF' || fail "Catalog failed JSON Schema validation."
 import json
 import sys
@@ -124,22 +159,30 @@ with open(schema_path, encoding="utf-8") as f:
 # conservative, intentionally narrow source-URL grammar: HTTPS only,
 # non-empty DNS labels with no leading/trailing hyphen, no userinfo/IP
 # literal/port, and path/query/fragment restricted to safe ASCII URI
-# characters with well-formed percent-escapes) is the single source of
-# truth for URL validity -- jsonschema.validate() below enforces it exactly
-# as declared, so no supplemental ad hoc URI check is layered on top here.
-# Keep the jq/PowerShell fallbacks reading the *same* pattern strings out of
-# this schema file (rather than a hand-copied duplicate) so all four
-# validation paths can never diverge.
+# characters with well-formed percent-escapes, terminated by an absolute
+# end-of-string assertion that rejects any trailing character at all --
+# including a trailing newline/control byte that a bare "$" anchor would
+# tolerate) is the single source of truth for URL validity --
+# jsonschema.validate() below enforces it exactly as declared, so no
+# supplemental ad hoc URI check is layered on top here. Keep the
+# jq/PowerShell fallbacks reading the *same* pattern strings out of this
+# schema file (rather than a hand-copied duplicate) so all four validation
+# paths can never diverge.
 jsonschema.validate(catalog, schema, format_checker=jsonschema.FormatChecker())
 PYEOF
 else
-  printf '  (python3 + jsonschema not available; falling back to the full schema-equivalent jq re-implementation in tests/control-catalog-schema-check.jq.)\n'
+  printf '  (using the full schema-equivalent jq re-implementation in tests/control-catalog-schema-check.jq.)\n'
   schema_errors="$(jq -f "${SCRIPT_DIR}/control-catalog-schema-check.jq" --slurpfile schema_holder "${SCHEMA:-${PROJECT_DIR}/policy/control-catalog.schema.json}" "${CATALOG}")"
   [[ "$(printf '%s' "${schema_errors}" | jq 'length')" -eq 0 ]] || {
     printf 'ERROR: Catalog failed the offline schema-equivalent validation:\n' >&2
     printf '%s\n' "${schema_errors}" | jq -r '.[] | "  - " + .' >&2
     exit 1
   }
+fi
+
+if [[ "${SCHEMA_ONLY:-0}" == "1" ]]; then
+  printf 'Schema-only validation passed (SCHEMA_ONLY=1; skipping matrix consistency checks).\n'
+  exit 0
 fi
 
 printf '10/10 Validate every field represented in the human-readable matrix matches the JSON catalog...\n'
