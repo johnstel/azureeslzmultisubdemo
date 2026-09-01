@@ -23,13 +23,14 @@ Do not place secrets in this worksheet.
 | Connectivity sandbox Subscription ID | [ ] |
 | Workload sandbox Subscription ID | [ ] |
 | Governance admins group Object ID | [ ] |
-| Subscription owners group Object ID | [ ] |
+| Subscription privileged-access group Object ID (separate one-shot PIM workflow only) | [ ] |
 | Network operators group Object ID | [ ] |
 | Workload contributors group Object ID | [ ] |
 | Read-only auditors group Object ID | [ ] |
 
-The two subscription IDs must differ. All five security-group Object IDs must
-be distinct.
+The two subscription IDs must differ. Every supplied security-group Object ID
+must be distinct. Before collecting eligible Owner inputs, read
+[AZURE-RBAC-PIM.md](AZURE-RBAC-PIM.md).
 
 ## 3. Clone and prepare the project
 
@@ -147,6 +148,8 @@ and both subscription IDs.
 - [ ] Five policy assignments exist only at the demo root or below.
 - [ ] Deny assignments show `DoNotEnforce`.
 - [ ] No RBAC assignment was created while `deployRoleAssignments=false`.
+- [ ] The main compiled output and what-if contain no
+      `roleEligibilityScheduleRequests`.
 - [ ] No resource group, VNet, or NSG was created while
       `deployEvidenceResources=false`.
 
@@ -156,7 +159,32 @@ Enable one change at a time. Run tests, preflight, and what-if again before each
 deployment.
 
 - [ ] Administrator approved `deployRoleAssignments=true`.
-- [ ] What-if shows exactly seven expected role assignments.
+- [ ] What-if shows exactly five ordinary role assignments and no permanent Owner.
+- [ ] Entra P2 or Entra ID Governance licensing is confirmed for every eligible
+      privileged-group member.
+- [ ] Customer-managed emergency access exists, is tested and monitored, and
+      no emergency account or object ID is stored in this repository.
+- [ ] Owner PIM settings at both subscriptions require approval, MFA,
+      justification, a four-hour activation maximum, and notifications.
+- [ ] The deployment principal has narrowly scoped, time-bound bootstrap access.
+- [ ] One-shot local parameters contain a fresh request GUID, privileged group,
+      `AdminAssign`, finite schedule, and justification while
+      `submitEligibilityRequest=false`.
+- [ ] The workflow-token placeholder was not edited and raw Bicep invocation
+      was not used.
+- [ ] `submitEligibilityRequest=true` is used only in the prepared local file
+      with `scripts/owner-eligibility-request.ps1` or `.sh`.
+- [ ] The supported workflow verified an enabled subscription, the exact
+      security-enabled Entra group, existing Owner eligibility, unused request
+      ID, and no pending or unknown-state matching request.
+- [ ] Each one-shot what-if shows exactly one eligible Owner
+      request and no active or permanent Owner assignment.
+- [ ] Administrator approved that exact preview before one-time submission.
+- [ ] One-time submission used the supported workflow's execute flag,
+      environment confirmation, and typed request GUID.
+- [ ] A distinct request GUID is used for each subscription and is never reused.
+- [ ] Both PIM activations were tested before any role-assignment restriction
+      policy was enforced.
 - [ ] Administrator approved `deployEvidenceResources=true`.
 - [ ] What-if shows two resource groups, one VNet, and one NSG only.
 - [ ] Policy owners approved changing `denyPolicyEnforcementMode` to `Default`.
@@ -219,6 +247,9 @@ Afterward:
 
 - [ ] Both subscriptions still exist and are enabled.
 - [ ] Both subscriptions are at the approved return scope.
-- [ ] Demo policy and RBAC assignments are gone.
+- [ ] Demo policy and five ordinary RBAC assignments are gone.
+- [ ] Both eligible Owner schedules were removed with separately reviewed,
+      one-shot PIM `AdminRemove` requests using their existing schedule IDs and
+      fresh request GUIDs; teardown does not automate this.
 - [ ] The dedicated demo management groups are gone.
 - [ ] The five Microsoft Entra security groups still exist.

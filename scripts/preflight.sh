@@ -51,7 +51,6 @@ normalized_workload_subscription="$(printf '%s' "${workload_subscription}" | tr 
 
 group_parameters=(
   governanceAdminsGroupObjectId
-  subscriptionOwnersGroupObjectId
   networkOperatorsGroupObjectId
   workloadContributorsGroupObjectId
   readOnlyAuditorsGroupObjectId
@@ -108,4 +107,4 @@ printf '  Tenant root MG: %s\n' "${tenant_root}"
 printf '  Connectivity subscription: %s\n' "${connectivity_subscription}"
 printf '  Workload subscription: %s\n' "${workload_subscription}"
 printf '  Tenant deployment location: %s\n' "${deployment_location}"
-printf '  Entra group IDs: GUID format and uniqueness verified (directory group type is not queried).\n'
+printf '  Entra group IDs: GUID format and uniqueness verified where supplied (directory group type is not queried).\n'

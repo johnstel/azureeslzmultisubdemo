@@ -152,6 +152,69 @@ jq -e '
 
 jq -e '
   . as $root
+  | first($root.resources[] | select(.type == "Microsoft.Resources/deployments" and .name == "root-deployment-restrictions")) as $rootRestrictions
+  | first($root.resources[] | select(.type == "Microsoft.Resources/deployments" and (.name | contains("policy-library")))) as $policyLibrary
+  | first($policyLibrary.properties.template.resources[] | select(.properties.displayName? == "Demo - allowed resource types (all resources)")) as $allowedResourceTypesPolicy
+  | first($rootRestrictions.properties.template.resources[] | select(.name == "root-deployment-restrictions")) as $initiative
+  | first($rootRestrictions.properties.template.resources[] | select(.name == "assign-root-deployment-restrictions")) as $assignment
+  | $initiative.properties.parameters.policyDefinitionReferences.value as $references
+  | $assignment.properties.parameters.nonComplianceMessages.value as $messages
+  | ($rootRestrictions.scope | contains("variables(\u0027demoRootManagementGroupId\u0027)"))
+    and $rootRestrictions.properties.parameters.allowedLocations.value == "[parameters(\u0027customerAllowedLocations\u0027)]"
+    and $rootRestrictions.properties.parameters.allowedResourceTypes.value == "[parameters(\u0027customerAllowedResourceTypes\u0027)]"
+    and $rootRestrictions.properties.parameters.allowedVmSkus.value == "[parameters(\u0027customerAllowedVmSkus\u0027)]"
+    and $rootRestrictions.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]"
+    and ($rootRestrictions.properties.parameters.allowedResourceTypesPolicyDefinitionId.value | contains("allowedResourceTypesAllPolicyDefinitionId"))
+    and $root.parameters.customerAllowedLocations.defaultValue == ["eastus", "eastus2"]
+    and ($root.parameters.allowedLocations.defaultValue | length) == 9
+    and $allowedResourceTypesPolicy.properties.mode == "All"
+    and $allowedResourceTypesPolicy.properties.parameters.allowedResourceTypes.type == "Array"
+    and $allowedResourceTypesPolicy.properties.policyRule.if.field == "type"
+    and $allowedResourceTypesPolicy.properties.policyRule.if.notIn == "[[parameters(\u0027allowedResourceTypes\u0027)]"
+    and $allowedResourceTypesPolicy.properties.policyRule.then.effect == "deny"
+    and ($references | map(.policyDefinitionReferenceId) | sort) == [
+      "allowed-locations",
+      "allowed-resource-types",
+      "allowed-vm-skus",
+      "audit-managed-disks",
+      "audit-public-ip"
+    ]
+    and $references[0].parameters.listOfAllowedLocations.value == "[[parameters(\u0027allowedLocations\u0027)]"
+    and $references[0].parameters.effect.value == "Deny"
+    and $references[1].policyDefinitionId == "[parameters(\u0027allowedResourceTypesPolicyDefinitionId\u0027)]"
+    and $references[1].parameters.allowedResourceTypes.value == "[[parameters(\u0027allowedResourceTypes\u0027)]"
+    and $references[2].parameters.listOfAllowedSKUs.value == "[[parameters(\u0027allowedVmSkus\u0027)]"
+    and $assignment.properties.parameters.assignmentName.value == "demo-deploy-restrictions"
+    and $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027enforcementMode\u0027)]"
+    and ($messages | length) == 5
+    and (($messages | map(.policyDefinitionReferenceId) | sort) == ($references | map(.policyDefinitionReferenceId) | sort))
+    and ([
+      "Microsoft.Authorization/policyDefinitions",
+      "Microsoft.Authorization/policyExemptions",
+      "Microsoft.Authorization/policySetDefinitions",
+      "Microsoft.Insights/diagnosticSettings",
+      "Microsoft.Compute/virtualMachines/extensions",
+      "Microsoft.Network/networkInterfaces",
+      "Microsoft.Network/privateEndpoints",
+      "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "Microsoft.Network/publicIPAddresses",
+      "Microsoft.RecoveryServices/vaults/backupPolicies",
+      "Microsoft.RecoveryServices/vaults/backupFabrics",
+      "Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers",
+      "Microsoft.PolicyInsights/remediations",
+      "Microsoft.Resources/resourceGroups",
+      "Microsoft.Network/networkSecurityGroups",
+      "Microsoft.Network/virtualNetworks",
+      "Microsoft.SecurityInsights/onboardingStates"
+    ] - $root.parameters.customerAllowedResourceTypes.defaultValue | length) == 0
+' "${compiled_main}" >/dev/null || {
+  printf 'ERROR: Root deployment-restrictions initiative is not safely scoped, parameterized, or composed.\n' >&2
+  exit 1
+}
+
+jq -e '
+  . as $root
   | def deployment($name): first($root | .. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
     deployment("example-policy-assignment") as $policy
   | deployment("example-initiative-assignment") as $initiative
