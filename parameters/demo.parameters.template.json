@@ -96,6 +96,9 @@
     "deployEvidenceResources": {
       "value": false
     },
+    "enableTagInheritance": {
+      "value": false
+    },
     "evidenceLocation": {
       "value": "eastus2"
     },

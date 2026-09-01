@@ -86,6 +86,12 @@ jq -e '
     ["[variables(\u0027contributorRoleDefinitionId\u0027)]"] and
   $inheritanceAssignment.properties.parameters.enforcementMode.value ==
     "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  $inheritanceAssignment.condition == "[parameters(\u0027enableTagInheritance\u0027)]" and
+  .parameters.enableTagInheritance.defaultValue == false and
+  .outputs.tagInheritanceRemediation.value.enabled == "[parameters(\u0027enableTagInheritance\u0027)]" and
+  ([false, true] | map(. as $enabled |
+    if $enabled and ($inheritanceAssignment.condition ==
+      "[parameters(\u0027enableTagInheritance\u0027)]") then 1 else 0 end)) == [0, 1] and
   ([.. | objects | select(.type? == "Microsoft.PolicyInsights/remediations")] | length) == 0 and
   .outputs.tagInheritanceRemediation.value.remediationStarted == false and
   (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
@@ -116,6 +122,7 @@ printf '3/24 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
+  .parameters.enableTagInheritance.value == false and
   .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
   .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
   (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
@@ -126,6 +133,55 @@ az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
 jq -e '.parameters.networkIngressPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
+jq -e '.parameters.enableTagInheritance.value == false' "${TEMP_DIR}/main.parameters.json" >/dev/null
+for tag_inheritance_enabled in false true; do
+  tag_params="${TEMP_DIR}/tag-inheritance-${tag_inheritance_enabled}.bicepparam"
+  sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
+    -e 's/^param enableTagInheritance = .*$/param enableTagInheritance = '"${tag_inheritance_enabled}"'/' \
+    "${PROJECT_DIR}/parameters/main.template.bicepparam" > "${tag_params}"
+  az bicep build-params --file "${tag_params}" --outfile "${tag_params}.json" >/dev/null
+  jq -e --argjson enabled "${tag_inheritance_enabled}" \
+    '.parameters.enableTagInheritance.value == $enabled' "${tag_params}.json" >/dev/null || {
+    printf 'ERROR: Tag-inheritance %s parameter shape did not compile as expected.\n' \
+      "${tag_inheritance_enabled}" >&2
+    exit 1
+  }
+done
+
+printf '    Confirm tag remediation workflows remain preview-first and explicitly guarded...\n'
+bash_remediation="${PROJECT_DIR}/scripts/remediate-resource-tags.sh"
+powershell_remediation="${PROJECT_DIR}/scripts/remediate-resource-tags.ps1"
+bash -n "${bash_remediation}"
+pwsh -NoLogo -NoProfile -Command \
+  "\$errors = \$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${powershell_remediation}', [ref]\$null, [ref]\$errors); if (\$errors.Count) { exit 1 }"
+rg -q -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION' "${bash_remediation}"
+rg -q -F 'IFS= read -r typed_confirmation' "${bash_remediation}"
+rg -q -F 'validate_live_controls' "${bash_remediation}"
+rg -q -F 'az policy remediation create' "${bash_remediation}"
+rg -q -F 'Start-AzPolicyRemediation' "${powershell_remediation}"
+rg -q -F '$typedConfirmation = Read-Host' "${powershell_remediation}"
+rg -q -F 'Test-LiveControls' "${powershell_remediation}"
+unsupported_remediation_command='New-AzPolicy''Remediation'
+if rg -q -F "${unsupported_remediation_command}" "${PROJECT_DIR}"; then
+  printf 'ERROR: The unsupported PowerShell remediation command remains in the repository.\n' >&2
+  exit 1
+fi
+bash_preview_line="$(rg -n -F 'if [[ "${MODE}" != '"'"'--execute'"'"' ]]' "${bash_remediation}" | cut -d: -f1)"
+bash_environment_line="$(rg -n -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION' "${bash_remediation}" | tail -n 1 | cut -d: -f1)"
+bash_typed_line="$(rg -n -F 'IFS= read -r typed_confirmation' "${bash_remediation}" | cut -d: -f1)"
+bash_create_line="$(rg -n -F 'az policy remediation create' "${bash_remediation}" | cut -d: -f1)"
+[[ "${bash_preview_line}" -lt "${bash_environment_line}" \
+  && "${bash_environment_line}" -lt "${bash_typed_line}" \
+  && "${bash_typed_line}" -lt "${bash_create_line}" ]] \
+  || { printf 'ERROR: Bash tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
+powershell_preview_line="$(rg -n -F 'if (-not $Execute)' "${powershell_remediation}" | cut -d: -f1)"
+powershell_environment_line="$(rg -n -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION' "${powershell_remediation}" | tail -n 1 | cut -d: -f1)"
+powershell_typed_line="$(rg -n -F '$typedConfirmation = Read-Host' "${powershell_remediation}" | cut -d: -f1)"
+powershell_create_line="$(rg -n -F 'Start-AzPolicyRemediation `' "${powershell_remediation}" | cut -d: -f1)"
+[[ "${powershell_preview_line}" -lt "${powershell_environment_line}" \
+  && "${powershell_environment_line}" -lt "${powershell_typed_line}" \
+  && "${powershell_typed_line}" -lt "${powershell_create_line}" ]] \
+  || { printf 'ERROR: PowerShell tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
 
 printf '4/24 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"

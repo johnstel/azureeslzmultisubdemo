@@ -124,6 +124,9 @@ param deployRoleAssignments bool = false
 @description('Set true to create no-hourly-charge evidence resource groups, a VNet, and an NSG.')
 param deployEvidenceResources bool = false
 
+@description('Set true only after approving the tag-inheritance assignment, its managed identity, and its built-in-required remediation RBAC. This does not start remediation tasks.')
+param enableTagInheritance bool = false
+
 @description('Region for optional VNet/NSG evidence resources.')
 @allowed([
   'centralus'
@@ -614,7 +617,7 @@ module resourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
-module tagInheritanceAssignment 'modules/remediating-policy-assignment.bicep' = {
+module tagInheritanceAssignment 'modules/remediating-policy-assignment.bicep' = if (enableTagInheritance) {
   name: 'assign-tag-inheritance'
   scope: managementGroup(landingZonesManagementGroupId)
   params: {
@@ -805,7 +808,8 @@ output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
 output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
 output tagInheritanceRemediation object = {
-  policyAssignmentId: tagInheritanceAssignment.outputs.policyAssignmentId
+  enabled: enableTagInheritance
+  policyAssignmentId: tagInheritanceAssignment.?outputs.?policyAssignmentId ?? ''
   policyDefinitionReferenceIds: tagInheritanceInitiative.outputs.policyDefinitionReferenceIds
   remediationStarted: false
 }

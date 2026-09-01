@@ -58,6 +58,7 @@ param customerAllowedVmSkus = [
 param networkIngressPolicyEffect = 'Audit'
 param deployRoleAssignments = false
 param deployEvidenceResources = false
+param enableTagInheritance = false
 param evidenceLocation = 'eastus2'
 param deployCentralLogAnalytics = false
 param deploySentinel = false

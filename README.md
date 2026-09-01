@@ -82,45 +82,38 @@ The companion tag-inheritance initiative composes six instances of the verified
 to taggable resources. Each `Modify` operation adds only an absent tag whose
 resource-group value is non-empty, so an existing resource value always wins.
 The Landing Zones assignment has a system-assigned identity in
-`deploymentLocation` and the built-in's verified Contributor role. It inherits
-the safe `DoNotEnforce` default and creates no remediation task.
+`deploymentLocation` and the role declared by the built-in: Contributor
+(`b24988ac-6180-42a0-ab88-20f7382dd24c`). The narrower Tag Contributor role
+cannot perform the resource update used by this built-in's remediation path.
+The assignment, identity, and RBAC are omitted unless
+`enableTagInheritance=true`; when enabled, the assignment still inherits the
+safe `DoNotEnforce` default and creates no remediation task.
 
 ### Deliberately remediate existing resource tags
 
-After deployment and review, the `tagInheritanceRemediation` output provides the
-assignment ID and six definition reference IDs. Starting remediation remains a
-separate operator action. Confirm the Landing Zones management-group ID, wait
-for the assignment identity's role to propagate, and run one task per reference:
+After an approved deployment with `enableTagInheritance=true`, the
+`tagInheritanceRemediation` output provides the assignment ID and six definition
+reference IDs. Starting remediation remains a separate operator action. The
+scripts validate the live assignment ID, exact Landing Zones scope, initiative,
+system identity, non-global location, and exact six built-in references before
+showing a no-change preview:
 
 ```bash
-LANDING_ZONES_MG='<namePrefix>-landingzones'
-ASSIGNMENT_ID='<tagInheritanceRemediation.policyAssignmentId>'
-for reference in inherit-cost-center inherit-application-name inherit-owner inherit-environment inherit-data-classification inherit-ssp-id; do
-  az policy remediation create \
-    --management-group "${LANDING_ZONES_MG}" \
-    --name "tag-${reference}" \
-    --policy-assignment "${ASSIGNMENT_ID}" \
-    --definition-reference-id "${reference}"
-done
+./scripts/remediate-resource-tags.sh parameters/demo.parameters.json
 ```
 
 ```powershell
-$landingZonesManagementGroup = '<namePrefix>-landingzones'
-$assignmentId = '<tagInheritanceRemediation.policyAssignmentId>'
-'inherit-cost-center', 'inherit-application-name', 'inherit-owner',
-'inherit-environment', 'inherit-data-classification', 'inherit-ssp-id' |
-    ForEach-Object {
-        New-AzPolicyRemediation `
-            -ManagementGroupName $landingZonesManagementGroup `
-            -Name "tag-$_" `
-            -PolicyAssignmentId $assignmentId `
-            -PolicyDefinitionReferenceId $_
-    }
+.\scripts\remediate-resource-tags.ps1 -ParameterFile .\parameters\demo.parameters.json
 ```
 
-Review compliance and the intended scope before running these commands. Do not
-substitute a different policy or role: these tasks only add missing values and
-must not overwrite customer-supplied resource tags.
+Only after reviewing that preview, set
+`ESLZ_TAG_REMEDIATION_CONFIRMATION=REMEDIATE-MISSING-RESOURCE-TAGS` and rerun
+with `--execute` (Bash) or `-Execute` (PowerShell). Both workflows then require
+typing the validated tenant, scope, and assignment before revalidating the live
+controls and creating six tasks. The PowerShell workflow uses the supported
+`Start-AzPolicyRemediation` cmdlet. Do not substitute a different policy or
+role: these tasks only add missing values and must not overwrite
+customer-supplied resource tags.
 
 The customer-control profile is separate from the broader safe demo location
 profile. Its `customerAllowedLocations`, `customerAllowedResourceTypes`, and
@@ -387,7 +380,8 @@ For a first review, retain:
 ```json
 "denyPolicyEnforcementMode": { "value": "DoNotEnforce" },
 "deployRoleAssignments": { "value": false },
-"deployEvidenceResources": { "value": false }
+"deployEvidenceResources": { "value": false },
+"enableTagInheritance": { "value": false }
 ```
 
 Benchmark defaults keep only the stable MCSB baseline enabled; add the CIS or
