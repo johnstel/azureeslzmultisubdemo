@@ -5,6 +5,8 @@ func stripHex(value string) string => replace(replace(replace(replace(replace(re
 func isGuid(value string) bool => length(value) == 36 ? substring(value, 8, 1) == '-' && substring(value, 13, 1) == '-' && substring(value, 18, 1) == '-' && substring(value, 23, 1) == '-' && length(replace(value, '-', '')) == 32 && empty(stripHex(replace(value, '-', ''))) : false
 func isTrimmedNonEmpty(value string) bool => !empty(trim(value)) && value == trim(value)
 func hasValidResourceIdSegments(value string) bool => startsWith(value, '/') && !endsWith(value, '/') && length(filter(skip(split(value, '/'), 1), segment => empty(segment) || segment != trim(segment))) == 0
+func isManagementGroupScopeId(value string) bool => length(split(value, '/')) == 5 ? toLower(split(value, '/')[1]) == 'providers' && toLower(split(value, '/')[2]) == 'microsoft.management' && toLower(split(value, '/')[3]) == 'managementgroups' && isTrimmedNonEmpty(split(value, '/')[4]) && hasValidResourceIdSegments(value) : false
+func isSubscriptionScopeId(value string) bool => length(split(value, '/')) == 3 ? toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && hasValidResourceIdSegments(value) : false
 func isLeapYear(year int) bool => (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 func isCanonicalDate(value string) bool => length(value) == 10 && substring(value, 4, 1) == '-' && substring(value, 7, 1) == '-' && empty(stripDigits(substring(value, 0, 4))) && empty(stripDigits(substring(value, 5, 2))) && empty(stripDigits(substring(value, 8, 2)))
   ? int(substring(value, 5, 2)) >= 1 && int(substring(value, 5, 2)) <= 12 && int(substring(value, 8, 2)) >= 1 && int(substring(value, 8, 2)) <= (int(substring(value, 5, 2)) == 2 ? (isLeapYear(int(substring(value, 0, 4))) ? 29 : 28) : (contains([4, 6, 9, 11], int(substring(value, 5, 2))) ? 30 : 31))
@@ -71,6 +73,9 @@ param policyDefinitionReferenceIds string[] = []
 
 @sys.description('Explicit allowlist for policyDefinitionReferenceIds. Required when policyDefinitionReferenceIds are supplied.')
 param allowedPolicyDefinitionReferenceIds string[] = []
+
+@sys.description('Explicit allowlist of ancestor assignment scope IDs permitted for inherited policyAssignmentId values.')
+param permittedAncestorAssignmentScopeIds string[] = []
 
 @sys.description('Metadata source for traceability.')
 @minLength(1)
@@ -161,6 +166,10 @@ var validatedScopeType = exemptionScopeType == 'managementGroup'
       ? exemptionScopeType
       : fail('resourceGroup exemptions require valid subscriptionId and resourceGroupName and must not include managementGroupName.')
 
+var targetManagementGroupScopeId = '/providers/Microsoft.Management/managementGroups/${validatedManagementGroupName}'
+var targetSubscriptionScopeId = '/subscriptions/${validatedSubscriptionId}'
+var targetResourceGroupScopeId = '/subscriptions/${validatedSubscriptionId}/resourceGroups/${validatedResourceGroupName}'
+
 var validatedPolicyAssignmentId = hasValidResourceIdSegments(policyAssignmentId)
   ? policyAssignmentId
   : fail('policyAssignmentId must be an exact Azure Policy assignment resource ID without trailing separators or whitespace.')
@@ -170,18 +179,46 @@ var policyAssignmentName = last(policyAssignmentIdParts)
 var isManagementGroupAssignmentId = length(policyAssignmentIdParts) == 9 && toLower(policyAssignmentIdParts[1]) == 'providers' && toLower(policyAssignmentIdParts[2]) == 'microsoft.management' && toLower(policyAssignmentIdParts[3]) == 'managementgroups' && toLower(policyAssignmentIdParts[5]) == 'providers' && toLower(policyAssignmentIdParts[6]) == 'microsoft.authorization' && toLower(policyAssignmentIdParts[7]) == 'policyassignments' && isTrimmedNonEmpty(policyAssignmentName)
 var isSubscriptionAssignmentId = length(policyAssignmentIdParts) == 7 && toLower(policyAssignmentIdParts[1]) == 'subscriptions' && isGuid(policyAssignmentIdParts[2]) && toLower(policyAssignmentIdParts[3]) == 'providers' && toLower(policyAssignmentIdParts[4]) == 'microsoft.authorization' && toLower(policyAssignmentIdParts[5]) == 'policyassignments' && isTrimmedNonEmpty(policyAssignmentName)
 var isResourceGroupAssignmentId = length(policyAssignmentIdParts) == 9 && toLower(policyAssignmentIdParts[1]) == 'subscriptions' && isGuid(policyAssignmentIdParts[2]) && toLower(policyAssignmentIdParts[3]) == 'resourcegroups' && isTrimmedNonEmpty(policyAssignmentIdParts[4]) && toLower(policyAssignmentIdParts[5]) == 'providers' && toLower(policyAssignmentIdParts[6]) == 'microsoft.authorization' && toLower(policyAssignmentIdParts[7]) == 'policyassignments' && isTrimmedNonEmpty(policyAssignmentName)
+var assignmentScopeId = isManagementGroupAssignmentId
+  ? '/providers/Microsoft.Management/managementGroups/${policyAssignmentIdParts[4]}'
+  : isSubscriptionAssignmentId
+    ? '/subscriptions/${policyAssignmentIdParts[2]}'
+    : isResourceGroupAssignmentId
+      ? '/subscriptions/${policyAssignmentIdParts[2]}/resourceGroups/${policyAssignmentIdParts[4]}'
+      : fail('policyAssignmentId must target a management-group, subscription, or resource-group policy assignment scope.')
+var normalizedAssignmentScopeId = toLower(assignmentScopeId)
+
+var trimmedPermittedAncestorAssignmentScopeIds = [for scopeId in permittedAncestorAssignmentScopeIds: trim(scopeId)]
+var normalizedPermittedAncestorAssignmentScopeIds = [for scopeId in trimmedPermittedAncestorAssignmentScopeIds: toLower(scopeId)]
+var invalidPermittedAncestorAssignmentScopeIds = filter(trimmedPermittedAncestorAssignmentScopeIds, scopeId => empty(scopeId))
+var hasDuplicatePermittedAncestorAssignmentScopeIds = length(normalizedPermittedAncestorAssignmentScopeIds) != length(union(normalizedPermittedAncestorAssignmentScopeIds, normalizedPermittedAncestorAssignmentScopeIds))
+var invalidPermittedAncestorScopeTypes = filter(trimmedPermittedAncestorAssignmentScopeIds, scopeId => !(isManagementGroupScopeId(scopeId) || isSubscriptionScopeId(scopeId)))
+var incompatiblePermittedAncestorAssignmentScopeIds = validatedScopeType == 'managementGroup'
+  ? filter(trimmedPermittedAncestorAssignmentScopeIds, scopeId => !isManagementGroupScopeId(scopeId) || toLower(scopeId) == toLower(targetManagementGroupScopeId))
+  : validatedScopeType == 'subscription'
+    ? filter(trimmedPermittedAncestorAssignmentScopeIds, scopeId => !isManagementGroupScopeId(scopeId))
+    : filter(trimmedPermittedAncestorAssignmentScopeIds, scopeId => !(isManagementGroupScopeId(scopeId) || (isSubscriptionScopeId(scopeId) && toLower(scopeId) == toLower(targetSubscriptionScopeId))))
+var validatedPermittedAncestorAssignmentScopeIds = empty(invalidPermittedAncestorAssignmentScopeIds)
+  ? !hasDuplicatePermittedAncestorAssignmentScopeIds
+    ? empty(invalidPermittedAncestorScopeTypes)
+      ? empty(incompatiblePermittedAncestorAssignmentScopeIds)
+        ? normalizedPermittedAncestorAssignmentScopeIds
+        : fail('permittedAncestorAssignmentScopeIds must include only supported ancestor scope IDs for the selected exemptionScopeType.')
+      : fail('permittedAncestorAssignmentScopeIds must contain only management-group or subscription scope IDs.')
+    : fail('permittedAncestorAssignmentScopeIds must be case-insensitively unique when supplied.')
+  : fail('permittedAncestorAssignmentScopeIds cannot include empty or whitespace-only values.')
 
 var validatedScopedPolicyAssignmentId = validatedScopeType == 'managementGroup'
-  ? isManagementGroupAssignmentId && toLower(policyAssignmentIdParts[4]) == toLower(validatedManagementGroupName)
+  ? normalizedAssignmentScopeId == toLower(targetManagementGroupScopeId) || contains(validatedPermittedAncestorAssignmentScopeIds, normalizedAssignmentScopeId)
     ? validatedPolicyAssignmentId
-    : fail('managementGroup exemptions require policyAssignmentId at the same management-group scope.')
+    : fail('managementGroup exemptions require policyAssignmentId at the target scope or an explicitly permitted ancestor scope.')
   : validatedScopeType == 'subscription'
-    ? isSubscriptionAssignmentId && toLower(policyAssignmentIdParts[2]) == toLower(validatedSubscriptionId)
+    ? normalizedAssignmentScopeId == toLower(targetSubscriptionScopeId) || contains(validatedPermittedAncestorAssignmentScopeIds, normalizedAssignmentScopeId)
       ? validatedPolicyAssignmentId
-      : fail('subscription exemptions require policyAssignmentId at the same subscription scope.')
-    : isResourceGroupAssignmentId && toLower(policyAssignmentIdParts[2]) == toLower(validatedSubscriptionId) && toLower(policyAssignmentIdParts[4]) == toLower(validatedResourceGroupName)
+      : fail('subscription exemptions require policyAssignmentId at the target scope or an explicitly permitted ancestor scope.')
+    : normalizedAssignmentScopeId == toLower(targetResourceGroupScopeId) || contains(validatedPermittedAncestorAssignmentScopeIds, normalizedAssignmentScopeId)
       ? validatedPolicyAssignmentId
-      : fail('resourceGroup exemptions require policyAssignmentId at the same subscription and resource-group scope.')
+      : fail('resourceGroup exemptions require policyAssignmentId at the target scope or an explicitly permitted ancestor scope.')
 
 var normalizedAllowedPolicyDefinitionReferenceIds = [for policyDefinitionReferenceId in allowedPolicyDefinitionReferenceIds: toLower(trim(policyDefinitionReferenceId))]
 var invalidAllowedPolicyDefinitionReferenceIds = filter(normalizedAllowedPolicyDefinitionReferenceIds, policyDefinitionReferenceId => empty(policyDefinitionReferenceId))

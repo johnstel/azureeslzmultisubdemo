@@ -181,24 +181,91 @@ function Test-PolicyAssignmentScopeContract {
     if ($segments.Count -lt 2 -or ($segments[1..($segments.Count - 1)] | Where-Object { $_ -eq '' -or $_ -cne $_.Trim() })) {
         return $false
     }
+    $permittedAncestors = @($Case.permittedAncestorAssignmentScopeIds | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    if (@($permittedAncestors | Where-Object { $_ -eq '' }).Count -gt 0 -or
+        @($permittedAncestors | Select-Object -Unique).Count -ne $permittedAncestors.Count) {
+        return $false
+    }
+    foreach ($scopeId in $permittedAncestors) {
+        if ($scopeId -notmatch '^/providers/Microsoft\.Management/managementGroups/[^/]+$' -and
+            $scopeId -notmatch '^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+            return $false
+        }
+    }
+    $assignmentScopeType = ''
+    $assignmentScopeId = ''
+    if ($Case.policyAssignmentId -imatch '^/providers/Microsoft\.Management/managementGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$') {
+        $assignmentScopeType = 'managementGroup'
+        $assignmentScopeId = "/providers/Microsoft.Management/managementGroups/$($segments[4])"
+    }
+    elseif ($Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/providers/Microsoft\.Authorization/policyAssignments/[^/]+$') {
+        $assignmentScopeType = 'subscription'
+        $assignmentScopeId = "/subscriptions/$($segments[2])"
+    }
+    elseif ($Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$') {
+        $assignmentScopeType = 'resourceGroup'
+        $assignmentScopeId = "/subscriptions/$($segments[2])/resourceGroups/$($segments[4])"
+    }
+    else {
+        return $false
+    }
+    $assignmentScopeId = $assignmentScopeId.ToLowerInvariant()
     switch ($Case.scopeType) {
         'managementGroup' {
-            return $Case.policyAssignmentId -imatch '^/providers/Microsoft\.Management/managementGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$' -and
-                $segments[4].ToLowerInvariant() -ceq ([string]$Case.managementGroupName).ToLowerInvariant()
+            $targetScopeId = "/providers/Microsoft.Management/managementGroups/$([string]$Case.managementGroupName)".ToLowerInvariant()
+            if (-not (Test-TrimmedNonEmpty -Value ([string]$Case.managementGroupName)) -or
+                -not [string]::IsNullOrEmpty([string]$Case.subscriptionId) -or
+                -not [string]::IsNullOrEmpty([string]$Case.resourceGroupName)) {
+                return $false
+            }
+            if (@($permittedAncestors | Where-Object { $_ -notmatch '^/providers/microsoft\.management/managementgroups/[^/]+$' -or $_ -ceq $targetScopeId }).Count -gt 0) {
+                return $false
+            }
+            if ($assignmentScopeId -ceq $targetScopeId) {
+                return $true
+            }
+            return $assignmentScopeType -eq 'managementGroup' -and
+                ($assignmentScopeId -in $permittedAncestors) -and
+                ($assignmentScopeId -cne $targetScopeId)
         }
         'subscription' {
             $subscriptionGuid = [guid]::Empty
-            return [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -and
-                $Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/providers/Microsoft\.Authorization/policyAssignments/[^/]+$' -and
-                $segments[2].ToLowerInvariant() -ceq ([string]$Case.subscriptionId).ToLowerInvariant()
+            if (-not [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -or
+                -not [string]::IsNullOrEmpty([string]$Case.managementGroupName) -or
+                -not [string]::IsNullOrEmpty([string]$Case.resourceGroupName)) {
+                return $false
+            }
+            if (@($permittedAncestors | Where-Object { $_ -notmatch '^/providers/microsoft\.management/managementgroups/[^/]+$' }).Count -gt 0) {
+                return $false
+            }
+            $targetScopeId = "/subscriptions/$([string]$Case.subscriptionId)".ToLowerInvariant()
+            if ($assignmentScopeId -ceq $targetScopeId) {
+                return $true
+            }
+            return $assignmentScopeType -eq 'managementGroup' -and
+                ($assignmentScopeId -in $permittedAncestors)
         }
         'resourceGroup' {
             $subscriptionGuid = [guid]::Empty
-            return [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -and
-                (Test-TrimmedNonEmpty -Value ([string]$Case.resourceGroupName)) -and
-                $Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$' -and
-                $segments[2].ToLowerInvariant() -ceq ([string]$Case.subscriptionId).ToLowerInvariant() -and
-                $segments[4].ToLowerInvariant() -ceq ([string]$Case.resourceGroupName).ToLowerInvariant()
+            if (-not [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -or
+                -not (Test-TrimmedNonEmpty -Value ([string]$Case.resourceGroupName)) -or
+                -not [string]::IsNullOrEmpty([string]$Case.managementGroupName)) {
+                return $false
+            }
+            $targetSubscriptionScopeId = "/subscriptions/$([string]$Case.subscriptionId)".ToLowerInvariant()
+            if (@($permittedAncestors | Where-Object { $_ -notmatch '^/providers/microsoft\.management/managementgroups/[^/]+$' -and $_ -cne $targetSubscriptionScopeId }).Count -gt 0) {
+                return $false
+            }
+            $targetScopeId = "/subscriptions/$([string]$Case.subscriptionId)/resourceGroups/$([string]$Case.resourceGroupName)".ToLowerInvariant()
+            if ($assignmentScopeId -ceq $targetScopeId) {
+                return $true
+            }
+            if ($assignmentScopeType -eq 'managementGroup' -and ($assignmentScopeId -in $permittedAncestors)) {
+                return $true
+            }
+            return $assignmentScopeType -eq 'subscription' -and
+                ($assignmentScopeId -ceq $targetSubscriptionScopeId) -and
+                ($assignmentScopeId -in $permittedAncestors)
         }
         default {
             return $false
@@ -248,6 +315,35 @@ function Assert-BicepBuildFails {
     }
 }
 
+function Assert-BicepBuildCompilesThroughExemptionValidationPath {
+    param(
+        [string]$Fixture,
+        [string]$Description,
+        [string]$TempDirectory
+    )
+    $compiledFixture = Join-Path $TempDirectory ([System.IO.Path]::GetFileNameWithoutExtension($Fixture) + '.json')
+    & az bicep build --file $Fixture --outfile $compiledFixture | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test "Bicep failed to compile $Description."
+    }
+    $compiledFixtureJson = Get-Content -LiteralPath $compiledFixture -Raw | ConvertFrom-Json
+    $validationTemplates = @(
+        Find-JsonObjects -Node $compiledFixtureJson -Predicate {
+            param($node)
+            $variables = $node.PSObject.Properties['variables']
+            if (-not $variables) {
+                return $false
+            }
+            $variablesValue = $variables.Value
+            return $variablesValue.PSObject.Properties['validatedScopedPolicyAssignmentId'] -and
+                $variablesValue.PSObject.Properties['validatedPolicyDefinitionReferenceIds']
+        }
+    )
+    if ($validationTemplates.Count -eq 0) {
+        Stop-Test "Exemption fixture did not compile through the policy-exemption module validation path: $Description."
+    }
+}
+
 try {
     if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
         Stop-Test 'Azure CLI is required for policy assignment validation.'
@@ -286,6 +382,34 @@ try {
     Assert-BicepBuildFails `
         -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-scope.bicep') `
         -Description 'a policy exemption with an unsupported exemptionScopeType value'
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-assignment-ancestry.bicep') `
+        -Description 'assignment ancestry negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-assignment-shape.bicep') `
+        -Description 'assignment shape negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-reference-contract.bicep') `
+        -Description 'reference contract negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-reference-missing-allowlist.bicep') `
+        -Description 'missing reference allowlist negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-timestamp-date.bicep') `
+        -Description 'timestamp calendar-date negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-timestamp-format.bicep') `
+        -Description 'timestamp format negative fixture' `
+        -TempDirectory $TempDir
+    Assert-BicepBuildCompilesThroughExemptionValidationPath `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-whitespace-fields.bicep') `
+        -Description 'whitespace-required-fields negative fixture' `
+        -TempDirectory $TempDir
 
     $validationCases = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/policy-assignment-validation-cases.json') -Raw | ConvertFrom-Json
     foreach ($case in $validationCases.assignmentNames) {
@@ -331,6 +455,7 @@ try {
             managementGroupName = $case.GetProperty('managementGroupName').GetString()
             subscriptionId = $case.GetProperty('subscriptionId').GetString()
             resourceGroupName = $case.GetProperty('resourceGroupName').GetString()
+            permittedAncestorAssignmentScopeIds = @($case.GetProperty('permittedAncestorAssignmentScopeIds').EnumerateArray() | ForEach-Object { $_.GetString() })
             policyAssignmentId = $case.GetProperty('policyAssignmentId').GetString()
         }
         $valid = $case.GetProperty('valid').GetBoolean()
@@ -652,15 +777,16 @@ try {
             $node.PSObject.Properties['type'] -and
                 $node.type -eq 'Microsoft.Resources/deployments' -and
                 $node.PSObject.Properties['name'] -and
-                $node.name -in @('example-management-group-exemption', 'example-subscription-exemption', 'example-resource-group-exemption')
+            $node.name -in @('example-management-group-exemption', 'example-subscription-exemption', 'example-resource-group-exemption', 'example-inherited-assignment-exemption')
         }
     )
-    if ($exemptionShapeDeployments.Count -ne 3) {
-        Stop-Test 'Expected compiled management-group, subscription, and resource-group policy exemption examples.'
+    if ($exemptionShapeDeployments.Count -ne 4) {
+        Stop-Test 'Expected compiled management-group, subscription, resource-group, and inherited-assignment policy exemption examples.'
     }
     $managementGroupExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-management-group-exemption'
     $subscriptionExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-subscription-exemption'
     $resourceGroupExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-resource-group-exemption'
+    $inheritedAssignmentExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-inherited-assignment-exemption'
 
     Assert-ExactNames `
         -Actual @($managementGroupExemption.properties.parameters.PSObject.Properties.Name) `
@@ -677,6 +803,8 @@ try {
 
     if ($managementGroupExemption.properties.parameters.exemptionCategory.value -ne 'Waiver' -or
         $subscriptionExemption.properties.parameters.exemptionCategory.value -ne 'Mitigated' -or
+        (Compare-Object @($inheritedAssignmentExemption.properties.parameters.permittedAncestorAssignmentScopeIds.value) @('/subscriptions/44444444-4444-4444-4444-444444444444')) -or
+        $inheritedAssignmentExemption.properties.parameters.policyAssignmentId.value -ne '/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative' -or
         (Compare-Object @($resourceGroupExemption.properties.parameters.allowedPolicyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg')) -or
         (Compare-Object @($resourceGroupExemption.properties.parameters.policyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg'))) {
         Stop-Test 'Exemption categories, policyDefinitionReferenceIds, or allowedPolicyDefinitionReferenceIds are invalid.'
@@ -707,6 +835,7 @@ try {
         $exemptionModuleTemplate.parameters.ticketReference.minLength -ne 1 -or
         $exemptionModuleTemplate.parameters.subscriptionId.defaultValue -ne '' -or
         $exemptionModuleTemplate.parameters.resourceGroupName.defaultValue -ne '' -or
+        @($exemptionModuleTemplate.parameters.permittedAncestorAssignmentScopeIds.defaultValue).Count -ne 0 -or
         @($exemptionModuleTemplate.parameters.allowedPolicyDefinitionReferenceIds.defaultValue).Count -ne 0 -or
         $exemptionModuleTemplate.parameters.source.defaultValue -ne 'Bicep' -or
         $exemptionModuleTemplate.parameters.governanceOwner.defaultValue -ne 'eslz-v2-governance') {
@@ -719,7 +848,8 @@ try {
     foreach ($validation in @{
         validatedDisplayName = "fail('displayName must be non-empty and cannot include leading or trailing whitespace."
         validatedPolicyAssignmentId = "fail('policyAssignmentId must be an exact Azure Policy assignment resource ID without trailing separators or whitespace."
-        validatedScopedPolicyAssignmentId = "fail('resourceGroup exemptions require policyAssignmentId at the same subscription and resource-group scope."
+        validatedScopedPolicyAssignmentId = "fail('resourceGroup exemptions require policyAssignmentId at the target scope or an explicitly permitted ancestor scope."
+        validatedPermittedAncestorAssignmentScopeIds = "fail('permittedAncestorAssignmentScopeIds must include only supported ancestor scope IDs for the selected exemptionScopeType."
         validatedExpiresOn = "fail('expiresOn must be a canonical RFC3339 UTC timestamp with a valid calendar date"
         validatedScopeType = "fail('resourceGroup exemptions require valid subscriptionId and resourceGroupName"
         validatedPolicyDefinitionReferenceIds = "fail('policyDefinitionReferenceIds must be present in allowedPolicyDefinitionReferenceIds."

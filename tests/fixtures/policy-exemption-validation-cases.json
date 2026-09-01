@@ -69,6 +69,7 @@
       "managementGroupName": "demo-root",
       "subscriptionId": "",
       "resourceGroupName": "",
+      "permittedAncestorAssignmentScopeIds": [],
       "policyAssignmentId": "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/policyAssignments/deny-public-ingress",
       "valid": true
     },
@@ -77,6 +78,7 @@
       "managementGroupName": "",
       "subscriptionId": "33333333-3333-3333-3333-333333333333",
       "resourceGroupName": "",
+      "permittedAncestorAssignmentScopeIds": [],
       "policyAssignmentId": "/subscriptions/33333333-3333-3333-3333-333333333333/providers/Microsoft.Authorization/policyAssignments/require-tags",
       "valid": true
     },
@@ -85,7 +87,19 @@
       "managementGroupName": "",
       "subscriptionId": "44444444-4444-4444-4444-444444444444",
       "resourceGroupName": "rg-demo-app",
+      "permittedAncestorAssignmentScopeIds": [],
       "policyAssignmentId": "/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/rg-demo-app/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative",
+      "valid": true
+    },
+    {
+      "scopeType": "resourceGroup",
+      "managementGroupName": "",
+      "subscriptionId": "44444444-4444-4444-4444-444444444444",
+      "resourceGroupName": "rg-demo-app",
+      "permittedAncestorAssignmentScopeIds": [
+        "/subscriptions/44444444-4444-4444-4444-444444444444"
+      ],
+      "policyAssignmentId": "/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative",
       "valid": true
     },
     {
@@ -93,7 +107,39 @@
       "managementGroupName": "",
       "subscriptionId": "33333333-3333-3333-3333-333333333333",
       "resourceGroupName": "",
+      "permittedAncestorAssignmentScopeIds": [
+        "/providers/Microsoft.Management/managementGroups/demo-root"
+      ],
+      "policyAssignmentId": "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative",
+      "valid": true
+    },
+    {
+      "scopeType": "subscription",
+      "managementGroupName": "",
+      "subscriptionId": "33333333-3333-3333-3333-333333333333",
+      "resourceGroupName": "",
+      "permittedAncestorAssignmentScopeIds": [],
       "policyAssignmentId": "/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/require-tags",
+      "valid": false
+    },
+    {
+      "scopeType": "resourceGroup",
+      "managementGroupName": "",
+      "subscriptionId": "44444444-4444-4444-4444-444444444444",
+      "resourceGroupName": "rg-demo-app",
+      "permittedAncestorAssignmentScopeIds": [],
+      "policyAssignmentId": "/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative",
+      "valid": false
+    },
+    {
+      "scopeType": "subscription",
+      "managementGroupName": "",
+      "subscriptionId": "33333333-3333-3333-3333-333333333333",
+      "resourceGroupName": "",
+      "permittedAncestorAssignmentScopeIds": [
+        "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-demo-app"
+      ],
+      "policyAssignmentId": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-demo-app/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative",
       "valid": false
     },
     {
@@ -101,6 +147,7 @@
       "managementGroupName": "demo-root",
       "subscriptionId": "",
       "resourceGroupName": "",
+      "permittedAncestorAssignmentScopeIds": [],
       "policyAssignmentId": "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/policyAssignments/",
       "valid": false
     }

@@ -60,6 +60,44 @@ expect_bicep_build_failure \
   "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-scope.bicep" \
   'a policy exemption with an unsupported exemptionScopeType value'
 
+compile_exemption_fixture() {
+  local fixture="$1"
+  local description="$2"
+  local output="${TEMP_DIR}/$(basename "${fixture}" .bicep).json"
+  az bicep build --file "${fixture}" --outfile "${output}" >/dev/null
+  jq -e '
+    [
+      .. | objects
+      | select(.variables? and .variables.validatedScopedPolicyAssignmentId? and .variables.validatedPolicyDefinitionReferenceIds?)
+    ] | length > 0
+  ' "${output}" >/dev/null || {
+    printf 'ERROR: Exemption fixture did not compile through the policy-exemption module validation path: %s\n' "${description}" >&2
+    exit 1
+  }
+}
+
+compile_exemption_fixture \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-assignment-ancestry.bicep" \
+  'assignment ancestry negative fixture'
+compile_exemption_fixture \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-assignment-shape.bicep" \
+  'assignment shape negative fixture'
+compile_exemption_fixture \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-reference-contract.bicep" \
+  'reference contract negative fixture'
+compile_exemption_fixture \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-reference-missing-allowlist.bicep" \
+  'missing reference allowlist negative fixture'
+compile_exemption_fixture \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-timestamp-date.bicep" \
+  'timestamp calendar-date negative fixture'
+compile_exemption_fixture \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-timestamp-format.bicep" \
+  'timestamp format negative fixture'
+compile_exemption_fixture \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-whitespace-fields.bicep" \
+  'whitespace-required-fields negative fixture'
+
 validation_cases="${SCRIPT_DIR}/fixtures/policy-assignment-validation-cases.json"
 jq -e '
   def valid_assignment_name:
@@ -137,24 +175,55 @@ jq -e '
     startswith("/")
       and (endswith("/") | not)
       and (split("/")[1:] | all(.[]; length > 0 and . == (gsub("^\\s+|\\s+$"; ""))));
+  def is_management_group_scope_id:
+    test("^/providers/Microsoft\\.Management/managementGroups/[^/]+$"; "i");
+  def is_subscription_scope_id:
+    test("^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"; "i");
+  def assignment_scope:
+    if test("^/providers/Microsoft\\.Management/managementGroups/[^/]+/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i") then
+      { assignmentScopeId: ("/providers/Microsoft.Management/managementGroups/" + (split("/")[4]) | ascii_downcase), assignmentScopeType: "managementGroup" }
+    elif test("^/subscriptions/[0-9a-f-]{36}/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i") then
+      { assignmentScopeId: ("/subscriptions/" + (split("/")[2]) | ascii_downcase), assignmentScopeType: "subscription" }
+    elif test("^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i") then
+      { assignmentScopeId: ("/subscriptions/" + (split("/")[2]) + "/resourceGroups/" + (split("/")[4]) | ascii_downcase), assignmentScopeType: "resourceGroup" }
+    else null end;
   def valid_policy_assignment_scope_contract:
-    (.policyAssignmentId | is_valid_resource_id)
-      and (
-        if .scopeType == "managementGroup" then
-          (.policyAssignmentId | test("^/providers/Microsoft\\.Management/managementGroups/[^/]+/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i"))
-          and ((.policyAssignmentId | split("/")[4] | ascii_downcase) == (.managementGroupName | ascii_downcase))
-        elif .scopeType == "subscription" then
-          (.subscriptionId | is_guid)
-          and (.policyAssignmentId | test("^/subscriptions/[0-9a-f-]{36}/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i"))
-          and ((.policyAssignmentId | split("/")[2] | ascii_downcase) == (.subscriptionId | ascii_downcase))
+    . as $case
+    | [$case.permittedAncestorAssignmentScopeIds[] | gsub("^\\s+|\\s+$"; "") | ascii_downcase] as $permitted
+    | ($permitted | all(.[]; . != "" and (is_management_group_scope_id or is_subscription_scope_id))) as $permittedShapesValid
+    | (($permitted | unique | length) == ($permitted | length)) as $permittedUnique
+    | ($case.policyAssignmentId | assignment_scope) as $assignment
+    | if ($case.policyAssignmentId | is_valid_resource_id | not) or $assignment == null or ($permittedShapesValid | not) or ($permittedUnique | not) then false else
+        if $case.scopeType == "managementGroup" then
+          ($case.managementGroupName | is_trimmed_non_empty)
+          and ($case.subscriptionId == "")
+          and ($case.resourceGroupName == "")
+          and ([$permitted[] | select((is_management_group_scope_id | not) or . == ("/providers/Microsoft.Management/managementGroups/" + $case.managementGroupName | ascii_downcase))] | length == 0)
+          and (
+            $assignment.assignmentScopeId == ("/providers/Microsoft.Management/managementGroups/" + $case.managementGroupName | ascii_downcase)
+            or ($assignment.assignmentScopeType == "managementGroup" and ($permitted | index($assignment.assignmentScopeId) != null))
+          )
+        elif $case.scopeType == "subscription" then
+          ($case.subscriptionId | is_guid)
+          and ($case.managementGroupName == "")
+          and ($case.resourceGroupName == "")
+          and ([$permitted[] | select(is_management_group_scope_id | not)] | length == 0)
+          and (
+            $assignment.assignmentScopeId == ("/subscriptions/" + $case.subscriptionId | ascii_downcase)
+            or ($assignment.assignmentScopeType == "managementGroup" and ($permitted | index($assignment.assignmentScopeId) != null))
+          )
         else
-          (.subscriptionId | is_guid)
-          and (.resourceGroupName | is_trimmed_non_empty)
-          and (.policyAssignmentId | test("^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i"))
-          and ((.policyAssignmentId | split("/")[2] | ascii_downcase) == (.subscriptionId | ascii_downcase))
-          and ((.policyAssignmentId | split("/")[4] | ascii_downcase) == (.resourceGroupName | ascii_downcase))
+          ($case.subscriptionId | is_guid)
+          and ($case.resourceGroupName | is_trimmed_non_empty)
+          and ($case.managementGroupName == "")
+          and ([$permitted[] | select((is_management_group_scope_id or . == ("/subscriptions/" + $case.subscriptionId | ascii_downcase)) | not)] | length == 0)
+          and (
+            $assignment.assignmentScopeId == ("/subscriptions/" + $case.subscriptionId + "/resourceGroups/" + $case.resourceGroupName | ascii_downcase)
+            or ($assignment.assignmentScopeType == "managementGroup" and ($permitted | index($assignment.assignmentScopeId) != null))
+            or ($assignment.assignmentScopeType == "subscription" and $assignment.assignmentScopeId == ("/subscriptions/" + $case.subscriptionId | ascii_downcase) and ($permitted | index($assignment.assignmentScopeId) != null))
+          )
         end
-      );
+      end;
   def valid_reference_contract:
     [.allowed[] | ascii_downcase | gsub("^\\s+|\\s+$"; "")] as $allowed
     | [.provided[] | gsub("^\\s+|\\s+$"; "")] as $provided_trimmed
@@ -397,6 +466,7 @@ jq -e '
     deployment("example-management-group-exemption") as $mg
   | deployment("example-subscription-exemption") as $sub
   | deployment("example-resource-group-exemption") as $rg
+  | deployment("example-inherited-assignment-exemption") as $inherited
   | $mg.properties.template as $module
   | $module.resources.managementGroupExemption.properties.template.resources.exemption as $mgResource
   | ($mg.properties.parameters | keys | sort) == [
@@ -454,6 +524,10 @@ jq -e '
     ])
     and $mg.properties.parameters.exemptionCategory.value == "Waiver"
     and $sub.properties.parameters.exemptionCategory.value == "Mitigated"
+    and $inherited.properties.parameters.permittedAncestorAssignmentScopeIds.value == [
+      "/subscriptions/44444444-4444-4444-4444-444444444444"
+    ]
+    and $inherited.properties.parameters.policyAssignmentId.value == "/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative"
     and $rg.properties.parameters.allowedPolicyDefinitionReferenceIds.value == [
       "public-management-ingress",
       "require-subnet-nsg"
@@ -480,12 +554,14 @@ jq -e '
     and $module.parameters.ticketReference.minLength == 1
     and $module.parameters.subscriptionId.defaultValue == ""
     and $module.parameters.resourceGroupName.defaultValue == ""
+    and $module.parameters.permittedAncestorAssignmentScopeIds.defaultValue == []
     and $module.parameters.source.defaultValue == "Bicep"
     and $module.parameters.governanceOwner.defaultValue == "eslz-v2-governance"
     and (($module.parameters.exemptionCategory.allowedValues | sort) == ["Mitigated", "Waiver"])
     and ($module.variables.validatedDisplayName | contains("fail(\u0027displayName must be non-empty and cannot include leading or trailing whitespace.\u0027"))
     and ($module.variables.validatedPolicyAssignmentId | contains("fail(\u0027policyAssignmentId must be an exact Azure Policy assignment resource ID without trailing separators or whitespace.\u0027"))
-    and ($module.variables.validatedScopedPolicyAssignmentId | contains("fail(\u0027resourceGroup exemptions require policyAssignmentId at the same subscription and resource-group scope.\u0027"))
+    and ($module.variables.validatedScopedPolicyAssignmentId | contains("fail(\u0027resourceGroup exemptions require policyAssignmentId at the target scope or an explicitly permitted ancestor scope.\u0027"))
+    and ($module.variables.validatedPermittedAncestorAssignmentScopeIds | contains("fail(\u0027permittedAncestorAssignmentScopeIds must include only supported ancestor scope IDs for the selected exemptionScopeType.\u0027"))
     and ($module.variables.validatedExpiresOn | contains("fail(\u0027expiresOn must be a canonical RFC3339 UTC timestamp with a valid calendar date"))
     and ($module.variables.validatedScopeType | contains("fail(\u0027resourceGroup exemptions require valid subscriptionId and resourceGroupName"))
     and ($module.variables.validatedPolicyDefinitionReferenceIds | contains("fail(\u0027policyDefinitionReferenceIds must be present in allowedPolicyDefinitionReferenceIds.\u0027"))

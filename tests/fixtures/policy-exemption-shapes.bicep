@@ -70,3 +70,27 @@ module resourceGroupExemption '../../modules/policy-exemption.bicep' = {
     governanceOwner: 'platform-governance'
   }
 }
+
+module inheritedAssignmentExemption '../../modules/policy-exemption.bicep' = {
+  name: 'example-inherited-assignment-exemption'
+  params: {
+    exemptionName: 'demo-rg-inherited-assignment-exemption'
+    exemptionScopeType: 'resourceGroup'
+    subscriptionId: '44444444-4444-4444-4444-444444444444'
+    resourceGroupName: 'rg-demo-app'
+    policyAssignmentId: '/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative'
+    displayName: 'Demo inherited assignment exemption'
+    description: 'Demonstrates inherited subscription-assignment exemptions with explicit ancestor contract.'
+    exemptionCategory: 'Mitigated'
+    owner: 'workload-owner@contoso.com'
+    justification: 'Exception is bounded while inherited assignment rollout is being remediated.'
+    expiresOn: '2026-09-30T23:59:59Z'
+    ticketReference: 'TASK-4004'
+    permittedAncestorAssignmentScopeIds: [
+      '/subscriptions/44444444-4444-4444-4444-444444444444'
+    ]
+    approver: 'architecture-board@contoso.com'
+    createdOn: '2026-03-10T00:00:00Z'
+    reviewedOn: '2026-08-10T00:00:00Z'
+  }
+}
