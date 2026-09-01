@@ -74,6 +74,7 @@ try {
         Stop-Test 'main.bicep build must not emit a BCP318 nullable-module-output warning.'
     }
     & (Join-Path $ScriptDir 'validate-policy-assignment.ps1') -CompiledMainTemplate $compiledTemplate
+    & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
     Write-Host '3/23 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
