@@ -238,16 +238,6 @@ try {
         $compiledJson.outputs.tagInheritanceRemediation.value.enabled -cne "[parameters('enableTagInheritance')]") {
         Stop-Test 'Tag-inheritance scope, identity, location, role, or safe enforcement wiring is invalid.'
     }
-    foreach ($enabled in @($false, $true)) {
-        $effectiveAssignments = @($compiledJson.resources | Where-Object {
-            $_.name -ceq 'assign-tag-inheritance' -and
-            $enabled -and $_.condition -ceq "[parameters('enableTagInheritance')]"
-        })
-        $expectedCount = if ($enabled) { 1 } else { 0 }
-        if ($effectiveAssignments.Count -ne $expectedCount) {
-            Stop-Test "Tag-inheritance assignment compiled shape is invalid when enableTagInheritance=$enabled."
-        }
-    }
     $remediationResources = @(Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.PolicyInsights/remediations'

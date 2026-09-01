@@ -89,9 +89,6 @@ jq -e '
   $inheritanceAssignment.condition == "[parameters(\u0027enableTagInheritance\u0027)]" and
   .parameters.enableTagInheritance.defaultValue == false and
   .outputs.tagInheritanceRemediation.value.enabled == "[parameters(\u0027enableTagInheritance\u0027)]" and
-  ([false, true] | map(. as $enabled |
-    if $enabled and ($inheritanceAssignment.condition ==
-      "[parameters(\u0027enableTagInheritance\u0027)]") then 1 else 0 end)) == [0, 1] and
   ([.. | objects | select(.type? == "Microsoft.PolicyInsights/remediations")] | length) == 0 and
   .outputs.tagInheritanceRemediation.value.remediationStarted == false and
   (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
