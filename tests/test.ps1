@@ -231,7 +231,29 @@ try {
     if ($compiledParameters.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
         Stop-Test 'networkIngressPolicyEffect must default to Audit in the Bicep parameter template.'
     }
+    if ($parameterTemplate.parameters.privateAccessPublicNetworkPolicyEffect.value -ne 'Audit' -or
+        (Compare-Object @($parameterTemplate.parameters.privateAccessServiceCategories.value) @('Storage', 'KeyVault')) -or
+        $parameterTemplate.parameters.enableFirewallRouteGuardrails.value -ne $false -or
+        $parameterTemplate.parameters.approvedFirewallResourceId.value -ne '' -or
+        $parameterTemplate.parameters.approvedFirewallPrivateIp.value -ne '' -or
+        @($parameterTemplate.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
+        @($parameterTemplate.parameters.approvedRouteTablePrefixes.value).Count -ne 0) {
+        Stop-Test 'Private-access and firewall-route JSON template parameters must retain safe defaults.'
+    }
+    if ($compiledParameters.parameters.privateAccessPublicNetworkPolicyEffect.value -ne 'Audit' -or
+        (Compare-Object @($compiledParameters.parameters.privateAccessServiceCategories.value) @('Storage', 'KeyVault')) -or
+        $compiledParameters.parameters.enableFirewallRouteGuardrails.value -ne $false -or
+        $compiledParameters.parameters.approvedFirewallResourceId.value -ne '' -or
+        $compiledParameters.parameters.approvedFirewallPrivateIp.value -ne '' -or
+        @($compiledParameters.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
+        @($compiledParameters.parameters.approvedRouteTablePrefixes.value).Count -ne 0) {
+        Stop-Test 'Private-access and firewall-route Bicep template parameters must retain safe defaults.'
+    }
 
+    $compiledJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
+        $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
+    }
     Write-Host '4/24 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -277,7 +299,7 @@ try {
 
     $rbacNegativeTemplate = Join-Path $TempDir 'main-permanent-owner.json'
     $rbacNegativeJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
-    $rbacNegativeJson.resources += [pscustomobject]@{
+    $rbacNegativeJson.resources | Add-Member -NotePropertyName __testPermanentOwner -NotePropertyValue ([pscustomobject]@{
         type = 'Microsoft.Authorization/roleAssignments'
         apiVersion = '2022-04-01'
         name = '00000000-0000-0000-0000-000000000000'
@@ -285,7 +307,7 @@ try {
             principalId = "[parameters('governanceAdminsGroupObjectId')]"
             roleDefinitionId = "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]"
         }
-    }
+    }) -Force
     $rbacNegativeJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacNegativeTemplate
     $rbacNegativeOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
         -CompiledTemplate $rbacNegativeTemplate `
@@ -299,13 +321,13 @@ try {
     }
     $rbacMainRequestTemplate = Join-Path $TempDir 'main-one-shot-request.json'
     $rbacMainRequestJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
-    $rbacMainRequestJson.resources += [pscustomobject]@{
+    $rbacMainRequestJson.resources | Add-Member -NotePropertyName __testOneShotRequest -NotePropertyValue ([pscustomobject]@{
         type = 'Microsoft.Authorization/roleEligibilityScheduleRequests'
         apiVersion = '2020-10-01'
         name = "[guid(subscription().id, 'reused-request')]"
         condition = $false
         properties = [pscustomobject]@{}
-    }
+    }) -Force
     $rbacMainRequestJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacMainRequestTemplate
     $rbacMainRequestOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath `
         -CompiledTemplate $rbacMainRequestTemplate `
@@ -783,7 +805,7 @@ exit $LASTEXITCODE
     }
 
     $policyLibrary = @($compiledJson.resources | Where-Object {
-        $_.name.StartsWith("[format('policy-library-")
+        $_.PSObject.Properties['name'] -and $_.name.StartsWith("[format('policy-library-")
     })
     if ($policyLibrary.Count -ne 1) {
         Stop-Test 'Expected exactly one compiled policy-library deployment.'
@@ -882,6 +904,103 @@ exit $LASTEXITCODE
     })
     if ($rootPublicIpAssignments.Count -ne 1) {
         Stop-Test 'Expected the existing public-IP audit to remain a single dedicated-root assignment.'
+    }
+
+    $privateAccessInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'private-access-initiative' })
+    $privateAccessWorkloadAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-private-access-workload' })
+    $privateAccessCriticalAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-private-access-critical' })
+    $firewallRouteWorkloadAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-firewall-routes-workload' })
+    if ($privateAccessInitiative.Count -ne 1 -or
+        (Compare-Object @($privateAccessInitiative[0].properties.parameters.policyDefinitionReferences.value |
+            ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object) @('key-vault-private-link', 'paas-public-network-access', 'storage-private-link')) -or
+        $privateAccessInitiative[0].properties.parameters.initiativeParameters.value.publicNetworkAccessEffect.defaultValue -ne 'Audit') {
+        Stop-Test 'Private-access initiative must contain the audit-first public-network and private-link references.'
+    }
+    $privateAccessReferences = @($privateAccessInitiative[0].properties.parameters.policyDefinitionReferences.value)
+    if ((@($privateAccessReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'storage-private-link' }).definitionVersion) -ne '2.*.*' -or
+        (@($privateAccessReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'key-vault-private-link' }).definitionVersion) -ne '1.*.*') {
+        Stop-Test 'Private-link built-in references must be pinned to cataloged major versions.'
+    }
+    if ($privateAccessWorkloadAssignment.Count -ne 1 -or
+        $privateAccessWorkloadAssignment[0].scope -notmatch 'workloadManagementGroupId' -or
+        $privateAccessWorkloadAssignment[0].scope -match 'platformManagementGroupId' -or
+        $privateAccessCriticalAssignment.Count -ne 1 -or
+        $privateAccessCriticalAssignment[0].condition -ne "[parameters('enableCriticalInfrastructure')]" -or
+        $privateAccessCriticalAssignment[0].scope -notmatch 'criticalInfrastructureManagementGroupId' -or
+        $firewallRouteWorkloadAssignment.Count -ne 1 -or
+        $firewallRouteWorkloadAssignment[0].condition -ne "[parameters('enableFirewallRouteGuardrails')]" -or
+        $firewallRouteWorkloadAssignment[0].scope -notmatch 'workloadManagementGroupId') {
+        Stop-Test 'Private-access and firewall-route assignments must remain workload/critical scoped and opt-in.'
+    }
+    $routeParameters = $firewallRouteWorkloadAssignment[0].properties.parameters.parameters.value
+    if ([string]$routeParameters.approvedFirewallResourceId.value -ne "[parameters('approvedFirewallResourceId')]" -or
+        ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'fail\(' -or
+        ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'approvedRouteTablePrefixes') {
+        Stop-Test 'Firewall-route assignment must retain approved-firewall evidence and validate all architecture inputs.'
+    }
+    foreach ($requiredValidationText in @(
+        'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values',
+        'approvedFirewallResourceId must be an Azure Firewall resource ID'
+    )) {
+        if (-not $mainBicepText.Contains($requiredValidationText)) {
+            Stop-Test "Guardrail input validation is missing: $requiredValidationText"
+        }
+        $inputValidationFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/firewall-route-input-validation-cases.json') -Raw | ConvertFrom-Json
+        foreach ($case in $inputValidationFixture.ipv4Cases) {
+            $octets = @([string]$case.value -split '\.')
+            $valid = $octets.Count -eq 4
+            foreach ($octet in $octets) {
+                [int]$number = 0
+                if ($octet -notmatch '^\d+$' -or -not [int]::TryParse($octet, [ref]$number) -or $number -gt 255) {
+                    $valid = $false
+                }
+            }
+            if ($valid -ne $case.valid) {
+                Stop-Test "IPv4 validation case failed: $($case.value)"
+            }
+        }
+        foreach ($case in $inputValidationFixture.serviceCategoryCases) {
+            $values = @($case.value)
+            $valid = ($values.Count -gt 0) -and
+                (@($values | Where-Object {
+                    -not [string]::Equals($_, 'Storage', [System.StringComparison]::Ordinal) -and
+                    -not [string]::Equals($_, 'KeyVault', [System.StringComparison]::Ordinal)
+                }).Count -eq 0) -and
+                (@($values | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -eq $values.Count)
+            if ($valid -ne $case.valid) {
+                Stop-Test "Private-access category validation case failed: $($values -join ',')"
+            }
+        }
+    }
+    $firewallRoutePolicy = @($policyDefinitions | Where-Object {
+        $_.properties.displayName -eq 'Demo - audit approved firewall route expectations'
+    })
+    if ($firewallRoutePolicy.Count -ne 1) {
+        Stop-Test 'Expected exactly one approved-firewall-routes policy definition.'
+    }
+    $firewallRoutePolicyText = $firewallRoutePolicy[0].properties.policyRule.if | ConvertTo-Json -Depth 100 -Compress
+    foreach ($requiredExpression in @(
+        'approvedRouteTablePrefixes',
+        "current('approvedRouteTablePrefix')",
+        'nextHopType',
+        'VirtualAppliance',
+        'nextHopIpAddress',
+        'approvedFirewallPrivateIp'
+    )) {
+        if (-not $firewallRoutePolicyText.Contains($requiredExpression)) {
+            Stop-Test "Compiled firewall route policy is missing: $requiredExpression"
+        }
+    }
+    $firewallRouteFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/firewall-route-semantic-cases.json') -Raw | ConvertFrom-Json
+    foreach ($case in $firewallRouteFixture.cases) {
+        $hasApprovedRoute = @($case.routes | Where-Object {
+            $_.addressPrefix -eq $firewallRouteFixture.approvedRouteTablePrefix -and
+            $_.nextHopType -eq 'VirtualAppliance' -and
+            $_.nextHopIpAddress -eq $firewallRouteFixture.approvedFirewallPrivateIp
+        }).Count -gt 0
+        if ((-not $hasApprovedRoute) -ne $case.expectedNonCompliant) {
+            Stop-Test "Firewall route semantic case failed: $($case.name)"
+        }
     }
 
     $semanticFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/network-ingress-semantic-cases.json') -Raw | ConvertFrom-Json
