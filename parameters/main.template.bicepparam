@@ -80,3 +80,7 @@ param criticalInfrastructureSubscriptionIds = []
 param enableMicrosoftCloudSecurityBenchmark = true
 param enableCisAzureFoundationsBenchmark = false
 param enableNistSp80053Rev5 = false
+param activityLogExportPolicyEffect = 'Disabled'
+param activityLogExportLogsEnabled = 'True'
+param resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
+param resourceDiagnosticsCategoryGroup = 'audit'

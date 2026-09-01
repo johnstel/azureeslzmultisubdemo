@@ -233,6 +233,35 @@ param enableCisAzureFoundationsBenchmark bool = false
 @description('Set true to add the optional NIST SP 800-53 Rev. 5 overlay at the demo root. This initiative contains four fixed Guest Configuration DeployIfNotExists/Modify members, so the assignment needs a system-assigned identity with the Contributor role; assignment alone does not establish NIST compliance.')
 param enableNistSp80053Rev5 bool = false
 
+@description('Effect for the Activity Log export assignment. Keep Disabled until the effective workspace input and rollout are approved.')
+@allowed([
+  'DeployIfNotExists'
+  'Disabled'
+])
+param activityLogExportPolicyEffect string = 'Disabled'
+
+@description('Whether Activity Log categories are enabled when the Activity Log export assignment runs.')
+@allowed([
+  'True'
+  'False'
+])
+param activityLogExportLogsEnabled string = 'True'
+
+@description('Effect for supported-resource diagnostics. Keep AuditIfNotExists until remediation rollout is approved.')
+@allowed([
+  'DeployIfNotExists'
+  'AuditIfNotExists'
+  'Disabled'
+])
+param resourceDiagnosticsPolicyEffect string = 'AuditIfNotExists'
+
+@description('Supported-resource diagnostic category-group profile. audit is the safe default; allLogs is explicit opt-in.')
+@allowed([
+  'audit'
+  'allLogs'
+])
+param resourceDiagnosticsCategoryGroup string = 'audit'
+
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
 var connectivityManagementGroupId = '${namePrefix}-connectivity'
@@ -255,7 +284,29 @@ var nistSp80053Rev5PolicySetDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policySetDefinitions',
   '179d1daa-458f-4e47-8086-2a68d0d6c38f'
 )
+var activityLogExportPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '2465583e-4e78-4c15-b6be-a36cbc7c8b0f'
+)
+var resourceDiagnosticsAuditPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  'f5b29bc4-feca-4cc6-a58a-772dd5e290a5'
+)
+var resourceDiagnosticsAllLogsPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '0884adba-2312-4468-abeb-5422caed1038'
+)
+var resourceDiagnosticsPolicySetDefinitionId = resourceDiagnosticsCategoryGroup == 'allLogs'
+  ? resourceDiagnosticsAllLogsPolicySetDefinitionId
+  : resourceDiagnosticsAuditPolicySetDefinitionId
 var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
+var monitoringContributorRoleDefinitionId = '749f88d5-cbae-40b8-bcfc-e573ddc772fa'
+var logAnalyticsContributorRoleDefinitionId = '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
+var effectiveMonitoringWorkspaceResourceId = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
+var loggingPoliciesRequireWorkspace = (activityLogExportPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'AuditIfNotExists') && empty(effectiveMonitoringWorkspaceResourceId)
+var validatedLoggingWorkspaceResourceId = loggingPoliciesRequireWorkspace
+  ? fail('Activity Log and supported-resource diagnostics assignments require a non-empty effective Log Analytics workspace resource ID. Set existingLogAnalyticsWorkspaceResourceId or deployCentralLogAnalytics=true before enabling these effects.')
+  : effectiveMonitoringWorkspaceResourceId
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -821,6 +872,72 @@ module nistSp80053Rev5Assignment 'modules/remediating-policy-assignment.bicep' =
   ]
 }
 
+module activityLogExportAssignment 'modules/remediating-policy-assignment.bicep' = {
+  name: 'assign-activity-logs'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-activity-logs'
+    displayName: 'Demo - export Activity Logs to Log Analytics'
+    description: 'Configures subscription Activity Log diagnostic settings to stream to the effective central Log Analytics workspace.'
+    policyDefinitionId: activityLogExportPolicyDefinitionId
+    definitionVersion: '1.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      monitoringContributorRoleDefinitionId
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: activityLogExportPolicyEffect
+      }
+      logsEnabled: {
+        value: activityLogExportLogsEnabled
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module resourceDiagnosticsAssignment 'modules/remediating-policy-assignment.bicep' = {
+  name: 'assign-resource-diagnostics'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-resource-diags'
+    displayName: 'Demo - export supported resource diagnostics'
+    description: 'Assigns the built-in supported-resource diagnostics initiative to stream logs to the effective central Log Analytics workspace.'
+    policyDefinitionId: resourceDiagnosticsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: resourceDiagnosticsPolicyEffect
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 module managementGroupRbac 'modules/management-group-rbac.bicep' = if (deployRoleAssignments) {
   name: 'management-group-rbac'
   scope: managementGroup(demoRootManagementGroupId)
@@ -930,3 +1047,19 @@ output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
 output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
+output loggingAssignments object = {
+  activityLogExport: {
+    policyAssignmentId: activityLogExportAssignment.outputs.policyAssignmentId
+    identityPrincipalId: activityLogExportAssignment.outputs.identityPrincipalId
+    roleAssignmentIds: activityLogExportAssignment.outputs.roleAssignmentIds
+    effect: activityLogExportPolicyEffect
+  }
+  resourceDiagnostics: {
+    policyAssignmentId: resourceDiagnosticsAssignment.outputs.policyAssignmentId
+    identityPrincipalId: resourceDiagnosticsAssignment.outputs.identityPrincipalId
+    roleAssignmentIds: resourceDiagnosticsAssignment.outputs.roleAssignmentIds
+    effect: resourceDiagnosticsPolicyEffect
+    categoryGroup: resourceDiagnosticsCategoryGroup
+    policySetDefinitionId: resourceDiagnosticsPolicySetDefinitionId
+  }
+}

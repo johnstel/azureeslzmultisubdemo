@@ -1654,4 +1654,78 @@ jq -e '
   exit 1
 }
 
+printf '25/25 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
+jq -e --slurpfile catalog "${control_catalog}" '
+  def deployment($name):
+    first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
+  def control($id):
+    first($catalog[0].controls[] | select(.id == $id));
+  def definition_id($id):
+    if control($id).mechanism.kind == "policySetDefinition"
+    then "[tenantResourceId(\u0027Microsoft.Authorization/policySetDefinitions\u0027, \u0027\(control($id).mechanism.definitionId)\u0027)]"
+    else "[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, \u0027\(control($id).mechanism.definitionId)\u0027)]"
+    end;
+  def assigned_at_demo_root($deployment):
+    $deployment.scope | contains("demoRootManagementGroupId");
+  deployment("assign-activity-logs") as $activity |
+  deployment("assign-resource-diagnostics") as $diagnostics |
+  .parameters.activityLogExportPolicyEffect.defaultValue == "Disabled" and
+  .parameters.activityLogExportLogsEnabled.defaultValue == "True" and
+  .parameters.resourceDiagnosticsPolicyEffect.defaultValue == "AuditIfNotExists" and
+  .parameters.resourceDiagnosticsCategoryGroup.defaultValue == "audit" and
+  .variables.activityLogExportPolicyDefinitionId == definition_id("REQ-LOG-01") and
+  .variables.resourceDiagnosticsAllLogsPolicySetDefinitionId == definition_id("REQ-LOG-02") and
+  .variables.resourceDiagnosticsAuditPolicySetDefinitionId ==
+    "[tenantResourceId(\u0027Microsoft.Authorization/policySetDefinitions\u0027, \u0027f5b29bc4-feca-4cc6-a58a-772dd5e290a5\u0027)]" and
+  .variables.resourceDiagnosticsPolicySetDefinitionId ==
+    "[if(equals(parameters(\u0027resourceDiagnosticsCategoryGroup\u0027), \u0027allLogs\u0027), variables(\u0027resourceDiagnosticsAllLogsPolicySetDefinitionId\u0027), variables(\u0027resourceDiagnosticsAuditPolicySetDefinitionId\u0027))]" and
+  .variables.monitoringContributorRoleDefinitionId == (control("REQ-LOG-01").roleDefinitionIds | first) and
+  .variables.logAnalyticsContributorRoleDefinitionId == (control("REQ-LOG-02").roleDefinitionIds | first) and
+  assigned_at_demo_root($activity) and assigned_at_demo_root($diagnostics) and
+  all(($activity, $diagnostics);
+    .properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
+    .properties.parameters.identity.value == {type: "SystemAssigned"} and
+    .properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]") and
+  $activity.properties.parameters.policyDefinitionId.value ==
+    "[variables(\u0027activityLogExportPolicyDefinitionId\u0027)]" and
+  $activity.properties.parameters.definitionVersion.value == "1.*.*" and
+  $activity.properties.parameters.parameters.value.effect.value ==
+    "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
+  $activity.properties.parameters.parameters.value.logsEnabled.value ==
+    "[parameters(\u0027activityLogExportLogsEnabled\u0027)]" and
+  ($activity.properties.parameters.parameters.value.logAnalytics.value |
+    contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
+  ($activity.properties.parameters.parameters.value.logAnalytics.value |
+    contains("fail(\u0027Activity Log and supported-resource diagnostics assignments require a non-empty effective Log Analytics workspace resource ID")) and
+  $activity.properties.parameters.verifiedRoleDefinitionIds.value ==
+    ["[variables(\u0027monitoringContributorRoleDefinitionId\u0027)]", "[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  $diagnostics.properties.parameters.policyDefinitionId.value ==
+    "[variables(\u0027resourceDiagnosticsPolicySetDefinitionId\u0027)]" and
+  $diagnostics.properties.parameters.definitionVersion.value == "1.*.*" and
+  $diagnostics.properties.parameters.parameters.value.effect.value ==
+    "[parameters(\u0027resourceDiagnosticsPolicyEffect\u0027)]" and
+  ($diagnostics.properties.parameters.parameters.value.logAnalytics.value |
+    contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
+  $diagnostics.properties.parameters.verifiedRoleDefinitionIds.value ==
+    ["[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  .outputs.loggingAssignments.value.activityLogExport.effect ==
+    "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
+  .outputs.loggingAssignments.value.resourceDiagnostics.effect ==
+    "[parameters(\u0027resourceDiagnosticsPolicyEffect\u0027)]" and
+  .outputs.loggingAssignments.value.resourceDiagnostics.categoryGroup ==
+    "[parameters(\u0027resourceDiagnosticsCategoryGroup\u0027)]"
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Logging assignments do not match the required workspace wiring, identity/roles, effects, or demo-root inheritance.\n' >&2
+  exit 1
+}
+jq -e '
+  .parameters.activityLogExportPolicyEffect.value == "Disabled" and
+  .parameters.activityLogExportLogsEnabled.value == "True" and
+  .parameters.resourceDiagnosticsPolicyEffect.value == "AuditIfNotExists" and
+  .parameters.resourceDiagnosticsCategoryGroup.value == "audit"
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
+  printf 'ERROR: Logging policy defaults in parameters/demo.parameters.template.json are not safe audit-first values.\n' >&2
+  exit 1
+}
+
 printf '\nAll local validation and safety tests passed.\n'

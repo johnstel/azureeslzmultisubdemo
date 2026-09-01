@@ -2157,6 +2157,105 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
+    Write-Host '25/25 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
+    $logActivityControl = $controlCatalog.controls | Where-Object { $_.id -eq 'REQ-LOG-01' } | Select-Object -First 1
+    $logDiagnosticsControl = $controlCatalog.controls | Where-Object { $_.id -eq 'REQ-LOG-02' } | Select-Object -First 1
+    if (-not $logActivityControl -or -not $logDiagnosticsControl) {
+        Stop-Test 'Control catalog is missing REQ-LOG-01 and/or REQ-LOG-02.'
+    }
+    if ($compiledJson.parameters.activityLogExportPolicyEffect.defaultValue -ne 'Disabled' -or
+        $compiledJson.parameters.activityLogExportLogsEnabled.defaultValue -ne 'True' -or
+        $compiledJson.parameters.resourceDiagnosticsPolicyEffect.defaultValue -ne 'AuditIfNotExists' -or
+        $compiledJson.parameters.resourceDiagnosticsCategoryGroup.defaultValue -ne 'audit') {
+        Stop-Test 'Logging policy parameters must keep safe defaults (Disabled / AuditIfNotExists / audit).'
+    }
+    if ($armParameterTemplate.parameters.activityLogExportPolicyEffect.value -ne 'Disabled' -or
+        $armParameterTemplate.parameters.activityLogExportLogsEnabled.value -ne 'True' -or
+        $armParameterTemplate.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $armParameterTemplate.parameters.resourceDiagnosticsCategoryGroup.value -ne 'audit') {
+        Stop-Test 'ARM parameter template logging defaults must match the safe baseline values.'
+    }
+    $expectedActivityDefinitionId = "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '$($logActivityControl.mechanism.definitionId)')]"
+    $expectedDiagnosticsAllLogsDefinitionId = "[tenantResourceId('Microsoft.Authorization/policySetDefinitions', '$($logDiagnosticsControl.mechanism.definitionId)')]"
+    if ($compiledJson.variables.activityLogExportPolicyDefinitionId -ne $expectedActivityDefinitionId) {
+        Stop-Test 'activityLogExportPolicyDefinitionId must match the verified REQ-LOG-01 built-in.'
+    }
+    if ($compiledJson.variables.resourceDiagnosticsAllLogsPolicySetDefinitionId -ne $expectedDiagnosticsAllLogsDefinitionId) {
+        Stop-Test 'resourceDiagnosticsAllLogsPolicySetDefinitionId must match the verified REQ-LOG-02 built-in.'
+    }
+    if ($compiledJson.variables.resourceDiagnosticsAuditPolicySetDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policySetDefinitions', 'f5b29bc4-feca-4cc6-a58a-772dd5e290a5')]") {
+        Stop-Test 'resourceDiagnosticsAuditPolicySetDefinitionId must match the verified audit-category initiative ID.'
+    }
+    if ($compiledJson.variables.resourceDiagnosticsPolicySetDefinitionId -ne "[if(equals(parameters('resourceDiagnosticsCategoryGroup'), 'allLogs'), variables('resourceDiagnosticsAllLogsPolicySetDefinitionId'), variables('resourceDiagnosticsAuditPolicySetDefinitionId'))]") {
+        Stop-Test 'resourceDiagnosticsCategoryGroup must explicitly choose audit or allLogs built-in initiative IDs.'
+    }
+    if ($compiledJson.variables.monitoringContributorRoleDefinitionId -ne @($logActivityControl.roleDefinitionIds)[0] -or
+        $compiledJson.variables.logAnalyticsContributorRoleDefinitionId -ne @($logDiagnosticsControl.roleDefinitionIds)[0]) {
+        Stop-Test 'Logging remediation role variables must match the verified control-catalog roleDefinitionIds.'
+    }
+    $activityDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-activity-logs'
+    } | Select-Object -First 1
+    $diagnosticsDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-resource-diagnostics'
+    } | Select-Object -First 1
+    if (-not $activityDeployment -or -not $diagnosticsDeployment) {
+        Stop-Test 'Missing Activity Log or resource diagnostics assignment deployment.'
+    }
+    foreach ($loggingDeployment in @($activityDeployment, $diagnosticsDeployment)) {
+        if ($loggingDeployment.scope -notmatch 'demoRootManagementGroupId') {
+            Stop-Test "$($loggingDeployment.name) must be assigned at the dedicated demo root."
+        }
+        if ($loggingDeployment.properties.parameters.location.value -ne "[parameters('deploymentLocation')]") {
+            Stop-Test "$($loggingDeployment.name) must use deploymentLocation for managed identity metadata."
+        }
+        if ($loggingDeployment.properties.parameters.identity.value.type -ne 'SystemAssigned') {
+            Stop-Test "$($loggingDeployment.name) must use a system-assigned identity."
+        }
+        if ($loggingDeployment.properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]") {
+            Stop-Test "$($loggingDeployment.name) must use denyPolicyEnforcementMode."
+        }
+    }
+    if ($activityDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('activityLogExportPolicyDefinitionId')]") {
+        Stop-Test 'Activity Log assignment must use the catalog-wired policy definition variable.'
+    }
+    if ($activityDeployment.properties.parameters.definitionVersion.value -ne '1.*.*') {
+        Stop-Test 'Activity Log assignment must pin major version 1.*.*.'
+    }
+    if (Compare-Object @("[variables('monitoringContributorRoleDefinitionId')]", "[variables('logAnalyticsContributorRoleDefinitionId')]") @($activityDeployment.properties.parameters.verifiedRoleDefinitionIds.value)) {
+        Stop-Test 'Activity Log assignment remediation roles are invalid.'
+    }
+    $activityWorkspaceExpression = [string]$activityDeployment.properties.parameters.parameters.value.logAnalytics.value
+    if ($activityDeployment.properties.parameters.parameters.value.effect.value -ne "[parameters('activityLogExportPolicyEffect')]" -or
+        $activityDeployment.properties.parameters.parameters.value.logsEnabled.value -ne "[parameters('activityLogExportLogsEnabled')]" -or
+        ($activityWorkspaceExpression -notlike "*reference('centralMonitoring').outputs.effectiveLogAnalyticsWorkspaceResourceId.value*") -or
+        ($activityWorkspaceExpression -notlike "*fail('Activity Log and supported-resource diagnostics assignments require a non-empty effective Log Analytics workspace resource ID*")) {
+        Stop-Test 'Activity Log assignment parameters must be wired to effect/logsEnabled and guarded effective workspace resolution.'
+    }
+    if ($diagnosticsDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('resourceDiagnosticsPolicySetDefinitionId')]") {
+        Stop-Test 'Resource diagnostics assignment must use the category-group-selected policy set variable.'
+    }
+    if ($diagnosticsDeployment.properties.parameters.definitionVersion.value -ne '1.*.*') {
+        Stop-Test 'Resource diagnostics assignment must pin major version 1.*.*.'
+    }
+    if (Compare-Object @("[variables('logAnalyticsContributorRoleDefinitionId')]") @($diagnosticsDeployment.properties.parameters.verifiedRoleDefinitionIds.value)) {
+        Stop-Test 'Resource diagnostics assignment remediation roles are invalid.'
+    }
+    $diagnosticsWorkspaceExpression = [string]$diagnosticsDeployment.properties.parameters.parameters.value.logAnalytics.value
+    if ($diagnosticsDeployment.properties.parameters.parameters.value.effect.value -ne "[parameters('resourceDiagnosticsPolicyEffect')]" -or
+        ($diagnosticsWorkspaceExpression -notlike "*reference('centralMonitoring').outputs.effectiveLogAnalyticsWorkspaceResourceId.value*")) {
+        Stop-Test 'Resource diagnostics assignment parameters must be wired to effect and guarded effective workspace inputs.'
+    }
+    if ($compiledJson.outputs.loggingAssignments.value.activityLogExport.effect -ne "[parameters('activityLogExportPolicyEffect')]" -or
+        $compiledJson.outputs.loggingAssignments.value.resourceDiagnostics.effect -ne "[parameters('resourceDiagnosticsPolicyEffect')]" -or
+        $compiledJson.outputs.loggingAssignments.value.resourceDiagnostics.categoryGroup -ne "[parameters('resourceDiagnosticsCategoryGroup')]") {
+        Stop-Test 'loggingAssignments output must expose configured effects and diagnostic category-group.'
+    }
+
     Write-Host ''
     Write-Host 'All Windows PowerShell validation and safety tests passed.'
 }
