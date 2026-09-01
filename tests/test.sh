@@ -72,12 +72,33 @@ if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT
   exit 1
 fi
 
-printf '7/22 Confirm five distinct Entra group parameters and guarded scripts...\n'
-group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
+printf '7/22 Confirm group-only RBAC, PIM-ready Owner eligibility, and guarded scripts...\n'
+group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|subscriptionPrivilegedAccessGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string( = '"'"''"'"')?$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 5 ]] || {
   printf 'ERROR: Expected five Entra security-group parameters.\n' >&2
   exit 1
 }
+"${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" --compiled-template "${TEMP_DIR}/main.json"
+rbac_negative_template="${TEMP_DIR}/main-permanent-owner.json"
+jq '
+  .resources += [{
+    "type": "Microsoft.Authorization/roleAssignments",
+    "apiVersion": "2022-04-01",
+    "name": "00000000-0000-0000-0000-000000000000",
+    "properties": {
+      "principalId": "[parameters('\''subscriptionPrivilegedAccessGroupObjectId'\'')]",
+      "roleDefinitionId": "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', '\''8e3af657-a8ff-443c-a75c-2fe8c4bcb635'\'')]"
+    }
+  }]
+' "${TEMP_DIR}/main.json" > "${rbac_negative_template}"
+if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" --compiled-template "${rbac_negative_template}" 2>&1)"; then
+  printf 'ERROR: RBAC validator accepted a compiled permanent Owner assignment.\n' >&2
+  exit 1
+fi
+if ! printf '%s' "${rbac_validation_output}" | grep -qF 'permanent Owner role assignment'; then
+  printf 'ERROR: RBAC validator rejected the permanent Owner fixture for the wrong reason: %s\n' "${rbac_validation_output}" >&2
+  exit 1
+fi
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.sh"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
@@ -231,7 +252,9 @@ jq '
   .parameters.connectivitySubscriptionId.value = "11111111-1111-1111-1111-111111111111" |
   .parameters.workloadSubscriptionId.value = "22222222-2222-2222-2222-222222222222" |
   .parameters.governanceAdminsGroupObjectId.value = "33333333-3333-3333-3333-333333333333" |
-  .parameters.subscriptionOwnersGroupObjectId.value = "44444444-4444-4444-4444-444444444444" |
+  .parameters.subscriptionPrivilegedAccessGroupObjectId.value = "44444444-4444-4444-4444-444444444444" |
+  .parameters.eligibleOwnerAssignmentStartDateTime.value = "2026-09-01T12:00:00Z" |
+  .parameters.eligibleOwnerAssignmentJustification.value = "Static teardown safety test" |
   .parameters.networkOperatorsGroupObjectId.value = "55555555-5555-5555-5555-555555555555" |
   .parameters.workloadContributorsGroupObjectId.value = "66666666-6666-6666-6666-666666666666" |
   .parameters.readOnlyAuditorsGroupObjectId.value = "77777777-7777-7777-7777-777777777777" |
@@ -289,9 +312,13 @@ for bash_bin in /usr/local/bin/bash /opt/homebrew/bin/bash /bin/bash; do
   fi
 done
 if [[ -n "${bash3_candidate}" ]]; then
-  printf '  Found a Bash < 4.0 interpreter (%s); executing tests/validate-control-catalog.sh under it...\n' "${bash3_candidate}"
+  printf '  Found a Bash < 4.0 interpreter (%s); executing static validators under it...\n' "${bash3_candidate}"
   if ! "${bash3_candidate}" "${PROJECT_DIR}/tests/validate-control-catalog.sh" >/dev/null; then
     printf 'ERROR: tests/validate-control-catalog.sh failed when executed directly under %s.\n' "${bash3_candidate}" >&2
+    exit 1
+  fi
+  if ! "${bash3_candidate}" "${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" >/dev/null; then
+    printf 'ERROR: scripts/validate-rbac-artifacts.sh failed when executed directly under %s.\n' "${bash3_candidate}" >&2
     exit 1
   fi
 else

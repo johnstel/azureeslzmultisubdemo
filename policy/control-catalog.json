@@ -39,7 +39,7 @@
         "builtIn": false,
         "displayName": "Conditional Access: privileged-role phishing-resistant MFA (report-only template)",
         "sourceUrl": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-admin-phish-resistant-mfa",
-        "verifiedOn": "2026-08-31",
+        "verifiedOn": "2026-09-01",
         "verificationMethod": "ms-learn-page"
       },
       "supportedEffects": [
@@ -128,12 +128,13 @@
         "verificationMethod": "ms-learn-page"
       },
       "supportedEffects": [
-        "eligible",
-        "activeTimeBound"
+        "eligible"
       ],
       "requiredParameters": [
-        "eligibleGroupObjectId",
-        "maxActivationDurationHours"
+        "subscriptionPrivilegedAccessGroupObjectId",
+        "eligibleOwnerAssignmentStartDateTime",
+        "eligibleOwnerAssignmentDuration",
+        "eligibleOwnerAssignmentJustification"
       ],
       "roleDefinitionIds": [
         "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
@@ -141,8 +142,8 @@
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Bicep RBAC module output plus Entra PIM eligible-assignment configuration (issue #8).",
-      "notes": "Owner role ID 8e3af657-a8ff-443c-a75c-2fe8c4bcb635 is already used for permanent assignment in modules/subscription-rbac.bicep; issue #8 changes the assignment pattern, not the role definition."
+      "evidenceSource": "Compiled Bicep roleEligibilityScheduleRequests plus the static Azure RBAC PIM activation requirements artifact.",
+      "notes": "Implemented by modules/subscription-rbac.bicep as an explicitly enabled, group-wired, finite eligible Owner schedule. No permanent or active Owner role assignment is created. Approval, MFA, activation justification, duration, notifications, and external emergency-access handling remain a statically validated report-only contract because applying PIM role settings is out of scope."
     },
     {
       "id": "REQ-ID-05",

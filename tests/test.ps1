@@ -122,11 +122,34 @@ try {
         }
     }
 
-    Write-Host '7/22 Confirm five Entra group parameters and guarded lifecycle scripts...'
+    Write-Host '7/22 Confirm group-only RBAC, PIM-ready Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
-    $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|subscriptionOwnersGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
+    $groupPattern = "(?m)^param (governanceAdminsGroupObjectId|subscriptionPrivilegedAccessGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string( = '')?$"
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 5) {
         Stop-Test 'Expected five Entra security-group parameters.'
+    }
+    $rbacValidatorPath = Join-Path $ProjectDir 'scripts/validate-rbac-artifacts.ps1'
+    & $rbacValidatorPath -CompiledTemplate $compiledTemplate
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'PIM-ready RBAC artifact validation failed.' }
+
+    $rbacNegativeTemplate = Join-Path $TempDir 'main-permanent-owner.json'
+    $rbacNegativeJson = Get-Content -LiteralPath $compiledTemplate -Raw | ConvertFrom-Json
+    $rbacNegativeJson.resources += [pscustomobject]@{
+        type = 'Microsoft.Authorization/roleAssignments'
+        apiVersion = '2022-04-01'
+        name = '00000000-0000-0000-0000-000000000000'
+        properties = [pscustomobject]@{
+            principalId = "[parameters('subscriptionPrivilegedAccessGroupObjectId')]"
+            roleDefinitionId = "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]"
+        }
+    }
+    $rbacNegativeJson | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $rbacNegativeTemplate
+    $rbacNegativeOutput = & pwsh -NoLogo -NoProfile -File $rbacValidatorPath -CompiledTemplate $rbacNegativeTemplate 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'RBAC validator accepted a compiled permanent Owner assignment.'
+    }
+    if (($rbacNegativeOutput -join [Environment]::NewLine) -notmatch 'permanent Owner role assignment') {
+        Stop-Test "RBAC validator rejected the permanent Owner fixture for the wrong reason: $($rbacNegativeOutput -join [Environment]::NewLine)"
     }
     if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/deploy.ps1') -Raw) -notmatch 'DEPLOY-ESLZ-DEMO') {
         Stop-Test 'PowerShell deployment confirmation guard is missing.'
@@ -370,7 +393,9 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $templateJson.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
     $templateJson.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
     $templateJson.parameters.governanceAdminsGroupObjectId.value = '33333333-3333-3333-3333-333333333333'
-    $templateJson.parameters.subscriptionOwnersGroupObjectId.value = '44444444-4444-4444-4444-444444444444'
+    $templateJson.parameters.subscriptionPrivilegedAccessGroupObjectId.value = '44444444-4444-4444-4444-444444444444'
+    $templateJson.parameters.eligibleOwnerAssignmentStartDateTime.value = '2026-09-01T12:00:00Z'
+    $templateJson.parameters.eligibleOwnerAssignmentJustification.value = 'Static teardown safety test'
     $templateJson.parameters.networkOperatorsGroupObjectId.value = '55555555-5555-5555-5555-555555555555'
     $templateJson.parameters.workloadContributorsGroupObjectId.value = '66666666-6666-6666-6666-666666666666'
     $templateJson.parameters.readOnlyAuditorsGroupObjectId.value = '77777777-7777-7777-7777-777777777777'

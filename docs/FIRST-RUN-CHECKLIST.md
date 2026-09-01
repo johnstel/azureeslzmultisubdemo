@@ -23,13 +23,14 @@ Do not place secrets in this worksheet.
 | Connectivity sandbox Subscription ID | [ ] |
 | Workload sandbox Subscription ID | [ ] |
 | Governance admins group Object ID | [ ] |
-| Subscription owners group Object ID | [ ] |
+| Subscription privileged-access group Object ID (only for eligible Owner) | [ ] |
 | Network operators group Object ID | [ ] |
 | Workload contributors group Object ID | [ ] |
 | Read-only auditors group Object ID | [ ] |
 
-The two subscription IDs must differ. All five security-group Object IDs must
-be distinct.
+The two subscription IDs must differ. Every supplied security-group Object ID
+must be distinct. Before collecting eligible Owner inputs, read
+[AZURE-RBAC-PIM.md](AZURE-RBAC-PIM.md).
 
 ## 3. Clone and prepare the project
 
@@ -88,6 +89,7 @@ cp parameters/demo.parameters.template.json parameters/demo.parameters.json
 - [ ] Every `REPLACE_WITH_*` value has been replaced.
 - [ ] `denyPolicyEnforcementMode` is `DoNotEnforce`.
 - [ ] `deployRoleAssignments` is `false`.
+- [ ] `deployEligibleOwnerRoleAssignments` is `false`.
 - [ ] `deployEvidenceResources` is `false`.
 - [ ] `namePrefix` is unique and identifies a demo.
 
@@ -147,6 +149,8 @@ and both subscription IDs.
 - [ ] Five policy assignments exist only at the demo root or below.
 - [ ] Deny assignments show `DoNotEnforce`.
 - [ ] No RBAC assignment was created while `deployRoleAssignments=false`.
+- [ ] No Owner eligibility schedule was created while
+      `deployEligibleOwnerRoleAssignments=false`.
 - [ ] No resource group, VNet, or NSG was created while
       `deployEvidenceResources=false`.
 
@@ -156,7 +160,21 @@ Enable one change at a time. Run tests, preflight, and what-if again before each
 deployment.
 
 - [ ] Administrator approved `deployRoleAssignments=true`.
-- [ ] What-if shows exactly seven expected role assignments.
+- [ ] What-if shows exactly five ordinary role assignments and no permanent Owner.
+- [ ] Entra P2 or Entra ID Governance licensing is confirmed for every eligible
+      privileged-group member.
+- [ ] Customer-managed emergency access exists, is tested and monitored, and
+      no emergency account or object ID is stored in this repository.
+- [ ] Owner PIM settings at both subscriptions require approval, MFA,
+      justification, a four-hour activation maximum, and notifications.
+- [ ] The deployment principal has narrowly scoped, time-bound bootstrap access.
+- [ ] `subscriptionPrivilegedAccessGroupObjectId`, eligibility start,
+      finite duration, and assignment justification are populated locally.
+- [ ] Administrator approved `deployEligibleOwnerRoleAssignments=true`.
+- [ ] What-if shows exactly two eligible time-bound Owner schedule requests,
+      both targeting the privileged-access group.
+- [ ] Both PIM activations were tested before any role-assignment restriction
+      policy was enforced.
 - [ ] Administrator approved `deployEvidenceResources=true`.
 - [ ] What-if shows two resource groups, one VNet, and one NSG only.
 - [ ] Policy owners approved changing `denyPolicyEnforcementMode` to `Default`.
@@ -201,6 +219,8 @@ Afterward:
 
 - [ ] Both subscriptions still exist and are enabled.
 - [ ] Both subscriptions are at the approved return scope.
-- [ ] Demo policy and RBAC assignments are gone.
+- [ ] Demo policy and five ordinary RBAC assignments are gone.
+- [ ] Both eligible Owner schedules were removed with separately reviewed PIM
+      `AdminRemove` requests; teardown does not automate this.
 - [ ] The dedicated demo management groups are gone.
 - [ ] The five Microsoft Entra security groups still exist.

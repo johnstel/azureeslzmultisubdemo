@@ -69,6 +69,11 @@ $namePrefix = [string](Get-ParameterValue 'namePrefix')
 $connectivitySubscription = [string](Get-ParameterValue 'connectivitySubscriptionId')
 $workloadSubscription = [string](Get-ParameterValue 'workloadSubscriptionId')
 $deploymentLocation = [string](Get-ParameterValue 'deploymentLocation')
+$eligibleOwnerEnabled = [bool](Get-ParameterValue 'deployEligibleOwnerRoleAssignments')
+$eligibleOwnerGroup = [string](Get-ParameterValue 'subscriptionPrivilegedAccessGroupObjectId')
+$eligibleOwnerStart = [string](Get-ParameterValue 'eligibleOwnerAssignmentStartDateTime')
+$eligibleOwnerDuration = [string](Get-ParameterValue 'eligibleOwnerAssignmentDuration')
+$eligibleOwnerJustification = [string](Get-ParameterValue 'eligibleOwnerAssignmentJustification')
 
 if ($namePrefix -notmatch '^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$') {
     Stop-Preflight 'namePrefix must be 3-24 lowercase letters, numbers, or hyphens, with no leading/trailing hyphen.'
@@ -85,7 +90,6 @@ if ($connectivitySubscription.Equals($workloadSubscription, [System.StringCompar
 
 $groupParameters = @(
     'governanceAdminsGroupObjectId',
-    'subscriptionOwnersGroupObjectId',
     'networkOperatorsGroupObjectId',
     'workloadContributorsGroupObjectId',
     'readOnlyAuditorsGroupObjectId'
@@ -101,6 +105,28 @@ foreach ($groupParameter in $groupParameters) {
         Stop-Preflight "$groupParameter duplicates $($seenGroupIds[$normalizedGroupId]); use five distinct least-privilege groups."
     }
     $seenGroupIds[$normalizedGroupId] = $groupParameter
+}
+
+if ($eligibleOwnerEnabled -or -not [string]::IsNullOrEmpty($eligibleOwnerGroup)) {
+    if (-not (Test-GuidShape $eligibleOwnerGroup)) {
+        Stop-Preflight 'subscriptionPrivilegedAccessGroupObjectId is not a GUID.'
+    }
+    $normalizedEligibleOwnerGroup = $eligibleOwnerGroup.ToLowerInvariant()
+    if ($seenGroupIds.ContainsKey($normalizedEligibleOwnerGroup)) {
+        Stop-Preflight "subscriptionPrivilegedAccessGroupObjectId duplicates $($seenGroupIds[$normalizedEligibleOwnerGroup]); use a distinct privileged-access group."
+    }
+}
+
+if ($eligibleOwnerDuration -notin @('P30D', 'P90D', 'P180D', 'P365D')) {
+    Stop-Preflight 'eligibleOwnerAssignmentDuration must be P30D, P90D, P180D, or P365D.'
+}
+if ($eligibleOwnerEnabled) {
+    if ($eligibleOwnerStart -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$') {
+        Stop-Preflight 'eligibleOwnerAssignmentStartDateTime must be an RFC 3339 UTC timestamp ending in Z.'
+    }
+    if ([string]::IsNullOrWhiteSpace($eligibleOwnerJustification)) {
+        Stop-Preflight 'eligibleOwnerAssignmentJustification must contain a business justification.'
+    }
 }
 
 Write-Host 'Building Bicep locally...'
@@ -153,4 +179,4 @@ Write-Host "  Tenant root MG: $tenantRoot"
 Write-Host "  Connectivity subscription: $connectivitySubscription"
 Write-Host "  Workload subscription: $workloadSubscription"
 Write-Host "  Tenant deployment location: $deploymentLocation"
-Write-Host '  Entra group IDs: GUID format and uniqueness verified (directory group type is not queried).'
+Write-Host '  Entra group IDs: GUID format and uniqueness verified where supplied (directory group type is not queried).'

@@ -29,10 +29,12 @@ archetype="$(value workloadArchetype)"
 connectivity_subscription="$(value connectivitySubscriptionId)"
 workload_subscription="$(value workloadSubscriptionId)"
 governance_group="$(value governanceAdminsGroupObjectId)"
-owners_group="$(value subscriptionOwnersGroupObjectId)"
 network_group="$(value networkOperatorsGroupObjectId)"
 workload_group="$(value workloadContributorsGroupObjectId)"
 auditors_group="$(value readOnlyAuditorsGroupObjectId)"
+# PIM eligibility removal requires a separately reviewed AdminRemove request and
+# is intentionally never inferred or automated by this teardown script.
+eligible_owner_enabled="$(jq -r '.parameters.deployEligibleOwnerRoleAssignments.value // false' "${PARAMETER_FILE}")"
 # Optional: defaults to false when absent so older parameter files remain safe to tear down.
 central_log_analytics_enabled="$(jq -r '.parameters.deployCentralLogAnalytics.value // false' "${PARAMETER_FILE}")"
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
@@ -119,7 +121,7 @@ print_plan() {
     printf '\nNOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group %s in subscription %s is protected and will never be deleted by this script, even if its name collides with a group above.\n' \
       "${existing_workspace_resource_group}" "${existing_workspace_subscription}"
   fi
-  printf '  %d. Delete only the seven demo role assignments for the five groups at their documented scopes.\n' "${step_number}"
+  printf '  %d. Delete only the five permanent lower-privilege demo role assignments for the four operator/auditor groups at their documented scopes.\n' "${step_number}"
   step_number=$((step_number + 1))
   printf '  %d. Delete demo policy assignments and the five custom policy definitions.\n' "${step_number}"
   step_number=$((step_number + 1))
@@ -140,6 +142,9 @@ print_plan() {
   else
     printf '  %d. Delete management groups %s-connectivity, %s-platform, %s-%s, %s-landingzones, then %s.\n' \
       "${step_number}" "${prefix}" "${prefix}" "${prefix}" "${archetype}" "${prefix}" "${prefix}"
+  fi
+  if [[ "${eligible_owner_enabled}" == 'true' ]]; then
+    printf '\nNOTE: The two eligible Owner schedules are not removed automatically. Submit separately reviewed PIM AdminRemove requests for the group at both subscriptions and verify removal in PIM.\n'
   fi
   printf '\nSubscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.\n'
 }
@@ -198,9 +203,7 @@ fi
 delete_role_mapping "${governance_group}" 'Management Group Contributor' "${demo_root_scope}"
 delete_role_mapping "${governance_group}" 'Resource Policy Contributor' "${demo_root_scope}"
 delete_role_mapping "${auditors_group}" 'Reader' "${demo_root_scope}"
-delete_role_mapping "${owners_group}" 'Owner' "${connectivity_scope}"
 delete_role_mapping "${network_group}" 'Network Contributor' "${connectivity_scope}"
-delete_role_mapping "${owners_group}" 'Owner' "${subscription_workload_scope}"
 delete_role_mapping "${workload_group}" 'Contributor' "${subscription_workload_scope}"
 
 delete_policy_assignment 'demo-require-workload-rg-tags' "${workload_scope}"
@@ -236,4 +239,4 @@ fi
 az account management-group delete --name "${prefix}-landingzones"
 az account management-group delete --name "${prefix}"
 
-printf '\nTeardown commands completed. Verify the hierarchy and both subscriptions in the Azure portal.\n'
+printf '\nTeardown commands completed. Verify the hierarchy, both subscriptions, and any separately managed PIM eligibility schedules in the Azure portal.\n'

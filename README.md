@@ -69,32 +69,45 @@ policy impact.
 
 ## Least-privilege RBAC model
 
-Bicep does not create Microsoft Entra identities. Supply the object IDs of five
-existing **security groups**:
+Bicep does not create Microsoft Entra identities. Supply the object IDs of four
+baseline **security groups** and, only when PIM-ready Owner is enabled, one
+separate privileged-access security group:
 
 | Group parameter | Assignment |
 |---|---|
 | `governanceAdminsGroupObjectId` | Management Group Contributor and Resource Policy Contributor at the demo root |
-| `subscriptionOwnersGroupObjectId` | Owner on each of the two sandbox subscriptions |
+| `subscriptionPrivilegedAccessGroupObjectId` | Time-bound eligible Owner on each sandbox subscription; separately opt-in and never a permanent role assignment |
 | `networkOperatorsGroupObjectId` | Network Contributor on the connectivity subscription |
 | `workloadContributorsGroupObjectId` | Contributor on the workload subscription |
 | `readOnlyAuditorsGroupObjectId` | Reader at the demo root |
 
-RBAC is disabled by default with `deployRoleAssignments=false`. The deployment
-principal needs enough access to create these assignments when it is enabled;
-the governance group assignments do not bootstrap the deployment principal.
+Ordinary RBAC is disabled by default with `deployRoleAssignments=false`.
+Eligible Owner is independently disabled with
+`deployEligibleOwnerRoleAssignments=false` and requires a group, UTC start,
+finite duration, and justification. Enabling ordinary RBAC does not grant
+Owner. The deployment principal needs enough existing access to create either
+kind of assignment; the template never bootstraps its own authority.
+
+The Bicep creates only the eligible schedule. Approval, MFA, activation
+justification, four-hour activation duration, and notification expectations
+remain a static report-only contract in
+`identity/azure-rbac/owner-activation-requirements.template.json`; configure
+and verify those PIM role settings separately at both subscriptions before
+opting in. See [PIM-ready Azure RBAC](docs/AZURE-RBAC-PIM.md).
 
 ## Entra Conditional Access and PIM (identity governance, not Azure Policy)
 
 Azure Policy cannot require MFA, block legacy authentication, or govern
-privileged-role activation — those are Microsoft Entra ID/Microsoft Graph
-concepts. `identity/` contains report-only Conditional Access policy inputs
-and eligible-only Privileged Identity Management (PIM) activation-policy
-inputs for later, separately reviewed use. This repository never calls
+privileged-role activation. `identity/` contains report-only Conditional Access
+and PIM activation requirements for later, separately reviewed use. The
+directory-role artifacts use Microsoft Graph concepts; the Azure RBAC Owner
+requirements govern the separately opt-in ARM eligibility schedule. This
+repository never calls
 Microsoft Graph, never modifies Entra ID, and never enables Conditional
-Access; every artifact defaults to report-only/eligible and requires a
-real emergency-access (break-glass) exclusion before it could ever be
-applied. See the [Entra Conditional Access and PIM runbook](docs/ENTRA-CONDITIONAL-ACCESS-PIM.md)
+Access. Every artifact defaults to report-only/eligible; directory controls
+require a real emergency-access exclusion, while the Azure RBAC contract keeps
+emergency access entirely customer-managed and outside the repository. See the
+[Entra Conditional Access and PIM runbook](docs/ENTRA-CONDITIONAL-ACCESS-PIM.md)
 for licensing, required directory roles, workload-identity guidance, rollout
 order, monitoring, and rollback. Validate these artifacts locally with:
 
@@ -338,7 +351,7 @@ The script:
 2. deletes the demo-created monitoring resource group (`rg-<namePrefix>-monitoring`)
    and waits for completion, but only when `deployCentralLogAnalytics=true`
    **and** no existing workspace ID was supplied;
-3. deletes the seven demo role assignments for the five groups by principal and scope;
+3. deletes the five ordinary demo role assignments for the four baseline groups by principal and scope; eligible Owner schedules require separately reviewed PIM `AdminRemove` requests and are not automatically removed;
 4. removes policy assignments, then policy definitions;
 5. moves both subscriptions back to the supplied tenant-root management group;
 6. deletes leaf management groups and then the dedicated demo root.
@@ -357,7 +370,10 @@ docs/
   BEGINNERS-GUIDE.md
   FIRST-RUN-CHECKLIST.md
   ENTRA-CONDITIONAL-ACCESS-PIM.md
+  AZURE-RBAC-PIM.md
 identity/
+  azure-rbac/
+    owner-activation-requirements.template.json
   conditional-access/
     ca-privileged-role-mfa.template.json
     ca-azure-mgmt-mfa.template.json
@@ -389,11 +405,13 @@ scripts/
   deploy.ps1
   teardown.ps1
   validate-identity-artifacts.ps1
+  validate-rbac-artifacts.ps1
   preflight.sh
   what-if.sh
   deploy.sh
   teardown.sh
   validate-identity-artifacts.sh
+  validate-rbac-artifacts.sh
 tests/
   test.ps1
   test.sh
@@ -403,10 +421,14 @@ tests/
 
 - No policy is assigned at the tenant root.
 - No subscription or Entra identity is created.
-- No live command runs from tests or preflight.
+- Tests and static validators are offline; preflight performs read-only Azure
+  checks and never changes Azure or Entra.
 - Deny assignments are non-enforcing by default.
-- RBAC and evidence resources are opt-in.
+- Ordinary RBAC, eligible Owner schedules, and evidence resources are
+  independently opt-in.
 - Deployment and teardown require exact environment confirmations.
 - No Conditional Access policy or PIM role setting is applied to any
   tenant; `identity/` templates are static, report-only/eligible-only
   inputs and always require replacing an emergency-access placeholder.
+- No permanent Owner assignment is created; emergency access remains an
+  explicitly documented, customer-managed external responsibility.

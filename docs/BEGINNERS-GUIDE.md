@@ -357,17 +357,19 @@ The first use of management groups in a tenant can require Azure to initialize
 the service, which may take several minutes. See Microsoft's
 [management-group quickstart](https://learn.microsoft.com/azure/governance/management-groups/create-management-group-portal).
 
-## Step 6: Prepare five Microsoft Entra security groups
+## Step 6: Prepare Microsoft Entra security groups
 
 RBAC answers: "Who is allowed to perform which actions, and where?" This project
 assigns Azure roles to groups rather than individual people so membership can
 be managed centrally.
 
-Use five distinct security groups. Suggested names are:
+Use four baseline groups. Add the fifth privileged-access group only if the
+separately controlled PIM-ready Owner phase will be enabled. Suggested names
+are:
 
 ```text
 AZ-ESLZ-Demo-Governance-Admins
-AZ-ESLZ-Demo-Subscription-Owners
+AZ-ESLZ-Demo-Subscription-Privileged-Access
 AZ-ESLZ-Demo-Network-Operators
 AZ-ESLZ-Demo-Workload-Contributors
 AZ-ESLZ-Demo-Read-Only-Auditors
@@ -397,30 +399,38 @@ To copy a group Object ID:
 3. Copy **Object ID** from Overview or Properties.
 
 Do not copy a group owner's user ID, the Tenant ID, or an application/client
-ID. The preflight script checks that all five values look like GUIDs and that
-they are distinct. It cannot verify group type without additional directory
-permissions.
+ID. The preflight script checks that every supplied value looks like a GUID and
+that the values are distinct. It cannot verify group type without additional
+directory permissions.
 
 Microsoft documents group management and the immutable Object ID in
 [How to manage groups](https://learn.microsoft.com/entra/fundamentals/how-to-manage-groups).
 
 ### What access each group receives
 
-RBAC creation is disabled during the safest first deployment. When you later
-set `deployRoleAssignments` to `true`, the project assigns:
+Ordinary RBAC creation is disabled during the safest first deployment. When
+you later set `deployRoleAssignments` to `true`, the project assigns:
 
 | Group | Azure access | Scope |
 |---|---|---|
 | Governance admins | Management Group Contributor | Demo root and descendants |
 | Governance admins | Resource Policy Contributor | Demo root and descendants |
-| Subscription owners | Owner | Each sandbox subscription |
 | Network operators | Network Contributor | Connectivity subscription |
 | Workload contributors | Contributor | Workload subscription |
 | Read-only auditors | Reader | Demo root and descendants |
 
-The five groups produce seven role assignments because governance admins
-receive two roles and subscription owners receive one assignment in each
-subscription.
+The four baseline groups produce five ordinary role assignments because
+governance admins receive two roles. No ordinary or permanent Owner assignment
+is created.
+
+Eligible Owner is an independent, PIM-ready phase controlled by
+`deployEligibleOwnerRoleAssignments`. When enabled after all prerequisites are
+met, the privileged-access group receives one **time-bound eligible** Owner
+schedule at each sandbox subscription. It must activate through separately
+configured PIM role settings; the repository's mandatory baseline requires
+approval, MFA, business justification, a four-hour maximum activation, and
+notifications. Read [PIM-ready Azure RBAC](AZURE-RBAC-PIM.md) before enabling
+this phase.
 
 An Azure role assignment consists of a principal, role, and scope. See
 [Understand Azure role assignments](https://learn.microsoft.com/azure/role-based-access-control/role-assignments).
@@ -439,6 +449,8 @@ Ask your Azure administrator to confirm that your account has permission to:
 - create tenant-, management-group-, subscription-, and resource-group-scope
   deployments;
 - assign Azure roles when `deployRoleAssignments` is `true`;
+- create Azure role eligibility schedule requests when
+  `deployEligibleOwnerRoleAssignments` is `true`;
 - create resource groups and networking resources when
   `deployEvidenceResources` is `true`.
 
@@ -483,12 +495,16 @@ Open `parameters/demo.parameters.json` in a text editor. Replace all
 | `connectivitySubscriptionId` | Existing connectivity sandbox subscription GUID |
 | `workloadSubscriptionId` | Existing workload sandbox subscription GUID |
 | `governanceAdminsGroupObjectId` | Governance security-group Object ID |
-| `subscriptionOwnersGroupObjectId` | Subscription owners security-group Object ID |
+| `subscriptionPrivilegedAccessGroupObjectId` | Existing security-group Object ID for separately opt-in, time-bound eligible Owner; leave empty if that phase is not used |
 | `networkOperatorsGroupObjectId` | Network operators security-group Object ID |
 | `workloadContributorsGroupObjectId` | Workload contributors security-group Object ID |
 | `readOnlyAuditorsGroupObjectId` | Auditors security-group Object ID |
 | `denyPolicyEnforcementMode` | Keep `DoNotEnforce` for the first deployment |
 | `deployRoleAssignments` | Keep `false` for the first deployment |
+| `deployEligibleOwnerRoleAssignments` | Keep `false`; enable only after completing the PIM-ready Azure RBAC runbook |
+| `eligibleOwnerAssignmentStartDateTime` | RFC 3339 UTC start such as `2026-09-15T13:00:00Z`; required only for eligible Owner |
+| `eligibleOwnerAssignmentDuration` | Finite eligibility window: `P30D`, `P90D`, `P180D`, or `P365D` |
+| `eligibleOwnerAssignmentJustification` | Approved business reason for creating eligibility; do not include secrets |
 | `deployEvidenceResources` | Keep `false` for the first deployment |
 | `evidenceLocation` | Approved region for the optional VNet/NSG, such as `eastus2` |
 
@@ -501,6 +517,9 @@ Keep these exact values initially:
   "value": "DoNotEnforce"
 },
 "deployRoleAssignments": {
+  "value": false
+},
+"deployEligibleOwnerRoleAssignments": {
   "value": false
 },
 "deployEvidenceResources": {
@@ -765,9 +784,10 @@ List policy assignments at the demo root:
 az policy assignment list --scope /providers/Microsoft.Management/managementGroups/eslz-demo --output table
 ```
 
-At this stage, `deployRoleAssignments=false` and
-`deployEvidenceResources=false`, so there should be no demo role assignments or
-evidence resource groups yet.
+At this stage, `deployRoleAssignments=false`,
+`deployEligibleOwnerRoleAssignments=false`, and
+`deployEvidenceResources=false`, so there should be no demo role assignments,
+Owner eligibility schedules, or evidence resource groups yet.
 
 ## Step 15: Optionally enable RBAC
 
@@ -797,8 +817,9 @@ macOS or Linux:
 ./scripts/what-if.sh parameters/demo.parameters.json
 ```
 
-What-if should show seven role assignments for the five security groups. If the
-principal IDs or scopes differ from your expectation, stop.
+What-if should show five ordinary role assignments for the four baseline
+security groups and no Owner role assignment. If the principal IDs or scopes
+differ from your expectation, stop.
 
 Then run the guarded deployment again:
 
@@ -819,6 +840,37 @@ export ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"
 Deploying the same Bicep again is expected. Infrastructure as Code is
 declarative: Azure compares the desired configuration with current state and
 only applies differences.
+
+### Separately enable PIM-ready eligible Owner
+
+Do not combine this with the first ordinary RBAC change. Complete every
+prerequisite and bootstrap step in
+[PIM-ready Azure RBAC](AZURE-RBAC-PIM.md), including licensing, existing-group
+verification, emergency-access testing, Owner activation settings at both
+subscriptions, and narrowly scoped deployment-principal access.
+
+Populate the privileged group, start date/time, finite duration, and
+justification locally. Then run the offline validator:
+
+```powershell
+.\scripts\validate-rbac-artifacts.ps1
+```
+
+```bash
+./scripts/validate-rbac-artifacts.sh
+```
+
+Keep `deployEligibleOwnerRoleAssignments=false` through the first what-if.
+Only after an independent review should you set it to `true` and rerun tests,
+preflight, and what-if. The preview must show exactly two
+`roleEligibilityScheduleRequests`, both for eligible Owner on the intended
+subscriptions and both wired to the privileged-access group. It must not show
+an Owner `roleAssignments` or `roleAssignmentScheduleRequests` resource.
+
+After the guarded deployment, verify both entries are **Eligible time-bound**,
+test approval and activation, inspect notifications and PIM audit history, and
+remove temporary bootstrap access. Only then may a separately managed policy
+that restricts PIM role-assignment creation be enforced.
 
 ## Step 16: Optionally create evidence resources
 
@@ -907,12 +959,16 @@ This only prints the plan. It does not change Azure.
 The plan:
 
 1. deletes the optional evidence resource groups;
-2. removes the seven demo role assignments;
+2. removes the five ordinary demo role assignments;
 3. removes the five policy assignments and definitions;
 4. moves both subscriptions back to the supplied tenant root;
 5. deletes the leaf management groups, then the demo root.
 
-It never deletes subscriptions or Microsoft Entra groups.
+It never deletes subscriptions or Microsoft Entra groups. It also never
+discovers or automatically removes PIM eligibility. If eligible Owner was
+enabled, submit separately reviewed `AdminRemove` requests for both schedules
+and verify removal in PIM before considering privileged-access teardown
+complete.
 
 Before execution, verify that moving the subscriptions to the tenant root is
 acceptable. If the subscriptions originally lived under a different management
