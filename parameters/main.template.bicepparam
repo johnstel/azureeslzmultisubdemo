@@ -13,6 +13,43 @@ param networkOperatorsGroupObjectId = 'REPLACE_WITH_NETWORK_OPERATORS_GROUP_OBJE
 param workloadContributorsGroupObjectId = 'REPLACE_WITH_WORKLOAD_CONTRIBUTORS_GROUP_OBJECT_GUID'
 param readOnlyAuditorsGroupObjectId = 'REPLACE_WITH_READ_ONLY_AUDITORS_GROUP_OBJECT_GUID'
 param denyPolicyEnforcementMode = 'DoNotEnforce'
+param customerAllowedLocations = [
+  'eastus'
+  'eastus2'
+]
+param customerAllowedResourceTypes = [
+  'Microsoft.Authorization/policyAssignments'
+  'Microsoft.Authorization/roleAssignments'
+  'Microsoft.Compute/disks'
+  'Microsoft.Compute/virtualMachines'
+  'Microsoft.Compute/virtualMachines/extensions'
+  'Microsoft.Insights/diagnosticSettings'
+  'Microsoft.ManagedIdentity/userAssignedIdentities'
+  'Microsoft.Network/networkSecurityGroups'
+  'Microsoft.Network/privateDnsZones'
+  'Microsoft.Network/privateDnsZones/virtualNetworkLinks'
+  'Microsoft.Network/privateEndpoints'
+  'Microsoft.Network/privateEndpoints/privateDnsZoneGroups'
+  'Microsoft.Network/virtualNetworks'
+  'Microsoft.Network/virtualNetworks/subnets'
+  'Microsoft.OperationalInsights/workspaces'
+  'Microsoft.OperationsManagement/solutions'
+  'Microsoft.PolicyInsights/remediations'
+  'Microsoft.RecoveryServices/vaults'
+  'Microsoft.RecoveryServices/vaults/backupFabrics'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems'
+  'Microsoft.RecoveryServices/vaults/backupPolicies'
+  'Microsoft.Resources/deployments'
+  'Microsoft.Resources/resourceGroups'
+]
+param customerAllowedVmSkus = [
+  'Standard_B1ls'
+  'Standard_B1s'
+  'Standard_B1ms'
+  'Standard_B2s'
+  'Standard_B2ms'
+]
 param deployRoleAssignments = false
 param deployEvidenceResources = false
 param evidenceLocation = 'eastus2'

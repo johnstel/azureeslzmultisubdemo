@@ -87,6 +87,13 @@ try {
     if ($parameterTemplate.parameters.denyPolicyEnforcementMode.value -ne 'DoNotEnforce') {
         Stop-Test 'denyPolicyEnforcementMode must default to DoNotEnforce.'
     }
+    if (Compare-Object @('eastus', 'eastus2') @($parameterTemplate.parameters.customerAllowedLocations.value)) {
+        Stop-Test 'customerAllowedLocations must default to eastus and eastus2.'
+    }
+    if ('Microsoft.PolicyInsights/remediations' -notin @($parameterTemplate.parameters.customerAllowedResourceTypes.value) -or
+        @($parameterTemplate.parameters.customerAllowedVmSkus.value).Count -eq 0) {
+        Stop-Test 'Customer resource-type and VM SKU allowlists must remain safe and populated.'
+    }
     & az bicep build-params `
         --file (Join-Path $ProjectDir 'parameters/main.template.bicepparam') `
         --outfile (Join-Path $TempDir 'main.parameters.json')

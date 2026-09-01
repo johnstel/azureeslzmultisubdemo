@@ -45,7 +45,10 @@ printf '3/23 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
-  .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce"
+  .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
+  .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
+  (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
+  (.parameters.customerAllowedVmSkus.value | length) > 0
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
