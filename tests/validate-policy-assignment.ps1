@@ -146,6 +146,88 @@ function Test-ResourceWithoutLocation {
     return $values.Count -eq 1 -and $values[0] -eq 'subscriptionLevelResources'
 }
 
+function Test-TrimmedNonEmpty {
+    param([string]$Value)
+    return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -ceq $Value.Trim()
+}
+
+function Test-CanonicalRfc3339UtcTimestamp {
+    param([string]$Value)
+    if ($Value -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$') {
+        return $false
+    }
+    $parsed = [System.DateTimeOffset]::MinValue
+    $parsedOk = [System.DateTimeOffset]::TryParseExact(
+        $Value,
+        'yyyy-MM-ddTHH:mm:ssZ',
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$parsed
+    )
+    return $parsedOk -and $parsed.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ') -ceq $Value
+}
+
+function Test-PolicyAssignmentScopeContract {
+    param(
+        [pscustomobject]$Case
+    )
+    if ([string]::IsNullOrWhiteSpace($Case.policyAssignmentId) -or
+        $Case.policyAssignmentId -cne $Case.policyAssignmentId.Trim() -or
+        -not $Case.policyAssignmentId.StartsWith('/') -or
+        $Case.policyAssignmentId.EndsWith('/')) {
+        return $false
+    }
+    $segments = $Case.policyAssignmentId.Split('/')
+    if ($segments.Count -lt 2 -or ($segments[1..($segments.Count - 1)] | Where-Object { $_ -eq '' -or $_ -cne $_.Trim() })) {
+        return $false
+    }
+    switch ($Case.scopeType) {
+        'managementGroup' {
+            return $Case.policyAssignmentId -imatch '^/providers/Microsoft\.Management/managementGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$' -and
+                $segments[4].ToLowerInvariant() -ceq ([string]$Case.managementGroupName).ToLowerInvariant()
+        }
+        'subscription' {
+            $subscriptionGuid = [guid]::Empty
+            return [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -and
+                $Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/providers/Microsoft\.Authorization/policyAssignments/[^/]+$' -and
+                $segments[2].ToLowerInvariant() -ceq ([string]$Case.subscriptionId).ToLowerInvariant()
+        }
+        'resourceGroup' {
+            $subscriptionGuid = [guid]::Empty
+            return [guid]::TryParse([string]$Case.subscriptionId, [ref]$subscriptionGuid) -and
+                (Test-TrimmedNonEmpty -Value ([string]$Case.resourceGroupName)) -and
+                $Case.policyAssignmentId -imatch '^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\.Authorization/policyAssignments/[^/]+$' -and
+                $segments[2].ToLowerInvariant() -ceq ([string]$Case.subscriptionId).ToLowerInvariant() -and
+                $segments[4].ToLowerInvariant() -ceq ([string]$Case.resourceGroupName).ToLowerInvariant()
+        }
+        default {
+            return $false
+        }
+    }
+}
+
+function Test-PolicyDefinitionReferenceContract {
+    param(
+        [pscustomobject]$Case
+    )
+    $allowed = @($Case.allowed | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    $providedTrimmed = @($Case.provided | ForEach-Object { ([string]$_).Trim() })
+    $provided = @($providedTrimmed | ForEach-Object { $_.ToLowerInvariant() })
+    if ($allowed.Count -ne @($allowed | Select-Object -Unique).Count -or
+        $provided.Count -ne @($provided | Select-Object -Unique).Count -or
+        @($allowed | Where-Object { $_ -eq '' }).Count -gt 0 -or
+        @($providedTrimmed | Where-Object { $_ -eq '' }).Count -gt 0 -or
+        ($provided.Count -gt 0 -and $allowed.Count -eq 0)) {
+        return $false
+    }
+    foreach ($referenceId in $provided) {
+        if ($referenceId -notin $allowed) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Assert-BicepBuildFails {
     param(
         [string]$Fixture,
@@ -224,6 +306,28 @@ try {
     foreach ($case in $validationCases.resourceWithoutLocationSelectors) {
         if ((Test-ResourceWithoutLocation -Selector $case.selector) -ne [bool]$case.valid) {
             Stop-Test 'resourceWithoutLocation validation produced the wrong result for a negative contract case.'
+        }
+    }
+
+    $exemptionValidationCases = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/policy-exemption-validation-cases.json') -Raw | ConvertFrom-Json -DateKind String
+    foreach ($case in $exemptionValidationCases.trimmedRequiredStrings) {
+        if ((Test-TrimmedNonEmpty -Value $case.value) -ne [bool]$case.valid) {
+            Stop-Test "Trimmed required-string validation produced the wrong result for '$($case.value)'."
+        }
+    }
+    foreach ($case in $exemptionValidationCases.rfc3339UtcTimestamps) {
+        if ((Test-CanonicalRfc3339UtcTimestamp -Value $case.value) -ne [bool]$case.valid) {
+            Stop-Test "RFC3339 UTC validation produced the wrong result for '$($case.value)'."
+        }
+    }
+    foreach ($case in $exemptionValidationCases.policyAssignmentScopeContracts) {
+        if ((Test-PolicyAssignmentScopeContract -Case $case) -ne [bool]$case.valid) {
+            Stop-Test "policyAssignmentId scope/ancestry validation produced the wrong result for '$($case.policyAssignmentId)'."
+        }
+    }
+    foreach ($case in $exemptionValidationCases.policyDefinitionReferenceContracts) {
+        if ((Test-PolicyDefinitionReferenceContract -Case $case) -ne [bool]$case.valid) {
+            Stop-Test 'policyDefinitionReferenceIds allowlist validation produced the wrong result for a contract case.'
         }
     }
 
@@ -547,11 +651,12 @@ try {
         -Message 'Subscription exemption example must include required accountability and expiry properties.'
     Assert-ExactNames `
         -Actual @($resourceGroupExemption.properties.parameters.PSObject.Properties.Name) `
-        -Expected @('approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'governanceOwner', 'justification', 'owner', 'policyAssignmentId', 'policyDefinitionReferenceIds', 'resourceGroupName', 'reviewedOn', 'source', 'subscriptionId', 'ticketReference') `
+        -Expected @('allowedPolicyDefinitionReferenceIds', 'approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'governanceOwner', 'justification', 'owner', 'policyAssignmentId', 'policyDefinitionReferenceIds', 'resourceGroupName', 'reviewedOn', 'source', 'subscriptionId', 'ticketReference') `
         -Message 'Resource-group exemption example must include initiative reference IDs and governance metadata overrides.'
 
     if ($managementGroupExemption.properties.parameters.exemptionCategory.value -ne 'Waiver' -or
         $subscriptionExemption.properties.parameters.exemptionCategory.value -ne 'Mitigated' -or
+        (Compare-Object @($resourceGroupExemption.properties.parameters.allowedPolicyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg')) -or
         (Compare-Object @($resourceGroupExemption.properties.parameters.policyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg'))) {
         Stop-Test 'Exemption categories or policyDefinitionReferenceIds are invalid.'
     }
@@ -581,6 +686,7 @@ try {
         $exemptionModuleTemplate.parameters.ticketReference.minLength -ne 1 -or
         $exemptionModuleTemplate.parameters.subscriptionId.defaultValue -ne '' -or
         $exemptionModuleTemplate.parameters.resourceGroupName.defaultValue -ne '' -or
+        @($exemptionModuleTemplate.parameters.allowedPolicyDefinitionReferenceIds.defaultValue).Count -ne 0 -or
         $exemptionModuleTemplate.parameters.source.defaultValue -ne 'Bicep' -or
         $exemptionModuleTemplate.parameters.governanceOwner.defaultValue -ne 'eslz-v2-governance') {
         Stop-Test 'Policy exemption parameter defaults or required-field constraints changed.'
@@ -590,13 +696,20 @@ try {
         -Expected @('Mitigated', 'Waiver') `
         -Message 'Policy exemption category allowlist is incomplete.'
     foreach ($validation in @{
-        validatedPolicyAssignmentId = "fail('policyAssignmentId must be an exact Azure Policy assignment resource ID."
-        validatedExpiresOn = "fail('expiresOn must be a non-empty UTC timestamp"
+        validatedDisplayName = "fail('displayName must be non-empty and cannot include leading or trailing whitespace."
+        validatedPolicyAssignmentId = "fail('policyAssignmentId must be an exact Azure Policy assignment resource ID without trailing separators or whitespace."
+        validatedScopedPolicyAssignmentId = "fail('resourceGroup exemptions require policyAssignmentId at the same subscription and resource-group scope."
+        validatedExpiresOn = "fail('expiresOn must be a canonical RFC3339 UTC timestamp with a valid calendar date"
         validatedScopeType = "fail('resourceGroup exemptions require valid subscriptionId and resourceGroupName"
-        validatedPolicyDefinitionReferenceIds = "fail('policyDefinitionReferenceIds cannot include empty values."
+        validatedPolicyDefinitionReferenceIds = "fail('policyDefinitionReferenceIds must be present in allowedPolicyDefinitionReferenceIds."
     }.GetEnumerator()) {
         if (-not ([string]$exemptionModuleTemplate.variables.($validation.Key)).Contains($validation.Value)) {
             Stop-Test "Compiled exemption validation missing from $($validation.Key)."
+        }
+    }
+    foreach ($deploymentNameVariable in @('managementGroupDeploymentName', 'subscriptionDeploymentName', 'resourceGroupDeploymentName')) {
+        if (-not ([string]$exemptionModuleTemplate.variables.$deploymentNameVariable).Contains('uniqueString(')) {
+            Stop-Test "Nested exemption deployment variable $deploymentNameVariable must include deterministic uniqueString entropy."
         }
     }
 

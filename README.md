@@ -116,7 +116,12 @@ display name, description, exemption category (`Waiver` or `Mitigated`),
 accountable owner, justification, expiry, and ticket/evidence reference.
 Metadata always records source, approver, created/reviewed UTC dates, and v2
 governance ownership. Initiative-specific exemptions can optionally set
-`policyDefinitionReferenceIds`.
+`policyDefinitionReferenceIds` and must provide an explicit
+`allowedPolicyDefinitionReferenceIds` allowlist when doing so.
+
+The module enforces canonical RFC3339 UTC timestamp format and valid calendar
+dates. Approval workflows and operator preflight are responsible for ensuring
+the expiry is in the future at execution time.
 
 Use `Mitigated` when compensating controls are already in place, and `Waiver`
 when accepting temporary risk with explicit sign-off. Do not use exemptions as

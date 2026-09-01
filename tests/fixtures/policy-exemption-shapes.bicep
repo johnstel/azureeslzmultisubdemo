@@ -55,6 +55,10 @@ module resourceGroupExemption '../../modules/policy-exemption.bicep' = {
     justification: 'Exception is needed while the approved replacement service is onboarded.'
     expiresOn: '2026-10-31T23:59:59Z'
     ticketReference: 'TASK-3003'
+    allowedPolicyDefinitionReferenceIds: [
+      'public-management-ingress'
+      'require-subnet-nsg'
+    ]
     policyDefinitionReferenceIds: [
       'public-management-ingress'
       'require-subnet-nsg'

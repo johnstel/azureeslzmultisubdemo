@@ -109,6 +109,71 @@ jq -e '
   exit 1
 }
 
+exemption_validation_cases="${SCRIPT_DIR}/fixtures/policy-exemption-validation-cases.json"
+jq -e '
+  def is_trimmed_non_empty:
+    . as $value
+    | ($value | type) == "string"
+      and ($value != "")
+      and ($value == ($value | gsub("^\\s+|\\s+$"; "")));
+  def is_rfc3339_utc:
+    . as $value
+    | ($value | type) == "string"
+      and ($value | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+      and (($value[0:4] | tonumber) as $year
+        | ($value[5:7] | tonumber) as $month
+        | ($value[8:10] | tonumber) as $day
+        | ($value[11:13] | tonumber) as $hour
+        | ($value[14:16] | tonumber) as $minute
+        | ($value[17:19] | tonumber) as $second
+        | ($month >= 1 and $month <= 12)
+          and ($day >= 1 and $day <= (if $month == 2 then (if (($year % 4 == 0 and $year % 100 != 0) or ($year % 400 == 0)) then 29 else 28 end) elif ($month == 4 or $month == 6 or $month == 9 or $month == 11) then 30 else 31 end))
+          and ($hour >= 0 and $hour <= 23)
+          and ($minute >= 0 and $minute <= 59)
+          and ($second >= 0 and $second <= 59));
+  def is_guid:
+    test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"; "i");
+  def is_valid_resource_id:
+    startswith("/")
+      and (endswith("/") | not)
+      and (split("/")[1:] | all(.[]; length > 0 and . == (gsub("^\\s+|\\s+$"; ""))));
+  def valid_policy_assignment_scope_contract:
+    (.policyAssignmentId | is_valid_resource_id)
+      and (
+        if .scopeType == "managementGroup" then
+          (.policyAssignmentId | test("^/providers/Microsoft\\.Management/managementGroups/[^/]+/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i"))
+          and ((.policyAssignmentId | split("/")[4] | ascii_downcase) == (.managementGroupName | ascii_downcase))
+        elif .scopeType == "subscription" then
+          (.subscriptionId | is_guid)
+          and (.policyAssignmentId | test("^/subscriptions/[0-9a-f-]{36}/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i"))
+          and ((.policyAssignmentId | split("/")[2] | ascii_downcase) == (.subscriptionId | ascii_downcase))
+        else
+          (.subscriptionId | is_guid)
+          and (.resourceGroupName | is_trimmed_non_empty)
+          and (.policyAssignmentId | test("^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\\.Authorization/policyAssignments/[^/]+$"; "i"))
+          and ((.policyAssignmentId | split("/")[2] | ascii_downcase) == (.subscriptionId | ascii_downcase))
+          and ((.policyAssignmentId | split("/")[4] | ascii_downcase) == (.resourceGroupName | ascii_downcase))
+        end
+      );
+  def valid_reference_contract:
+    [.allowed[] | ascii_downcase | gsub("^\\s+|\\s+$"; "")] as $allowed
+    | [.provided[] | gsub("^\\s+|\\s+$"; "")] as $provided_trimmed
+    | [$provided_trimmed[] | ascii_downcase] as $provided
+    | (($allowed | all(. != "")) and (($allowed | unique | length) == ($allowed | length)))
+      and (($provided_trimmed | all(. != "")))
+      and (($provided | unique | length) == ($provided | length))
+      and ($provided | length == 0 or ($allowed | length > 0))
+      and (([$provided[] as $providedReferenceId | select(($allowed | index($providedReferenceId)) == null)] | length) == 0);
+  . as $cases
+  | all($cases.trimmedRequiredStrings[]; ((.value | is_trimmed_non_empty) == .valid))
+    and all($cases.rfc3339UtcTimestamps[]; ((.value | is_rfc3339_utc) == .valid))
+    and all($cases.policyAssignmentScopeContracts[]; (valid_policy_assignment_scope_contract == .valid))
+    and all($cases.policyDefinitionReferenceContracts[]; (valid_reference_contract == .valid))
+' "${exemption_validation_cases}" >/dev/null || {
+  printf 'ERROR: Policy exemption string/timestamp validation vectors did not produce expected results.\n' >&2
+  exit 1
+}
+
 jq -e '
   . as $root
   | def deployments: [$root | .. | objects | select(.type? == "Microsoft.Resources/deployments")];
@@ -367,6 +432,7 @@ jq -e '
       "ticketReference"
     ])
     and (($rg.properties.parameters | keys | sort) == [
+      "allowedPolicyDefinitionReferenceIds",
       "approver",
       "createdOn",
       "description",
@@ -388,6 +454,10 @@ jq -e '
     ])
     and $mg.properties.parameters.exemptionCategory.value == "Waiver"
     and $sub.properties.parameters.exemptionCategory.value == "Mitigated"
+    and $rg.properties.parameters.allowedPolicyDefinitionReferenceIds.value == [
+      "public-management-ingress",
+      "require-subnet-nsg"
+    ]
     and $rg.properties.parameters.policyDefinitionReferenceIds.value == [
       "public-management-ingress",
       "require-subnet-nsg"
@@ -402,6 +472,9 @@ jq -e '
     and ($mgResource.properties | contains("ticketReference"))
     and ($mgResource.properties | contains("governanceVersion"))
     and ($mgResource.properties | contains("policyDefinitionReferenceIds"))
+    and ($module.variables.managementGroupDeploymentName | contains("uniqueString("))
+    and ($module.variables.subscriptionDeploymentName | contains("uniqueString("))
+    and ($module.variables.resourceGroupDeploymentName | contains("uniqueString("))
     and $module.parameters.owner.minLength == 1
     and $module.parameters.expiresOn.minLength == 1
     and $module.parameters.ticketReference.minLength == 1
@@ -410,10 +483,12 @@ jq -e '
     and $module.parameters.source.defaultValue == "Bicep"
     and $module.parameters.governanceOwner.defaultValue == "eslz-v2-governance"
     and (($module.parameters.exemptionCategory.allowedValues | sort) == ["Mitigated", "Waiver"])
-    and ($module.variables.validatedPolicyAssignmentId | contains("fail(\u0027policyAssignmentId must be an exact Azure Policy assignment resource ID.\u0027"))
-    and ($module.variables.validatedExpiresOn | contains("fail(\u0027expiresOn must be a non-empty UTC timestamp"))
+    and ($module.variables.validatedDisplayName | contains("fail(\u0027displayName must be non-empty and cannot include leading or trailing whitespace.\u0027"))
+    and ($module.variables.validatedPolicyAssignmentId | contains("fail(\u0027policyAssignmentId must be an exact Azure Policy assignment resource ID without trailing separators or whitespace.\u0027"))
+    and ($module.variables.validatedScopedPolicyAssignmentId | contains("fail(\u0027resourceGroup exemptions require policyAssignmentId at the same subscription and resource-group scope.\u0027"))
+    and ($module.variables.validatedExpiresOn | contains("fail(\u0027expiresOn must be a canonical RFC3339 UTC timestamp with a valid calendar date"))
     and ($module.variables.validatedScopeType | contains("fail(\u0027resourceGroup exemptions require valid subscriptionId and resourceGroupName"))
-    and ($module.variables.validatedPolicyDefinitionReferenceIds | contains("fail(\u0027policyDefinitionReferenceIds cannot include empty values.\u0027"))
+    and ($module.variables.validatedPolicyDefinitionReferenceIds | contains("fail(\u0027policyDefinitionReferenceIds must be present in allowedPolicyDefinitionReferenceIds.\u0027"))
 ' "${compiled_exemption_shapes}" >/dev/null || {
   printf 'ERROR: Generalized policy exemption compiled shapes are invalid.\n' >&2
   exit 1

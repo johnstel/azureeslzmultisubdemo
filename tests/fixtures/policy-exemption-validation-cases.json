@@ -1,0 +1,85 @@
+{
+  "trimmedRequiredStrings": [
+    { "value": "valid", "valid": true },
+    { "value": " valid", "valid": false },
+    { "value": "valid ", "valid": false },
+    { "value": "   ", "valid": false }
+  ],
+  "rfc3339UtcTimestamps": [
+    { "value": "2026-12-31T23:59:59Z", "valid": true },
+    { "value": "2024-02-29T00:00:00Z", "valid": true },
+    { "value": "2026-12-31TZ", "valid": false },
+    { "value": "2026-02-30T23:59:59Z", "valid": false },
+    { "value": "2026-12-31t23:59:59z", "valid": false },
+    { "value": "2026-12-31T24:00:00Z", "valid": false }
+  ],
+  "policyAssignmentScopeContracts": [
+    {
+      "scopeType": "managementGroup",
+      "managementGroupName": "demo-root",
+      "subscriptionId": "",
+      "resourceGroupName": "",
+      "policyAssignmentId": "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/policyAssignments/deny-public-ingress",
+      "valid": true
+    },
+    {
+      "scopeType": "subscription",
+      "managementGroupName": "",
+      "subscriptionId": "33333333-3333-3333-3333-333333333333",
+      "resourceGroupName": "",
+      "policyAssignmentId": "/subscriptions/33333333-3333-3333-3333-333333333333/providers/Microsoft.Authorization/policyAssignments/require-tags",
+      "valid": true
+    },
+    {
+      "scopeType": "resourceGroup",
+      "managementGroupName": "",
+      "subscriptionId": "44444444-4444-4444-4444-444444444444",
+      "resourceGroupName": "rg-demo-app",
+      "policyAssignmentId": "/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/rg-demo-app/providers/Microsoft.Authorization/policyAssignments/network-ingress-initiative",
+      "valid": true
+    },
+    {
+      "scopeType": "subscription",
+      "managementGroupName": "",
+      "subscriptionId": "33333333-3333-3333-3333-333333333333",
+      "resourceGroupName": "",
+      "policyAssignmentId": "/subscriptions/44444444-4444-4444-4444-444444444444/providers/Microsoft.Authorization/policyAssignments/require-tags",
+      "valid": false
+    },
+    {
+      "scopeType": "managementGroup",
+      "managementGroupName": "demo-root",
+      "subscriptionId": "",
+      "resourceGroupName": "",
+      "policyAssignmentId": "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/policyAssignments/",
+      "valid": false
+    }
+  ],
+  "policyDefinitionReferenceContracts": [
+    {
+      "allowed": ["public-management-ingress", "require-subnet-nsg"],
+      "provided": ["public-management-ingress"],
+      "valid": true
+    },
+    {
+      "allowed": [],
+      "provided": ["public-management-ingress"],
+      "valid": false
+    },
+    {
+      "allowed": ["public-management-ingress"],
+      "provided": ["public-management-ingress", "require-subnet-nsg"],
+      "valid": false
+    },
+    {
+      "allowed": ["public-management-ingress", "require-subnet-nsg"],
+      "provided": ["public-management-ingress", " "],
+      "valid": false
+    },
+    {
+      "allowed": ["public-management-ingress", "require-subnet-nsg"],
+      "provided": ["public-management-ingress", "PUBLIC-MANAGEMENT-INGRESS"],
+      "valid": false
+    }
+  ]
+}
