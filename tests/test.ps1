@@ -868,69 +868,6 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
         Remove-Item -LiteralPath $schemaIgnoredDir -Recurse -Force
 
-        # Case: the tracked identity/schema/ tree used above is always
-        # resolved relative to the *validator script file's own location*
-        # (never the caller-supplied -Path). That location must therefore
-        # be derived from the script file's fully resolved final target,
-        # not its unresolved invocation path -- otherwise invoking the
-        # validator through a symbolic link (or, on Windows, a junction)
-        # would silently make an external, permissive identity/schema/
-        # directory placed beside that link into the "trusted" schema
-        # root. Both a direct link to the script file and a chained link
-        # (a link to a link to the script file) must be fully
-        # dereferenced. On Windows this is exercised via directory
-        # junctions (no elevation required); elsewhere via symbolic links.
-        $scriptLinkRoot = Join-Path $TempDir 'identity-script-symlink-root'
-        if (Test-Path -LiteralPath $scriptLinkRoot) { Remove-Item -LiteralPath $scriptLinkRoot -Recurse -Force }
-        New-Item -ItemType Directory -Path (Join-Path $scriptLinkRoot 'identity/schema') -Force | Out-Null
-        Set-Content -LiteralPath (Join-Path $scriptLinkRoot 'identity/schema/known-entra-ids.json') -Value '{"not":"a real schema"}'
-        Set-Content -LiteralPath (Join-Path $scriptLinkRoot 'identity/schema/conditional-access-policy.schema.json') -Value '{"not":"a real schema"}'
-        Set-Content -LiteralPath (Join-Path $scriptLinkRoot 'identity/schema/pim-activation-policy.schema.json') -Value '{"not":"a real schema"}'
-        $scriptLinkDirect = Join-Path $scriptLinkRoot 'validator-direct.ps1'
-        $scriptLinkChained = Join-Path $scriptLinkRoot 'validator-chained.ps1'
-        if ($IsWindows) {
-            New-Item -ItemType Junction -Path $scriptLinkDirect -Target $validatorPath | Out-Null
-        } else {
-            New-Item -ItemType SymbolicLink -Path $scriptLinkDirect -Target $validatorPath | Out-Null
-        }
-        # Junctions can only target directories, not files, so the chained
-        # link (a link to a link) uses a symbolic link on every platform,
-        # including Windows -- this still fully exercises the chained
-        # dereferencing logic, just via a different link type for the
-        # second hop.
-        New-Item -ItemType SymbolicLink -Path $scriptLinkChained -Target $scriptLinkDirect | Out-Null
-
-        foreach ($scriptLink in @($scriptLinkDirect, $scriptLinkChained)) {
-            # Positive control: a genuinely valid populated artifact tree
-            # must still validate successfully when invoked through the
-            # linked script file, proving the canonical (not the
-            # permissive external) schema was used.
-            $global:LASTEXITCODE = 0
-            & pwsh -NoLogo -NoProfile -File $scriptLink -Mode populated -Path $identityPopDir | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                Stop-Test "validate-identity-artifacts.ps1 should ignore an external schema/ directory beside a script-file link ($scriptLink) and validate successfully using the tracked repository schemas, but it exited with code $LASTEXITCODE."
-            }
-        }
-
-        # Negative control: an artifact that is genuinely invalid under
-        # the canonical tracked schema must still be rejected -- and for
-        # the genuine schema-driven reason -- when invoked through the
-        # same script-file links, proving the permissive external schema
-        # was not what was loaded.
-        $scriptLinkNegDir = Join-Path $TempDir 'identity-script-symlink-neg'
-        if (Test-Path -LiteralPath $scriptLinkNegDir) { Remove-Item -LiteralPath $scriptLinkNegDir -Recurse -Force }
-        Copy-Item -LiteralPath $identityPopDir -Destination $scriptLinkNegDir -Recurse
-        $pimAdminFile = Join-Path $scriptLinkNegDir 'pim/pim-activation-global-administrator.template.json'
-        $pimAdminJson = Get-Content -LiteralPath $pimAdminFile -Raw | ConvertFrom-Json
-        $pimAdminJson.activation.approvers = @('sales-team')
-        $pimAdminJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $pimAdminFile
-
-        Expect-IdentityValidationFailure -Description 'invalid PIM approver rejected through a direct script-file link' -Arguments @('-Mode', 'populated', '-Path', $scriptLinkNegDir) -ScriptPath $scriptLinkDirect -ExpectedMessage 'not a match for the indicated regular expression'
-        Expect-IdentityValidationFailure -Description 'invalid PIM approver rejected through a chained script-file link' -Arguments @('-Mode', 'populated', '-Path', $scriptLinkNegDir) -ScriptPath $scriptLinkChained -ExpectedMessage 'not a match for the indicated regular expression'
-
-        Remove-Item -LiteralPath $scriptLinkRoot -Recurse -Force
-        Remove-Item -LiteralPath $scriptLinkNegDir -Recurse -Force
-
         # Case: on a genuinely case-insensitive filesystem (default macOS
         # APFS, exFAT/vfat, some NTFS/SMB mounts), a casing variant of the
         # tracked identity/ folder (e.g. IDENTITY) transparently resolves to
@@ -1043,6 +980,85 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         # same directory and rejected by the populated-mode guard.
         $caseVariantPath = Join-Path $ProjectDir 'IDENTITY'
         Expect-IdentityValidationFailure -Description 'populated mode bypass via a case-variant of the tracked identity/ folder on a case-insensitive Windows filesystem' -Arguments @('-Mode', 'populated', '-Path', $caseVariantPath)
+    }
+
+    # Case: the tracked identity/schema/ tree used above is always resolved
+    # relative to the *validator script file's own location* (never the
+    # caller-supplied -Path). That location must therefore be derived from
+    # the script file's fully resolved final target, not its unresolved
+    # invocation path -- otherwise invoking the validator through a
+    # symbolic link would silently make an external, permissive
+    # identity/schema/ directory placed beside that link into the
+    # "trusted" schema root. Both a direct link to the script file and a
+    # chained link (a link to a link to the script file) must be fully
+    # dereferenced. This uses only file symbolic links (never junctions,
+    # which can only target directories, not files), so it is exercised on
+    # every platform, including Windows, rather than being scoped to
+    # $IsWindows. On Windows, creating a file symbolic link (unlike a
+    # directory junction) requires either Administrator privilege or
+    # Developer Mode; if the current process lacks that capability, the
+    # capability probe below causes this case to be explicitly skipped
+    # (not silently omitted) rather than failing for an unrelated reason.
+    $canSymlinkFiles = $true
+    $symlinkProbeTarget = Join-Path $TempDir 'symlink-capability-probe-target.txt'
+    $symlinkProbeLink = Join-Path $TempDir 'symlink-capability-probe-link.txt'
+    if (Test-Path -LiteralPath $symlinkProbeLink) { Remove-Item -LiteralPath $symlinkProbeLink -Force }
+    if (Test-Path -LiteralPath $symlinkProbeTarget) { Remove-Item -LiteralPath $symlinkProbeTarget -Force }
+    Set-Content -LiteralPath $symlinkProbeTarget -Value 'probe'
+    try {
+        New-Item -ItemType SymbolicLink -Path $symlinkProbeLink -Target $symlinkProbeTarget -ErrorAction Stop | Out-Null
+    } catch {
+        $canSymlinkFiles = $false
+    }
+    if (Test-Path -LiteralPath $symlinkProbeLink) { Remove-Item -LiteralPath $symlinkProbeLink -Force }
+    Remove-Item -LiteralPath $symlinkProbeTarget -Force
+
+    if ($canSymlinkFiles) {
+        $scriptLinkRoot = Join-Path $TempDir 'identity-script-symlink-root'
+        if (Test-Path -LiteralPath $scriptLinkRoot) { Remove-Item -LiteralPath $scriptLinkRoot -Recurse -Force }
+        New-Item -ItemType Directory -Path (Join-Path $scriptLinkRoot 'identity/schema') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $scriptLinkRoot 'identity/schema/known-entra-ids.json') -Value '{"not":"a real schema"}'
+        Set-Content -LiteralPath (Join-Path $scriptLinkRoot 'identity/schema/conditional-access-policy.schema.json') -Value '{"not":"a real schema"}'
+        Set-Content -LiteralPath (Join-Path $scriptLinkRoot 'identity/schema/pim-activation-policy.schema.json') -Value '{"not":"a real schema"}'
+        $scriptLinkDirect = Join-Path $scriptLinkRoot 'validator-direct.ps1'
+        $scriptLinkChained = Join-Path $scriptLinkRoot 'validator-chained.ps1'
+        New-Item -ItemType SymbolicLink -Path $scriptLinkDirect -Target $validatorPath | Out-Null
+        # The chained link (a link to a link) exercises repeated
+        # dereferencing of the resolved target on every platform.
+        New-Item -ItemType SymbolicLink -Path $scriptLinkChained -Target $scriptLinkDirect | Out-Null
+
+        foreach ($scriptLink in @($scriptLinkDirect, $scriptLinkChained)) {
+            # Positive control: a genuinely valid populated artifact tree
+            # must still validate successfully when invoked through the
+            # linked script file, proving the canonical (not the
+            # permissive external) schema was used.
+            $global:LASTEXITCODE = 0
+            & pwsh -NoLogo -NoProfile -File $scriptLink -Mode populated -Path $identityPopDir | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Stop-Test "validate-identity-artifacts.ps1 should ignore an external schema/ directory beside a script-file link ($scriptLink) and validate successfully using the tracked repository schemas, but it exited with code $LASTEXITCODE."
+            }
+        }
+
+        # Negative control: an artifact that is genuinely invalid under
+        # the canonical tracked schema must still be rejected -- and for
+        # the genuine schema-driven reason -- when invoked through the
+        # same script-file links, proving the permissive external schema
+        # was not what was loaded.
+        $scriptLinkNegDir = Join-Path $TempDir 'identity-script-symlink-neg'
+        if (Test-Path -LiteralPath $scriptLinkNegDir) { Remove-Item -LiteralPath $scriptLinkNegDir -Recurse -Force }
+        Copy-Item -LiteralPath $identityPopDir -Destination $scriptLinkNegDir -Recurse
+        $pimAdminFile = Join-Path $scriptLinkNegDir 'pim/pim-activation-global-administrator.template.json'
+        $pimAdminJson = Get-Content -LiteralPath $pimAdminFile -Raw | ConvertFrom-Json
+        $pimAdminJson.activation.approvers = @('sales-team')
+        $pimAdminJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $pimAdminFile
+
+        Expect-IdentityValidationFailure -Description 'invalid PIM approver rejected through a direct script-file link' -Arguments @('-Mode', 'populated', '-Path', $scriptLinkNegDir) -ScriptPath $scriptLinkDirect -ExpectedMessage 'not a match for the indicated regular expression'
+        Expect-IdentityValidationFailure -Description 'invalid PIM approver rejected through a chained script-file link' -Arguments @('-Mode', 'populated', '-Path', $scriptLinkNegDir) -ScriptPath $scriptLinkChained -ExpectedMessage 'not a match for the indicated regular expression'
+
+        Remove-Item -LiteralPath $scriptLinkRoot -Recurse -Force
+        Remove-Item -LiteralPath $scriptLinkNegDir -Recurse -Force
+    } else {
+        Write-Host '  (skipping validator script-file link trust-anchor tests: this process lacks file symbolic-link capability (Windows requires Administrator privilege or Developer Mode))'
     }
 
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
