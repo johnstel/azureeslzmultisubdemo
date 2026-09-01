@@ -1,0 +1,14 @@
+{
+  "ipv4Cases": [
+    { "value": "10.0.0.4", "valid": true },
+    { "value": "999.0.0.1", "valid": false },
+    { "value": "10.0.0", "valid": false },
+    { "value": "10.0.0.x", "valid": false }
+  ],
+  "serviceCategoryCases": [
+    { "value": ["Storage", "KeyVault"], "valid": true },
+    { "value": ["storage"], "valid": false },
+    { "value": ["Storage", "Storage"], "valid": false },
+    { "value": [], "valid": false }
+  ]
+}

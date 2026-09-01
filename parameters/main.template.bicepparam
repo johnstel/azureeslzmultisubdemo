@@ -56,6 +56,16 @@ param customerAllowedVmSkus = [
   'Standard_B2ms'
 ]
 param networkIngressPolicyEffect = 'Audit'
+param privateAccessPublicNetworkPolicyEffect = 'Audit'
+param privateAccessServiceCategories = [
+  'Storage'
+  'KeyVault'
+]
+param enableFirewallRouteGuardrails = false
+param approvedFirewallResourceId = ''
+param approvedFirewallPrivateIp = ''
+param approvedRouteTableResourceIds = []
+param approvedRouteTablePrefixes = []
 param dataProtectionPolicyEffect = 'Audit'
 param storageMinimumTlsVersion = 'TLS1_2'
 param approvedCustomerManagedKeyVaultUris = []

@@ -1,0 +1,50 @@
+{
+  "approvedFirewallPrivateIp": "10.0.0.4",
+  "approvedRouteTablePrefix": "0.0.0.0/0",
+  "cases": [
+    {
+      "name": "correct-route",
+      "routes": [
+        {
+          "addressPrefix": "0.0.0.0/0",
+          "nextHopType": "VirtualAppliance",
+          "nextHopIpAddress": "10.0.0.4"
+        }
+      ],
+      "expectedNonCompliant": false
+    },
+    {
+      "name": "wrong-hop",
+      "routes": [
+        {
+          "addressPrefix": "0.0.0.0/0",
+          "nextHopType": "Internet",
+          "nextHopIpAddress": ""
+        }
+      ],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "wrong-ip",
+      "routes": [
+        {
+          "addressPrefix": "0.0.0.0/0",
+          "nextHopType": "VirtualAppliance",
+          "nextHopIpAddress": "10.0.0.5"
+        }
+      ],
+      "expectedNonCompliant": true
+    },
+    {
+      "name": "missing-prefix",
+      "routes": [
+        {
+          "addressPrefix": "10.1.0.0/16",
+          "nextHopType": "VirtualAppliance",
+          "nextHopIpAddress": "10.0.0.4"
+        }
+      ],
+      "expectedNonCompliant": true
+    }
+  ]
+}
