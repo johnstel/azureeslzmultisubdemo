@@ -32,6 +32,11 @@ az bicep build \
   --file "${SCRIPT_DIR}/fixtures/policy-assignment-shapes.bicep" \
   --outfile "${compiled_shapes}" >/dev/null
 
+compiled_exemption_shapes="${TEMP_DIR}/policy-exemption-shapes.json"
+az bicep build \
+  --file "${SCRIPT_DIR}/fixtures/policy-exemption-shapes.bicep" \
+  --outfile "${compiled_exemption_shapes}" >/dev/null
+
 expect_bicep_build_failure() {
   local fixture="$1"
   local description="$2"
@@ -48,6 +53,12 @@ expect_bicep_build_failure \
 expect_bicep_build_failure \
   "${SCRIPT_DIR}/fixtures/invalid-policy-selector-kind.bicep" \
   'policyDefinitionReferenceId as a resource selector kind'
+expect_bicep_build_failure \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-expiry.bicep" \
+  'a policy exemption with an empty expiresOn value'
+expect_bicep_build_failure \
+  "${SCRIPT_DIR}/fixtures/invalid-policy-exemption-scope.bicep" \
+  'a policy exemption with an unsupported exemptionScopeType value'
 
 validation_cases="${SCRIPT_DIR}/fixtures/policy-assignment-validation-cases.json"
 jq -e '
@@ -311,6 +322,100 @@ jq -e '
     and ($propertiesExpression | contains("if(not(empty(parameters(\u0027resourceSelectors\u0027))), createObject(\u0027resourceSelectors\u0027"))
 ' "${compiled_shapes}" >/dev/null || {
   printf 'ERROR: Generalized policy and initiative assignment compiled shapes are invalid.\n' >&2
+  exit 1
+}
+
+jq -e '
+  . as $root
+  | def deployments: [$root | .. | objects | select(.type? == "Microsoft.Resources/deployments")];
+    def deployment($name): first(deployments[] | select(.name? == $name));
+    deployment("example-management-group-exemption") as $mg
+  | deployment("example-subscription-exemption") as $sub
+  | deployment("example-resource-group-exemption") as $rg
+  | $mg.properties.template as $module
+  | $module.resources.managementGroupExemption.properties.template.resources.exemption as $mgResource
+  | ($mg.properties.parameters | keys | sort) == [
+      "approver",
+      "createdOn",
+      "description",
+      "displayName",
+      "exemptionCategory",
+      "exemptionName",
+      "exemptionScopeType",
+      "expiresOn",
+      "justification",
+      "managementGroupName",
+      "owner",
+      "policyAssignmentId",
+      "reviewedOn",
+      "ticketReference"
+    ]
+    and (($sub.properties.parameters | keys | sort) == [
+      "approver",
+      "createdOn",
+      "description",
+      "displayName",
+      "exemptionCategory",
+      "exemptionName",
+      "exemptionScopeType",
+      "expiresOn",
+      "justification",
+      "owner",
+      "policyAssignmentId",
+      "reviewedOn",
+      "subscriptionId",
+      "ticketReference"
+    ])
+    and (($rg.properties.parameters | keys | sort) == [
+      "approver",
+      "createdOn",
+      "description",
+      "displayName",
+      "exemptionCategory",
+      "exemptionName",
+      "exemptionScopeType",
+      "expiresOn",
+      "governanceOwner",
+      "justification",
+      "owner",
+      "policyAssignmentId",
+      "policyDefinitionReferenceIds",
+      "resourceGroupName",
+      "reviewedOn",
+      "source",
+      "subscriptionId",
+      "ticketReference"
+    ])
+    and $mg.properties.parameters.exemptionCategory.value == "Waiver"
+    and $sub.properties.parameters.exemptionCategory.value == "Mitigated"
+    and $rg.properties.parameters.policyDefinitionReferenceIds.value == [
+      "public-management-ingress",
+      "require-subnet-nsg"
+    ]
+    and $mgResource.type == "Microsoft.Authorization/policyExemptions"
+    and $mgResource.apiVersion == "2024-12-01-preview"
+    and $mgResource.name == "[parameters(\u0027exemptionName\u0027)]"
+    and (($mgResource.properties | type) == "string")
+    and ($mgResource.properties | contains("policyAssignmentId"))
+    and ($mgResource.properties | contains("exemptionCategory"))
+    and ($mgResource.properties | contains("expiresOn"))
+    and ($mgResource.properties | contains("ticketReference"))
+    and ($mgResource.properties | contains("governanceVersion"))
+    and ($mgResource.properties | contains("policyDefinitionReferenceIds"))
+    and $module.parameters.owner.minLength == 1
+    and $module.parameters.expiresOn.minLength == 1
+    and $module.parameters.ticketReference.minLength == 1
+    and $module.parameters.subscriptionId.defaultValue == ""
+    and $module.parameters.resourceGroupName.defaultValue == ""
+    and $module.parameters.source.defaultValue == "Bicep"
+    and $module.parameters.governanceOwner.defaultValue == "eslz-v2-governance"
+    and (($module.parameters.exemptionCategory.allowedValues | sort) == ["Mitigated", "Waiver"])
+    and ($module.variables.validatedPolicyAssignmentId | contains("fail(\u0027policyAssignmentId must be an exact Azure Policy assignment resource ID.\u0027"))
+    and ($module.variables.validatedExpiresOn | contains("fail(\u0027expiresOn must be a non-empty UTC timestamp"))
+    and ($module.variables.validatedScopeType | contains("fail(\u0027resourceGroup exemptions require valid subscriptionId and resourceGroupName"))
+    and ($module.variables.validatedPolicyDefinitionReferenceIds | contains("fail(\u0027policyDefinitionReferenceIds cannot include empty values.\u0027"))
+' "${compiled_exemption_shapes}" >/dev/null || {
+  printf 'ERROR: Generalized policy exemption compiled shapes are invalid.\n' >&2
   exit 1
 }
 

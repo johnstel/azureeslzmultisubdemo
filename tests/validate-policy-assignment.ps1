@@ -186,12 +186,24 @@ try {
         --outfile $compiledShapes | Out-Null
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Policy assignment shape fixture build failed.' }
 
+    $compiledExemptionShapes = Join-Path $TempDir 'policy-exemption-shapes.json'
+    & az bicep build `
+        --file (Join-Path $ScriptDir 'fixtures/policy-exemption-shapes.bicep') `
+        --outfile $compiledExemptionShapes | Out-Null
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Policy exemption shape fixture build failed.' }
+
     Assert-BicepBuildFails `
         -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-assignment-name.bicep') `
         -Description 'a management-group policy assignment name longer than 24 characters'
     Assert-BicepBuildFails `
         -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-selector-kind.bicep') `
         -Description 'policyDefinitionReferenceId as a resource selector kind'
+    Assert-BicepBuildFails `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-expiry.bicep') `
+        -Description 'a policy exemption with an empty expiresOn value'
+    Assert-BicepBuildFails `
+        -Fixture (Join-Path $ScriptDir 'fixtures/invalid-policy-exemption-scope.bicep') `
+        -Description 'a policy exemption with an unsupported exemptionScopeType value'
 
     $validationCases = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/policy-assignment-validation-cases.json') -Raw | ConvertFrom-Json
     foreach ($case in $validationCases.assignmentNames) {
@@ -505,6 +517,86 @@ try {
         $expectedFragment = "if(not(empty(parameters('$optionalProperty'))), createObject('$optionalProperty'"
         if (-not ([string]$resource.properties).Contains($expectedFragment)) {
             Stop-Test "Compiled assignment does not conditionally omit empty $optionalProperty."
+        }
+    }
+
+    $exemptionShapesJson = Get-Content -LiteralPath $compiledExemptionShapes -Raw | ConvertFrom-Json
+    $exemptionShapeDeployments = @(
+        Find-JsonObjects -Node $exemptionShapesJson -Predicate {
+            param($node)
+            $node.PSObject.Properties['type'] -and
+                $node.type -eq 'Microsoft.Resources/deployments' -and
+                $node.PSObject.Properties['name'] -and
+                $node.name -in @('example-management-group-exemption', 'example-subscription-exemption', 'example-resource-group-exemption')
+        }
+    )
+    if ($exemptionShapeDeployments.Count -ne 3) {
+        Stop-Test 'Expected compiled management-group, subscription, and resource-group policy exemption examples.'
+    }
+    $managementGroupExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-management-group-exemption'
+    $subscriptionExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-subscription-exemption'
+    $resourceGroupExemption = $exemptionShapeDeployments | Where-Object name -eq 'example-resource-group-exemption'
+
+    Assert-ExactNames `
+        -Actual @($managementGroupExemption.properties.parameters.PSObject.Properties.Name) `
+        -Expected @('approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'justification', 'managementGroupName', 'owner', 'policyAssignmentId', 'reviewedOn', 'ticketReference') `
+        -Message 'Management-group exemption example must include required accountability and expiry properties.'
+    Assert-ExactNames `
+        -Actual @($subscriptionExemption.properties.parameters.PSObject.Properties.Name) `
+        -Expected @('approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'justification', 'owner', 'policyAssignmentId', 'reviewedOn', 'subscriptionId', 'ticketReference') `
+        -Message 'Subscription exemption example must include required accountability and expiry properties.'
+    Assert-ExactNames `
+        -Actual @($resourceGroupExemption.properties.parameters.PSObject.Properties.Name) `
+        -Expected @('approver', 'createdOn', 'description', 'displayName', 'exemptionCategory', 'exemptionName', 'exemptionScopeType', 'expiresOn', 'governanceOwner', 'justification', 'owner', 'policyAssignmentId', 'policyDefinitionReferenceIds', 'resourceGroupName', 'reviewedOn', 'source', 'subscriptionId', 'ticketReference') `
+        -Message 'Resource-group exemption example must include initiative reference IDs and governance metadata overrides.'
+
+    if ($managementGroupExemption.properties.parameters.exemptionCategory.value -ne 'Waiver' -or
+        $subscriptionExemption.properties.parameters.exemptionCategory.value -ne 'Mitigated' -or
+        (Compare-Object @($resourceGroupExemption.properties.parameters.policyDefinitionReferenceIds.value) @('public-management-ingress', 'require-subnet-nsg'))) {
+        Stop-Test 'Exemption categories or policyDefinitionReferenceIds are invalid.'
+    }
+
+    $exemptionModuleTemplate = $managementGroupExemption.properties.template
+    $managementGroupExemptionResource = $exemptionModuleTemplate.resources.managementGroupExemption.properties.template.resources.exemption
+    if ($managementGroupExemptionResource.type -ne 'Microsoft.Authorization/policyExemptions' -or
+        $managementGroupExemptionResource.apiVersion -ne '2024-12-01-preview' -or
+        $managementGroupExemptionResource.name -ne "[parameters('exemptionName')]") {
+        Stop-Test 'Policy exemption module must emit a policyExemptions resource using the expected API and naming.'
+    }
+    $exemptionResourcePropertiesExpression = [string]$managementGroupExemptionResource.properties
+    foreach ($requiredPropertyText in @(
+        'policyAssignmentId',
+        'exemptionCategory',
+        'expiresOn',
+        'ticketReference',
+        'governanceVersion',
+        'policyDefinitionReferenceIds'
+    )) {
+        if (-not $exemptionResourcePropertiesExpression.Contains($requiredPropertyText)) {
+            Stop-Test "Policy exemption properties are missing required content: $requiredPropertyText"
+        }
+    }
+    if ($exemptionModuleTemplate.parameters.owner.minLength -ne 1 -or
+        $exemptionModuleTemplate.parameters.expiresOn.minLength -ne 1 -or
+        $exemptionModuleTemplate.parameters.ticketReference.minLength -ne 1 -or
+        $exemptionModuleTemplate.parameters.subscriptionId.defaultValue -ne '' -or
+        $exemptionModuleTemplate.parameters.resourceGroupName.defaultValue -ne '' -or
+        $exemptionModuleTemplate.parameters.source.defaultValue -ne 'Bicep' -or
+        $exemptionModuleTemplate.parameters.governanceOwner.defaultValue -ne 'eslz-v2-governance') {
+        Stop-Test 'Policy exemption parameter defaults or required-field constraints changed.'
+    }
+    Assert-ExactNames `
+        -Actual @($exemptionModuleTemplate.parameters.exemptionCategory.allowedValues) `
+        -Expected @('Mitigated', 'Waiver') `
+        -Message 'Policy exemption category allowlist is incomplete.'
+    foreach ($validation in @{
+        validatedPolicyAssignmentId = "fail('policyAssignmentId must be an exact Azure Policy assignment resource ID."
+        validatedExpiresOn = "fail('expiresOn must be a non-empty UTC timestamp"
+        validatedScopeType = "fail('resourceGroup exemptions require valid subscriptionId and resourceGroupName"
+        validatedPolicyDefinitionReferenceIds = "fail('policyDefinitionReferenceIds cannot include empty values."
+    }.GetEnumerator()) {
+        if (-not ([string]$exemptionModuleTemplate.variables.($validation.Key)).Contains($validation.Value)) {
+            Stop-Test "Compiled exemption validation missing from $($validation.Key)."
         }
     }
 

@@ -87,6 +87,10 @@ Exceptional public paths or special-purpose workload subnets must use a
 documented, time-bound Azure Policy exemption. The existing demo-root
 public-IP audit remains the only public-IP resource control.
 
+For rollout phasing, prefer resource selectors or `DoNotEnforce` assignment
+mode. Use an exemption only when a specific deployed scope needs a reviewed,
+ticketed exception with a mandatory owner and expiry.
+
 ### Reusable initiative composition
 
 `modules/policy-initiative.bicep` creates a custom initiative at its caller's
@@ -102,6 +106,22 @@ definition, passes audit-first initiative parameters through to the built-in,
 and creates no assignment or metered resource. The example is not called by
 `main.bicep`; domain initiatives remain explicit future work driven by the
 authoritative [`policy/control-catalog.json`](policy/control-catalog.json).
+
+### Reusable governed policy exemptions
+
+`modules/policy-exemption.bicep` creates traceable, expiring Azure Policy
+exemptions at management-group, subscription, or resource-group scope by using
+`exemptionScopeType` with matching scope inputs. It requires assignment ID,
+display name, description, exemption category (`Waiver` or `Mitigated`),
+accountable owner, justification, expiry, and ticket/evidence reference.
+Metadata always records source, approver, created/reviewed UTC dates, and v2
+governance ownership. Initiative-specific exemptions can optionally set
+`policyDefinitionReferenceIds`.
+
+Use `Mitigated` when compensating controls are already in place, and `Waiver`
+when accepting temporary risk with explicit sign-off. Do not use exemptions as
+an untracked replacement for remediation, selector-based rollout, or
+`DoNotEnforce` pilot assignments.
 
 ## Least-privilege RBAC model
 

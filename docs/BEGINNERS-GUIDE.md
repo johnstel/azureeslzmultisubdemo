@@ -675,6 +675,13 @@ private approved management paths; any exceptional public path or
 special-purpose workload subnet must have a documented, time-bound Azure
 Policy exemption approved through the governance process.
 
+For v2, exemptions are created with `modules/policy-exemption.bicep` and must
+include owner, justification, expiry, ticket/evidence reference, approver, and
+created/reviewed UTC dates. Use category `Mitigated` when compensating controls
+exist and `Waiver` when risk is explicitly accepted for a bounded period.
+Exemptions are not a substitute for remediation or a temporary selector-based
+rollout.
+
 The hierarchy-wide public-IP audit described above is reused unchanged rather
 than copied into this workload initiative.
 
