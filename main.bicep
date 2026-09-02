@@ -6,8 +6,9 @@ func isGuid(value string) bool => length(value) == 36 ? substring(value, 8, 1) =
 func isIpv4(value string) bool => length(split(value, '.')) == 4 && value == trim(value) && !empty(value) && empty(filter(split(value, '.'), octet => empty(octet) || !empty(stripDigits(octet)) || int(octet) > 255))
 func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(first(split(value, '/'))) && !empty(last(split(value, '/'))) && empty(stripDigits(last(split(value, '/')))) && int(last(split(value, '/'))) >= 0 && int(last(split(value, '/'))) <= 32
 func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
-func isRecoveryServicesVaultId(value string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.recoveryservices' && toLower(split(value, '/')[7]) == 'vaults' && !empty(trim(split(value, '/')[8])) && value == trim(value)
-func isBackupPolicyIdOfVault(value string, vaultResourceId string) bool => length(split(value, '/')) == 11 && isRecoveryServicesVaultId(vaultResourceId) && startsWith(toLower(value), '${toLower(vaultResourceId)}/backuppolicies/') && !empty(trim(split(value, '/')[10])) && value == trim(value)
+func isResourceNameSegment(value string) bool => !empty(value) && value == trim(value) && empty(filter(['<', '>', '%', '&', '\\', '?', '#', '+', ':', '"', '|', '*', ';', ' '], forbiddenCharacter => contains(value, forbiddenCharacter)))
+func isRecoveryServicesVaultId(value string) bool => value == trim(value) && length(split(value, '/')) == 9 && empty(split(value, '/')[0]) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceNameSegment(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.recoveryservices' && toLower(split(value, '/')[7]) == 'vaults' && isResourceNameSegment(split(value, '/')[8])
+func isBackupPolicyIdOfVault(value string, vaultResourceId string) bool => value == trim(value) && length(split(value, '/')) == 11 && isRecoveryServicesVaultId(vaultResourceId) && startsWith(toLower(value), '${toLower(vaultResourceId)}/backuppolicies/') && toLower(split(value, '/')[9]) == 'backuppolicies' && isResourceNameSegment(split(value, '/')[10])
 
 @sealed()
 type approvedBackupVault = {
@@ -249,22 +250,31 @@ var validatedFirewallRouteInputs = enableFirewallRouteGuardrails && !firewallRou
   ? fail('approvedFirewallResourceId must be an Azure Firewall resource ID, approvedFirewallPrivateIp must be an IPv4 address, and approvedRouteTableResourceIds and approvedRouteTablePrefixes must contain non-empty, valid, case-insensitively unique route-table IDs and IPv4 CIDRs when enableFirewallRouteGuardrails is true.')
   : true
 
-// Azure Backup protects virtual machines from a vault in the same subscription and region, so
-// approved vault records are validated against the subscriptions this template governs and the
-// customer-approved region list instead of assuming one centralized vault for the whole tenant.
+// The built-in that configures virtual machine backup (REQ-BKP-02) targets virtual machines by
+// location plus inclusion tag value, and its remediation deployment is placed in the subscription
+// and resource group parsed from the supplied backupPolicyId. Approved vault records are therefore
+// validated as a composite workload/region mapping with non-overlapping region/tag targeting, and a
+// vault outside the governed subscriptions (a central backup subscription) is allowed only behind
+// allowCrossSubscriptionBackupVaults, instead of assuming one centralized vault for the whole tenant.
 var normalizedApprovedVaultRegions = [for approvedVaultRegion in approvedVaultRegions: toLower(trim(approvedVaultRegion))]
 var invalidApprovedVaultRegions = filter(normalizedApprovedVaultRegions, approvedVaultRegion => empty(approvedVaultRegion) || approvedVaultRegion == 'global')
 var backupEligibleSubscriptionIds = [for backupEligibleSubscriptionId in concat([workloadSubscriptionId], enableCriticalInfrastructure ? criticalInfrastructureSubscriptionIds : []): toLower(trim(backupEligibleSubscriptionId))]
-var invalidApprovedBackupVaults = filter(approvedBackupVaults, approvedVault => empty(trim(approvedVault.workload)) || !contains(normalizedApprovedVaultRegions, toLower(trim(approvedVault.region))) || !isRecoveryServicesVaultId(approvedVault.vaultResourceId) || !isBackupPolicyIdOfVault(approvedVault.backupPolicyResourceId, approvedVault.vaultResourceId) || !contains(backupEligibleSubscriptionIds, toLower(split(approvedVault.vaultResourceId, '/')[2])) || !empty(filter(approvedVault.inclusionTagValues, inclusionTagValue => empty(trim(inclusionTagValue)))))
-var approvedBackupVaultWorkloads = [for approvedVault in approvedBackupVaults: toLower(trim(approvedVault.workload))]
-var approvedBackupVaultRegions = [for approvedVault in approvedBackupVaults: toLower(trim(approvedVault.region))]
+var invalidApprovedBackupVaults = filter(approvedBackupVaults, approvedVault => empty(trim(approvedVault.workload)) || !contains(normalizedApprovedVaultRegions, toLower(trim(approvedVault.region))) || !isRecoveryServicesVaultId(approvedVault.vaultResourceId) || !isBackupPolicyIdOfVault(approvedVault.backupPolicyResourceId, approvedVault.vaultResourceId) || empty(approvedVault.inclusionTagValues) || !empty(filter(approvedVault.inclusionTagValues, inclusionTagValue => empty(trim(inclusionTagValue)))))
+var crossSubscriptionApprovedBackupVaults = filter(approvedBackupVaults, approvedVault => isRecoveryServicesVaultId(approvedVault.vaultResourceId) && !contains(backupEligibleSubscriptionIds, toLower(split(approvedVault.vaultResourceId, '/')[2])))
+var approvedBackupVaultKeys = [for approvedVault in approvedBackupVaults: '${toLower(trim(approvedVault.workload))}|${toLower(trim(approvedVault.region))}']
+var approvedBackupVaultTargetKeyGroups = [for approvedVault in approvedBackupVaults: map(approvedVault.inclusionTagValues, inclusionTagValue => '${toLower(trim(approvedVault.region))}|${toLower(trim(inclusionTagValue))}')]
+var approvedBackupVaultTargetKeys = flatten(approvedBackupVaultTargetKeyGroups)
 var validatedApprovedBackupVaults = !empty(invalidApprovedVaultRegions) || length(normalizedApprovedVaultRegions) != length(union(normalizedApprovedVaultRegions, []))
   ? fail('approvedVaultRegions must contain non-empty, non-global, case-insensitively unique Azure regions.')
   : !empty(invalidApprovedBackupVaults)
-    ? fail('Each approvedBackupVaults entry must name a workload, use an approved vault region, reference an existing Recovery Services vault in the workload or critical-infrastructure subscriptions, reference a backup policy inside that same vault, and list non-empty inclusion tag values.')
-    : length(approvedBackupVaultWorkloads) != length(union(approvedBackupVaultWorkloads, [])) || length(approvedBackupVaultRegions) != length(union(approvedBackupVaultRegions, []))
-      ? fail('approvedBackupVaults must use case-insensitively unique workload names and one vault record per approved region.')
-      : approvedBackupVaults
+    ? fail('Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.')
+    : !allowCrossSubscriptionBackupVaults && !empty(crossSubscriptionApprovedBackupVaults)
+      ? fail('approvedBackupVaults entries reference a Recovery Services vault outside the workload and critical-infrastructure subscriptions. Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription and grant the assignment identity Backup Contributor there.')
+      : length(approvedBackupVaultKeys) != length(union(approvedBackupVaultKeys, []))
+        ? fail('approvedBackupVaults must use case-insensitively unique workload and region pairs; a workload may appear once per region and a region may host several workloads.')
+        : length(approvedBackupVaultTargetKeys) != length(union(approvedBackupVaultTargetKeys, []))
+          ? fail('approvedBackupVaults entries in the same region must not share an inclusion tag value, because the backup built-in targets virtual machines by location and inclusion tag value only.')
+          : approvedBackupVaults
 var vmBackupRemediationInputsValid = !empty(validatedApprovedBackupVaults) && !empty(trim(vmBackupInclusionTagName)) && !empty(trim(backupRetentionStandardId))
 var validatedVmBackupRemediation = enableVmBackupRemediation && !vmBackupRemediationInputsValid
   ? fail('enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs, a non-empty vmBackupInclusionTagName, and a documented backupRetentionStandardId.')
@@ -275,9 +285,11 @@ var validatedVaultDiagnostics = enableVaultDiagnostics && !vaultDiagnosticsWorks
   : true
 var validatedRecoveryServicesVaultCreation = deployRecoveryServicesVault && !empty(approvedBackupVaults)
   ? fail('deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied; approved existing vault and backup policy IDs are the preferred integration path.')
-  : deployRecoveryServicesVault && !empty(normalizedApprovedVaultRegions) && !contains(normalizedApprovedVaultRegions, toLower(recoveryServicesVaultLocation))
-    ? fail('recoveryServicesVaultLocation must be one of approvedVaultRegions when a customer-owned vault is created.')
-    : true
+  : deployRecoveryServicesVault && (empty(normalizedApprovedVaultRegions) || !contains(normalizedApprovedVaultRegions, toLower(trim(recoveryServicesVaultLocation))))
+    ? fail('recoveryServicesVaultLocation must be one of approvedVaultRegions when a customer-owned vault is created, and approvedVaultRegions must not be empty, so no metered vault is created in an unapproved region.')
+    : deployRecoveryServicesVault && empty(trim(backupRetentionStandardId))
+      ? fail('deployRecoveryServicesVault requires a documented backupRetentionStandardId so the metered customer-owned vault records an approved retention standard instead of an undocumented default.')
+      : true
 
 @description('Assign the stable Microsoft cloud security benchmark (MCSB) initiative at the demo root. Enabled by default for the customer-control profile. The separate Microsoft cloud security benchmark v2 preview initiative is never assigned by this template.')
 param enableMicrosoftCloudSecurityBenchmark bool = true
@@ -321,10 +333,27 @@ param vaultDoubleEncryptionRequired bool = false
 ])
 param vaultImmutabilityPolicyEffect string = 'Audit'
 
-@description('Set true to report only vaults whose immutability is locked. Vault soft delete stays a vault-level setting that Microsoft enables by default.')
+@description('Set true to report only vaults whose immutability is locked (irreversible). Set false to also treat unlocked immutability as compliant. Soft delete is audited separately by REQ-BKP-08.')
 param vaultCheckLockedImmutabilityOnly bool = true
 
-@description('Customer-approved regions in which backup vaults may be placed. Azure Backup requires the vault and the protected virtual machines to share a region and subscription, so no centralized single-vault placement is assumed.')
+@description('Effect for the Recovery Services vault soft-delete control (REQ-BKP-08). Audit reports vaults whose soft delete is not enabled; this template never changes an existing vault setting.')
+@allowed([
+  'Audit'
+  'Disabled'
+])
+param vaultSoftDeletePolicyEffect string = 'Audit'
+
+@description('Set true to report only vaults whose soft delete is AlwaysOn (irreversible). False, the safe default, treats Enabled and AlwaysOn as compliant.')
+param vaultCheckAlwaysOnSoftDeleteOnly bool = false
+
+@description('Effect for the Recovery Services vault multi-user authorization (MUA) control (REQ-BKP-09). MUA uses a customer-owned Resource Guard, so this control stays audit-only.')
+@allowed([
+  'Audit'
+  'Disabled'
+])
+param vaultMultiUserAuthorizationPolicyEffect string = 'Audit'
+
+@description('Customer-approved regions in which backup vaults may be placed. The configure-backup built-in matches virtual machines whose location equals the vault region, so placement is approved per region rather than assuming a single centralized vault.')
 param approvedVaultRegions array = []
 
 @description('Customer-owned identifier of the documented backup retention standard, for example a change record or SSP control ID. No universal retention period is defined for every workload; this records which standard applies.')
@@ -333,10 +362,13 @@ param backupRetentionStandardId string = ''
 @description('Approved existing vault and backup-policy integration records by workload and region. Existing vault and policy IDs are the preferred integration path and are required before virtual machine backup remediation can be enabled.')
 param approvedBackupVaults approvedBackupVault[] = []
 
-@description('Set true only after supplying approvedBackupVaults, approvedVaultRegions, a retention standard ID, and an inclusion tag name. This assigns the configure-backup built-in with a remediating identity; remediation tasks are never started by this template.')
+@description('Set true to approve approvedBackupVaults entries whose vault lives outside the workload and critical-infrastructure subscriptions, such as a central backup subscription. The configure-backup built-in deploys the protected item into the vault subscription, so the assignment identity must hold Backup Contributor there.')
+param allowCrossSubscriptionBackupVaults bool = false
+
+@description('Set true only after supplying approvedBackupVaults, approvedVaultRegions, a retention standard ID, and an inclusion tag name. This assigns the configure-backup built-in with a remediating identity. This template starts no remediation task, but a DeployIfNotExists effect combined with denyPolicyEnforcementMode Default also protects matching virtual machines automatically on create or update, which is metered.')
 param enableVmBackupRemediation bool = false
 
-@description('Effect for the configure-backup control (REQ-BKP-02). AuditIfNotExists keeps the opt-in assignment reporting-only; DeployIfNotExists allows remediation of eligible virtual machines.')
+@description('Effect for the configure-backup control (REQ-BKP-02). AuditIfNotExists keeps the opt-in assignment reporting-only. DeployIfNotExists allows a manually started remediation of existing virtual machines and, when denyPolicyEnforcementMode is Default, automatic protection of matching virtual machines on create or update.')
 @allowed([
   'AuditIfNotExists'
   'DeployIfNotExists'
@@ -453,6 +485,14 @@ var vaultEncryptionPolicyDefinitionId = tenantResourceId(
 var vaultImmutabilityPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
   'd6f6f560-14b7-49a4-9fc8-d2c3a9807868'
+)
+var vaultSoftDeletePolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '31b8092a-36b8-434b-9af7-5ec844364148'
+)
+var vaultMultiUserAuthorizationPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  'c7031eab-0fc0-4cd9-acd0-4497bd66d91a'
 )
 var configureVmBackupPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
@@ -1037,7 +1077,7 @@ module backupPostureInitiative 'modules/policy-initiative.bicep' = {
   params: {
     initiativeName: '${namePrefix}-backup-posture'
     initiativeDisplayName: 'Demo - backup coverage and vault posture'
-    initiativeDescription: 'Audits virtual machine backup coverage and Recovery Services vault public access, encryption, and immutability posture. Auditing alone creates no vault and configures no backup.'
+    initiativeDescription: 'Audits virtual machine backup coverage and Recovery Services vault public access, encryption, immutability, soft delete, and multi-user authorization posture. Auditing alone creates no vault and configures no backup.'
     initiativeCategory: 'Backup'
     initiativeVersion: '1.0.0'
     initiativeParameters: {
@@ -1112,6 +1152,41 @@ module backupPostureInitiative 'modules/policy-initiative.bicep' = {
         ]
         defaultValue: true
       }
+      vaultSoftDeleteEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Vault soft delete effect'
+          description: 'Audit reports Recovery Services vaults whose soft delete is not enabled.'
+        }
+        allowedValues: [
+          'Audit'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      vaultCheckAlwaysOnSoftDeleteOnly: {
+        type: 'Boolean'
+        metadata: {
+          displayName: 'Report only always-on vault soft delete'
+        }
+        allowedValues: [
+          true
+          false
+        ]
+        defaultValue: false
+      }
+      vaultMultiUserAuthorizationEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Vault multi-user authorization effect'
+          description: 'Audit reports Recovery Services vaults without multi-user authorization (Resource Guard).'
+        }
+        allowedValues: [
+          'Audit'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
     }
     policyDefinitionGroups: [
       {
@@ -1124,7 +1199,7 @@ module backupPostureInitiative 'modules/policy-initiative.bicep' = {
         name: 'vault-posture'
         displayName: 'Vault posture'
         category: 'Backup'
-        description: 'Recovery Services vault private access, encryption, and immutability posture.'
+        description: 'Recovery Services vault private access, encryption, immutability, soft delete, and multi-user authorization posture.'
       }
     ]
     policyDefinitionReferences: [
@@ -1186,6 +1261,35 @@ module backupPostureInitiative 'modules/policy-initiative.bicep' = {
           'vault-posture'
         ]
       }
+      {
+        policyDefinitionId: vaultSoftDeletePolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'vault-soft-delete'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultSoftDeleteEffect\')]'
+          }
+          checkAlwaysOnSoftDeleteOnly: {
+            value: '[parameters(\'vaultCheckAlwaysOnSoftDeleteOnly\')]'
+          }
+        }
+        groupNames: [
+          'vault-posture'
+        ]
+      }
+      {
+        policyDefinitionId: vaultMultiUserAuthorizationPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'vault-multi-user-authorization'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultMultiUserAuthorizationEffect\')]'
+          }
+        }
+        groupNames: [
+          'vault-posture'
+        ]
+      }
     ]
   }
 }
@@ -1218,6 +1322,15 @@ module backupPostureAssignment 'modules/policy-assignment.bicep' = {
       vaultCheckLockedImmutabilityOnly: {
         value: vaultCheckLockedImmutabilityOnly
       }
+      vaultSoftDeleteEffect: {
+        value: vaultSoftDeletePolicyEffect
+      }
+      vaultCheckAlwaysOnSoftDeleteOnly: {
+        value: vaultCheckAlwaysOnSoftDeleteOnly
+      }
+      vaultMultiUserAuthorizationEffect: {
+        value: vaultMultiUserAuthorizationPolicyEffect
+      }
     }
     nonComplianceMessages: [
       {
@@ -1225,7 +1338,7 @@ module backupPostureAssignment 'modules/policy-assignment.bicep' = {
         policyDefinitionReferenceId: 'vm-backup-coverage'
       }
       {
-        message: 'Recovery Services vaults must disable public network access and use approved private connectivity.'
+        message: 'Recovery Services vaults must set publicNetworkAccess to Disabled. This audit evaluates the vault setting only and does not prove that private endpoints or private DNS are in place.'
         policyDefinitionReferenceId: 'vault-public-network-access'
       }
       {
@@ -1235,6 +1348,14 @@ module backupPostureAssignment 'modules/policy-assignment.bicep' = {
       {
         message: 'Recovery Services vaults must enable immutability to protect backup data from early deletion.'
         policyDefinitionReferenceId: 'vault-immutability'
+      }
+      {
+        message: 'Recovery Services vaults must enable soft delete so deleted backup data can be recovered.'
+        policyDefinitionReferenceId: 'vault-soft-delete'
+      }
+      {
+        message: 'Recovery Services vaults must enable multi-user authorization with a customer-owned Resource Guard.'
+        policyDefinitionReferenceId: 'vault-multi-user-authorization'
       }
     ]
   }
@@ -1250,7 +1371,7 @@ module vmBackupConfigurationAssignments 'modules/remediating-policy-assignment.b
     params: {
       assignmentName: 'demo-vm-backup-${approvedVaultIndex}'
       displayName: 'Demo - configure backup (${approvedVault.workload})'
-      description: 'Configures backup for tagged virtual machines in ${approvedVault.region} to the approved existing vault and backup policy for ${approvedVault.workload}. Remediation tasks are not started by this template.'
+      description: 'Configures backup for tagged virtual machines in ${approvedVault.region} to the approved existing vault and backup policy for ${approvedVault.workload}. This template starts no remediation task, but with effect DeployIfNotExists and enforcementMode Default the assignment also protects newly created or updated matching virtual machines automatically, which is a metered backup cost.'
       policyDefinitionId: configureVmBackupPolicyDefinitionId
       definitionVersion: '9.*.*'
       location: deploymentLocation
@@ -1473,7 +1594,11 @@ output backupGovernance object = {
   vaultDoubleEncryptionRequired: vaultDoubleEncryptionRequired
   vaultImmutabilityEffect: vaultImmutabilityPolicyEffect
   vaultCheckLockedImmutabilityOnly: vaultCheckLockedImmutabilityOnly
+  vaultSoftDeleteEffect: vaultSoftDeletePolicyEffect
+  vaultCheckAlwaysOnSoftDeleteOnly: vaultCheckAlwaysOnSoftDeleteOnly
+  vaultMultiUserAuthorizationEffect: vaultMultiUserAuthorizationPolicyEffect
   approvedVaultRegions: normalizedApprovedVaultRegions
+  crossSubscriptionVaultsApproved: allowCrossSubscriptionBackupVaults
   approvedVaultCount: length(validatedApprovedBackupVaults)
   backupRetentionStandardId: backupRetentionStandardId
   vmBackupRemediationEnabled: vmBackupRemediationActive
@@ -1492,9 +1617,11 @@ output backupWorkloadToVaultMapping array = [
   }
 ]
 
-@description('Remediating assignment identities and role assignments available for a manually started remediation. This template never starts a remediation task.')
+@description('Remediating assignment identities and role assignments available for a manually started remediation. This template never starts a remediation task, but a DeployIfNotExists effect under enforcementMode Default also protects matching virtual machines automatically on create or update.')
 output backupRemediation object = {
   remediationTasksStarted: false
+  vmBackupEnforcementMode: denyPolicyEnforcementMode
+  vmBackupAutomaticProtectionOnResourceWrite: vmBackupRemediationActive && vmBackupConfigurationEffect == 'DeployIfNotExists' && denyPolicyEnforcementMode == 'Default'
   vmBackupRoleDefinitionIds: [
     virtualMachineContributorRoleDefinitionId
     backupContributorRoleDefinitionId

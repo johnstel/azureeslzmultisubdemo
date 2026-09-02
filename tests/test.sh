@@ -1674,6 +1674,7 @@ jq -e --slurpfile catalog "${control_catalog}" '
   .parameters.enableVmBackupRemediation.defaultValue == false and
   .parameters.enableVaultDiagnostics.defaultValue == false and
   .parameters.deployRecoveryServicesVault.defaultValue == false and
+  .parameters.allowCrossSubscriptionBackupVaults.defaultValue == false and
   .parameters.approvedBackupVaults.defaultValue == [] and
   .parameters.approvedVaultRegions.defaultValue == [] and
   .parameters.backupRetentionStandardId.defaultValue == "" and
@@ -1684,32 +1685,55 @@ jq -e --slurpfile catalog "${control_catalog}" '
   .parameters.vaultPublicNetworkPolicyEffect.defaultValue == "Audit" and
   .parameters.vaultEncryptionPolicyEffect.defaultValue == "Audit" and
   .parameters.vaultImmutabilityPolicyEffect.defaultValue == "Audit" and
+  .parameters.vaultSoftDeletePolicyEffect.defaultValue == "Audit" and
+  .parameters.vaultMultiUserAuthorizationPolicyEffect.defaultValue == "Audit" and
   .parameters.vaultDoubleEncryptionRequired.defaultValue == false and
   .parameters.vaultCheckLockedImmutabilityOnly.defaultValue == true and
+  .parameters.vaultCheckAlwaysOnSoftDeleteOnly.defaultValue == false and
   .parameters.vaultImmutabilityState.defaultValue == "Unlocked" and
   .parameters.vaultSoftDeleteState.defaultValue == "Enabled" and
+  .parameters.denyPolicyEnforcementMode.defaultValue == "DoNotEnforce" and
   .variables.vmBackupCoveragePolicyDefinitionId == definition_id("REQ-BKP-01"; "policyDefinitions") and
   .variables.configureVmBackupPolicyDefinitionId == definition_id("REQ-BKP-02"; "policyDefinitions") and
   .variables.vaultPublicNetworkPolicyDefinitionId == definition_id("REQ-BKP-04"; "policyDefinitions") and
   .variables.vaultEncryptionPolicyDefinitionId == definition_id("REQ-BKP-05"; "policyDefinitions") and
   .variables.vaultImmutabilityPolicyDefinitionId == definition_id("REQ-BKP-06"; "policyDefinitions") and
+  .variables.vaultSoftDeletePolicyDefinitionId == definition_id("REQ-BKP-08"; "policyDefinitions") and
+  .variables.vaultMultiUserAuthorizationPolicyDefinitionId ==
+    definition_id("REQ-BKP-09"; "policyDefinitions") and
   .variables.resourceDiagnosticsToLogAnalyticsPolicySetDefinitionId ==
     definition_id("REQ-BKP-07"; "policySetDefinitions") and
   $references["vm-backup-coverage"].definitionVersion == pinned_version("REQ-BKP-01") and
   $references["vault-public-network-access"].definitionVersion == pinned_version("REQ-BKP-04") and
   $references["vault-customer-managed-key"].definitionVersion == pinned_version("REQ-BKP-05") and
   $references["vault-immutability"].definitionVersion == pinned_version("REQ-BKP-06") and
+  $references["vault-soft-delete"].definitionVersion == pinned_version("REQ-BKP-08") and
+  $references["vault-multi-user-authorization"].definitionVersion == pinned_version("REQ-BKP-09") and
+  ($references["vault-soft-delete"].parameters | keys | sort) == ["checkAlwaysOnSoftDeleteOnly", "effect"] and
+  ($references["vault-soft-delete"].parameters.effect.value
+    | contains("vaultSoftDeleteEffect")) and
+  ($references["vault-multi-user-authorization"].parameters | keys) == ["effect"] and
   ($initiative.scope | contains("demoRootManagementGroupId")) and
   ($posture.scope | contains("landingZonesManagementGroupId")) and
   ($posture | has("condition") | not) and
   ($posture.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
     ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) and
+  (first($posture.properties.parameters.nonComplianceMessages.value[]
+    | select(.policyDefinitionReferenceId == "vault-public-network-access") | .message)
+    | contains("publicNetworkAccess") and contains("does not prove")) and
+  .variables.vmBackupRemediationActive ==
+    "[and(parameters(\u0027enableVmBackupRemediation\u0027), variables(\u0027validatedVmBackupRemediation\u0027))]" and
+  .variables.vaultDiagnosticsActive ==
+    "[and(parameters(\u0027enableVaultDiagnostics\u0027), variables(\u0027validatedVaultDiagnostics\u0027))]" and
+  .variables.customerOwnedVaultActive ==
+    "[and(parameters(\u0027deployRecoveryServicesVault\u0027), variables(\u0027validatedRecoveryServicesVaultCreation\u0027))]" and
   $vmBackup.condition == "[variables(\u0027vmBackupRemediationActive\u0027)]" and
   $vmBackup.copy.count == "[length(variables(\u0027validatedApprovedBackupVaults\u0027))]" and
   ($vmBackup.scope | contains("landingZonesManagementGroupId")) and
   $vmBackup.properties.parameters.definitionVersion.value == pinned_version("REQ-BKP-02") and
   $vmBackup.properties.parameters.identity.value == {type: "SystemAssigned"} and
   $vmBackup.properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
+  $vmBackup.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
   $vmBackup.properties.parameters.verifiedRoleDefinitionIds.value == [
     "[variables(\u0027virtualMachineContributorRoleDefinitionId\u0027)]",
     "[variables(\u0027backupContributorRoleDefinitionId\u0027)]"
@@ -1718,6 +1742,10 @@ jq -e --slurpfile catalog "${control_catalog}" '
     control("REQ-BKP-02").roleDefinitionIds and
   $vmBackup.properties.parameters.parameters.value.backupPolicyId.value ==
     "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].backupPolicyResourceId]" and
+  $vmBackup.properties.parameters.parameters.value.vaultLocation.value ==
+    "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].region]" and
+  $vmBackup.properties.parameters.parameters.value.inclusionTagValue.value ==
+    "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].inclusionTagValues]" and
   $diagnostics.condition == "[variables(\u0027vaultDiagnosticsActive\u0027)]" and
   ($diagnostics.scope | contains("landingZonesManagementGroupId")) and
   $diagnostics.properties.parameters.definitionVersion.value == pinned_version("REQ-BKP-07") and
@@ -1728,13 +1756,25 @@ jq -e --slurpfile catalog "${control_catalog}" '
   $vault.condition == "[variables(\u0027customerOwnedVaultActive\u0027)]" and
   $vault.subscriptionId == "[parameters(\u0027workloadSubscriptionId\u0027)]" and
   (.variables.validatedApprovedBackupVaults | contains("fail(")) and
+  (.variables.validatedApprovedBackupVaults | contains("allowCrossSubscriptionBackupVaults")) and
+  (.variables.validatedApprovedBackupVaults | contains("approvedBackupVaultKeys")) and
+  (.variables.validatedApprovedBackupVaults | contains("approvedBackupVaultTargetKeys")) and
+  (.variables.crossSubscriptionApprovedBackupVaults | contains("backupEligibleSubscriptionIds")) and
   (.variables.validatedVmBackupRemediation | contains("fail(")) and
   (.variables.validatedVaultDiagnostics | contains("fail(")) and
   (.variables.validatedRecoveryServicesVaultCreation | contains("fail(")) and
+  (.variables.validatedRecoveryServicesVaultCreation | contains("backupRetentionStandardId")) and
+  (.variables.validatedRecoveryServicesVaultCreation | contains("approvedVaultRegions")) and
   (.variables.vmBackupRemediationInputsValid | contains("vmBackupInclusionTagName")) and
   (.variables.vmBackupRemediationInputsValid | contains("backupRetentionStandardId")) and
   ([.. | objects | select(.type? == "Microsoft.PolicyInsights/remediations")] | length) == 0 and
-  .outputs.backupRemediation.value.remediationTasksStarted == false
+  .outputs.backupRemediation.value.remediationTasksStarted == false and
+  .outputs.backupRemediation.value.vmBackupEnforcementMode ==
+    "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  (.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite
+    | contains("DeployIfNotExists") and contains("Default")) and
+  .outputs.backupGovernance.value.crossSubscriptionVaultsApproved ==
+    "[parameters(\u0027allowCrossSubscriptionBackupVaults\u0027)]"
 ' "${TEMP_DIR}/main.json" >/dev/null || {
   printf 'ERROR: Backup coverage and vault posture controls do not match the verified control catalog or safe defaults.\n' >&2
   exit 1
@@ -1743,13 +1783,21 @@ for backup_validation_message in \
   'enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs' \
   'deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied' \
   'enableVaultDiagnostics requires deployCentralLogAnalytics to be true' \
-  'recoveryServicesVaultLocation must be one of approvedVaultRegions'; do
+  'recoveryServicesVaultLocation must be one of approvedVaultRegions' \
+  'deployRecoveryServicesVault requires a documented backupRetentionStandardId' \
+  'Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription' \
+  'must use case-insensitively unique workload and region pairs' \
+  'must not share an inclusion tag value'; do
   rg -q "${backup_validation_message}" "${PROJECT_DIR}/main.bicep" || {
     printf 'ERROR: Backup input validation is missing: %s\n' "${backup_validation_message}" >&2
     exit 1
   }
 done
-printf '    Confirm approved vault placement rules reject unusable vault and policy inputs...\n'
+rg -q 'no dedicated Azure Policy built-in' "${PROJECT_DIR}/policy/control-catalog.json" && {
+  printf 'ERROR: The catalog still claims that vault soft delete has no dedicated Azure Policy built-in.\n' >&2
+  exit 1
+}
+printf '    Confirm approved vault placement and mapping rules reject unusable backup inputs...\n'
 python3 - "${PROJECT_DIR}/tests/fixtures/backup-vault-placement-cases.json" <<'PYEOF'
 import json
 import sys
@@ -1758,41 +1806,83 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     fixture = json.load(stream)
 
 approved_regions = {region.lower() for region in fixture["approvedVaultRegions"]}
-eligible_subscriptions = {subscription.lower() for subscription in fixture["eligibleSubscriptionIds"]}
+governed_subscriptions = {subscription.lower() for subscription in fixture["governedSubscriptionIds"]}
+forbidden_characters = set("<>%&\\?#+:\"|*; ")
+
+
+def is_guid(value):
+    parts = value.split("-")
+    return (
+        len(value) == 36
+        and [len(part) for part in parts] == [8, 4, 4, 4, 12]
+        and all(character in "0123456789abcdefABCDEF" for character in value.replace("-", ""))
+    )
+
+
+def is_name_segment(value):
+    return value != "" and value == value.strip() and not (set(value) & forbidden_characters)
 
 
 def is_vault_id(value):
     parts = value.split("/")
     return (
-        len(parts) == 9
+        value == value.strip()
+        and len(parts) == 9
+        and parts[0] == ""
         and parts[1].lower() == "subscriptions"
+        and is_guid(parts[2])
         and parts[3].lower() == "resourcegroups"
+        and is_name_segment(parts[4])
         and parts[5].lower() == "providers"
         and parts[6].lower() == "microsoft.recoveryservices"
         and parts[7].lower() == "vaults"
-        and parts[8].strip() != ""
+        and is_name_segment(parts[8])
     )
 
 
 def is_policy_of_vault(policy_id, vault_id):
+    parts = policy_id.split("/")
     return (
-        len(policy_id.split("/")) == 11
+        policy_id == policy_id.strip()
+        and len(parts) == 11
         and is_vault_id(vault_id)
         and policy_id.lower().startswith(f"{vault_id.lower()}/backuppolicies/")
-        and policy_id.split("/")[10].strip() != ""
+        and parts[9].lower() == "backuppolicies"
+        and is_name_segment(parts[10])
     )
 
 
-for case in fixture["cases"]:
+for case in fixture["placementCases"]:
     vault_id = case["vaultResourceId"]
     valid = (
         case["region"].lower() in approved_regions
         and is_vault_id(vault_id)
         and is_policy_of_vault(case["backupPolicyResourceId"], vault_id)
-        and vault_id.split("/")[2].lower() in eligible_subscriptions
+        and (
+            case["allowCrossSubscriptionBackupVaults"]
+            or vault_id.split("/")[2].lower() in governed_subscriptions
+        )
     )
     if valid != case["valid"]:
         raise SystemExit(f"ERROR: Approved vault placement case failed: {case['name']}")
+
+for case in fixture["mappingCases"]:
+    entries = case["entries"]
+    mapping_keys = [
+        f"{entry['workload'].strip().lower()}|{entry['region'].strip().lower()}" for entry in entries
+    ]
+    target_keys = [
+        f"{entry['region'].strip().lower()}|{tag.strip().lower()}"
+        for entry in entries
+        for tag in entry["inclusionTagValues"]
+    ]
+    valid = (
+        all(entry["inclusionTagValues"] for entry in entries)
+        and len(mapping_keys) == len(set(mapping_keys))
+        and len(target_keys) == len(set(target_keys))
+    )
+    if valid != case["valid"]:
+        raise SystemExit(f"ERROR: Approved vault mapping case failed: {case['name']}")
 PYEOF
 printf '    Confirm the optional customer-owned vault path stays metered, tagged, and off by default...\n'
 az bicep build \
@@ -1820,22 +1910,25 @@ jq -e '
   exit 1
 }
 printf '    Confirm the approved existing-vault integration path compiles...\n'
+backup_vault_id='/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload'
 backup_params="${TEMP_DIR}/backup-existing-vault.bicepparam"
 sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
-  -e "s|^param approvedVaultRegions = .*\$|param approvedVaultRegions = ['eastus2']|" \
+  -e "s|^param approvedVaultRegions = .*\$|param approvedVaultRegions = ['eastus2', 'centralus']|" \
   -e "s|^param backupRetentionStandardId = .*\$|param backupRetentionStandardId = 'RETENTION-STD-001'|" \
   -e "s|^param vmBackupInclusionTagName = .*\$|param vmBackupInclusionTagName = 'BackupPolicy'|" \
   -e "s|^param enableVmBackupRemediation = .*\$|param enableVmBackupRemediation = true|" \
-  -e "s|^param approvedBackupVaults = .*\$|param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload', backupPolicyResourceId: '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily', inclusionTagValues: ['daily']}]|" \
+  -e "s|^param approvedBackupVaults = .*\$|param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '${backup_vault_id}', backupPolicyResourceId: '${backup_vault_id}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}, {workload: 'corp', region: 'centralus', vaultResourceId: '${backup_vault_id}', backupPolicyResourceId: '${backup_vault_id}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}]|" \
   "${PROJECT_DIR}/parameters/main.template.bicepparam" > "${backup_params}"
 az bicep build-params --file "${backup_params}" --outfile "${backup_params}.json" >/dev/null
-jq -e '
+jq -e --arg vaultId "${backup_vault_id}" '
   .parameters.enableVmBackupRemediation.value == true and
   .parameters.deployRecoveryServicesVault.value == false and
-  .parameters.approvedVaultRegions.value == ["eastus2"] and
-  (.parameters.approvedBackupVaults.value | length) == 1 and
-  (.parameters.approvedBackupVaults.value | first
-    | .backupPolicyResourceId | startswith("/subscriptions/11111111-1111-1111-1111-111111111111"))
+  .parameters.allowCrossSubscriptionBackupVaults.value == false and
+  .parameters.approvedVaultRegions.value == ["eastus2", "centralus"] and
+  (.parameters.approvedBackupVaults.value | length) == 2 and
+  (.parameters.approvedBackupVaults.value | map(.workload) | unique) == ["corp"] and
+  (.parameters.approvedBackupVaults.value | map(.region) | sort) == ["centralus", "eastus2"] and
+  (.parameters.approvedBackupVaults.value | all(.backupPolicyResourceId | startswith($vaultId)))
 ' "${backup_params}.json" >/dev/null || {
   printf 'ERROR: The approved existing-vault integration path did not compile to the expected parameter values.\n' >&2
   exit 1

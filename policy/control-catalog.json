@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "catalogVersion": "1.1.0",
-  "generatedOn": "2026-09-01",
+  "catalogVersion": "1.2.0",
+  "generatedOn": "2026-09-02",
   "purpose": "Authoritative v2 mapping from each customer requirement to its implementation mechanism (Azure Policy built-in/custom definition or initiative, Entra/PIM artifact, Defender CSPM/CIEM feature, shared-service architecture pattern, or manual evidence process) before v2 policy code is expanded. Sourced from public Microsoft Learn and the Azure/azure-policy GitHub repository; no tenant credentials were used.",
   "sourceIssue": "https://github.com/johnstel/azureeslzmultisubdemo/issues/3",
   "classificationValues": [
@@ -25,7 +25,7 @@
     "REQ-DEF-01 (\"Configure Microsoft Defender for Cloud plans\") is an all-or-nothing initiative: it exposes no assignment-time parameters, so assigning it enables all 12 member Defender plans immediately with no per-plan opt-out. It is **not safe** for this repository's audit-first/no-cost demo default profile and is documented for completeness only. Each plan must instead be independently enabled via its own verified, individually assignable policy definition (REQ-DEF-02 through REQ-DEF-04), which does expose its own `effect` parameter (`DeployIfNotExists`/`Disabled`) that can be explicitly overridden at assignment time. REQ-DEF-01's `roleDefinitionIds` remains a complete verified union (Owner + Security Admin) across all 12 members (`rolesVaryByMember: true`) for reference only.",
     "REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).",
     "REQ-DEF-06 is a no-cost audit signal from the free Foundational CSPM tier. It does not deploy a vulnerability scanner or enable any paid Defender plan.",
-    "REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship."
+    "REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 and REQ-BKP-08 through REQ-BKP-09 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship."
   ],
   "controls": [
     {
@@ -1338,7 +1338,7 @@
       "mechanism": {
         "kind": "service-specific-audit-policy",
         "builtIn": false,
-        "displayName": "Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) \u2014 not yet selected",
+        "displayName": "Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) — not yet selected",
         "definitionId": null,
         "sourceUrl": null,
         "verifiedOn": "2026-08-31",
@@ -1391,7 +1391,7 @@
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state.",
-      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. No remediation identity is needed \u2014 the policy only audits/denies the account setting, it does not deploy or modify resources."
+      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. No remediation identity is needed — the policy only audits/denies the account setting, it does not deploy or modify resources."
     },
     {
       "id": "REQ-BASE-01",
@@ -1460,7 +1460,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + Defender for Cloud regulatory compliance dashboard.",
-      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB \u2014 avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 108 total member policy references, computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01 (validating that each member's effect-named parameter actually references an existing top-level initiative parameter, not just counting top-level parameter names). Applying this method: 106 of 108 members are effect-mapped and 2 are fixed/unexposed at the initiative level -- policyDefinitionReferenceId 06a78e20-9358-41c9-923c-fb736d382a4d ('Audit VMs that do not use managed disks', file VMRequireManagedDisk_Audit.json) and b6e2945c-0b7b-40f5-9233-7a5323b5cdc6 (file NetworkWatcher_Enabled_Audit.json); both were fetched directly and confirmed fixed at a plain Audit effect. No DeployIfNotExists/Modify (remediation-capable) member exists in this initiative; remediationIdentityRequired is therefore false and no roleDefinitionIds are required.",
+      "notes": "Independent opt-in parameter, disabled by default (issue #15); overlaps heavily with MCSB — avoid duplicate custom enforcement of the same underlying controls. supportedEffects is the verified union of allowedValues (Audit/AuditIfNotExists/Deny/Disabled) across the initiative's 108 total member policy references, computed with the same reproducible per-member effect-mapping method described in REQ-BASE-01 (validating that each member's effect-named parameter actually references an existing top-level initiative parameter, not just counting top-level parameter names). Applying this method: 106 of 108 members are effect-mapped and 2 are fixed/unexposed at the initiative level -- policyDefinitionReferenceId 06a78e20-9358-41c9-923c-fb736d382a4d ('Audit VMs that do not use managed disks', file VMRequireManagedDisk_Audit.json) and b6e2945c-0b7b-40f5-9233-7a5323b5cdc6 (file NetworkWatcher_Enabled_Audit.json); both were fetched directly and confirmed fixed at a plain Audit effect. No DeployIfNotExists/Modify (remediation-capable) member exists in this initiative; remediationIdentityRequired is therefore false and no roleDefinitionIds are required.",
       "rolesVaryByMember": false
     },
     {
@@ -1731,7 +1731,7 @@
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier (always on), not by a paid Defender plan.",
-      "notes": "Deliberately independent of REQ-DEF-02..04 (paid Defender plans): this policy only audits Microsoft.Security/assessments for a vulnerability-assessment finding \u2014 it neither deploys a scanner nor requires a paid plan to be assigned, so it stays no-cost-safe and does not duplicate the paid-plan controls (issue #20). Defaults AuditIfNotExists, which is already safe, so no explicit effect override is required by requiredParameters."
+      "notes": "Deliberately independent of REQ-DEF-02..04 (paid Defender plans): this policy only audits Microsoft.Security/assessments for a vulnerability-assessment finding — it neither deploys a scanner nor requires a paid plan to be assigned, so it stays no-cost-safe and does not duplicate the paid-plan controls (issue #20). Defaults AuditIfNotExists, which is already safe, so no explicit effect override is required by requiredParameters."
     },
     {
       "id": "REQ-BKP-01",
@@ -1869,7 +1869,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state.",
-      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. Private connectivity itself (private endpoints) is a customer-supplied networking input, not created by this audit-only policy."
+      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. This policy evaluates the vault's publicNetworkAccess property only; it does not evaluate or prove private endpoints, private DNS, or end-to-end private connectivity, which remain customer-supplied networking inputs."
     },
     {
       "id": "REQ-BKP-05",
@@ -1940,7 +1940,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state.",
-      "notes": "Defaults Audit with checkLockedImmutabilityOnly=true (locked immutability only). Vault soft delete is a separate vault-level setting that Microsoft enables by default for Recovery Services vaults and is not currently exposed as its own dedicated Azure Policy built-in in the public Azure/azure-policy repository (confirmed by search); its default-on status is tracked here as a manual-evidence note rather than claimed as an audited policy control."
+      "notes": "Defaults Audit with checkLockedImmutabilityOnly=true (locked immutability only). Vault soft delete is audited separately by REQ-BKP-08 using its own dedicated built-in; immutability and soft delete are complementary vault-protection settings."
     },
     {
       "id": "REQ-BKP-07",
@@ -1980,6 +1980,71 @@
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
       "notes": "Re-declared under the backup domain (rather than only relying on REQ-LOG-02's generic ~140-member coverage claim) specifically because issue #19 requires vault diagnostics to be an explicit, individually verified requirement, not an assumption riding on the initiative's broad scope."
+    },
+    {
+      "id": "REQ-BKP-08",
+      "domain": "backup",
+      "customerRequirement": "Audit that soft delete is enabled on Recovery Services vaults so deleted backup data stays recoverable (issue #19 vault protection).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Soft delete must be enabled for Recovery Services Vaults.",
+        "definitionId": "31b8092a-36b8-434b-9af7-5ec844364148",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-09-02",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/AzBackupRecoveryServicesVault_SoftDelete_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect",
+        "checkAlwaysOnSoftDeleteOnly"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Audit-only. checkAlwaysOnSoftDeleteOnly defaults to false in this repository (Enabled and AlwaysOn are both compliant) because AlwaysOn is irreversible; the built-in's own default is true. This template never changes soft delete on an existing vault."
+    },
+    {
+      "id": "REQ-BKP-09",
+      "domain": "backup",
+      "customerRequirement": "Audit that multi-user authorization (MUA) is enabled on Recovery Services vaults so privileged backup operations require a Resource Guard approval (issue #19 vault protection).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Multi-User Authorization (MUA) must be enabled for Recovery Services Vaults.",
+        "definitionId": "c7031eab-0fc0-4cd9-acd0-4497bd66d91a",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-09-02",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/AzBackupRecoveryServicesVault_MUA_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Audit-only. MUA depends on a customer-owned Resource Guard, ideally in a separate subscription and tenant-managed directory, which this template never creates; the control reports vault posture only."
     },
     {
       "id": "REQ-CIP-01",

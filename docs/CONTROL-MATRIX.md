@@ -2,10 +2,10 @@
 
 This document is the human-readable companion to the machine-readable [`policy/control-catalog.json`](../policy/control-catalog.json). It maps every customer requirement identified for v2.0 to its implementation mechanism, before any new policy code is written. Regenerate this document whenever the JSON catalog changes so the two stay consistent.
 
-- **Catalog version:** `1.1.0`
-- **Generated on:** `2026-09-01`
+- **Catalog version:** `1.2.0`
+- **Generated on:** `2026-09-02`
 - **Source issue:** https://github.com/johnstel/azureeslzmultisubdemo/issues/3
-- **Total control records:** 61
+- **Total control records:** 63
 
 ## Scope and safety
 
@@ -20,7 +20,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 - REQ-DEF-01 ("Configure Microsoft Defender for Cloud plans") is an all-or-nothing initiative: it exposes no assignment-time parameters, so assigning it enables all 12 member Defender plans immediately with no per-plan opt-out. It is **not safe** for this repository's audit-first/no-cost demo default profile and is documented for completeness only. Each plan must instead be independently enabled via its own verified, individually assignable policy definition (REQ-DEF-02 through REQ-DEF-04), which does expose its own `effect` parameter (`DeployIfNotExists`/`Disabled`) that can be explicitly overridden at assignment time. REQ-DEF-01's `roleDefinitionIds` remains a complete verified union (Owner + Security Admin) across all 12 members (`rolesVaryByMember: true`) for reference only.
 - REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).
 - REQ-DEF-06 is a no-cost audit signal from the free Foundational CSPM tier. It does not deploy a vulnerability scanner or enable any paid Defender plan.
-- REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship.
+- REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 and REQ-BKP-08 through REQ-BKP-09 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship.
 
 ## Classification legend
 
@@ -139,8 +139,10 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | REQ-BKP-05 | Require Recovery Services vaults to use customer-managed keys (CMK) for encrypting backup data (issue #19 vault posture). | landingzones | azure-policy | Azure Recovery Services vaults should use customer-managed keys for encrypting backup data (built-in: Yes) | `2e94d99a-8a36-4563-bc77-810d8893b671` | 1.0.1 | Audit, Deny, Disabled | audit-only |
 | REQ-BKP-06 | Require Recovery Services vault immutability to protect backup data from early deletion (issue #19 vault posture, soft-delete/immutability). | landingzones | azure-policy | Immutability must be enabled for Recovery Services vaults (built-in: Yes) | `d6f6f560-14b7-49a4-9fc8-d2c3a9807868` | 1.0.2 | Audit, Disabled | audit-only |
 | REQ-BKP-07 | Export Recovery Services vault diagnostic logs to the effective central Log Analytics workspace (issue #19 vault posture, diagnostics). | landingzones | azure-policy | Enable allLogs category group resource logging for supported resources to Log Analytics (built-in: Yes) | `0884adba-2312-4468-abeb-5422caed1038` | 1.0.0 | AuditIfNotExists, DeployIfNotExists, Disabled | deployifnotexists-opt-in |
+| REQ-BKP-08 | Audit that soft delete is enabled on Recovery Services vaults so deleted backup data stays recoverable (issue #19 vault protection). | landingzones | azure-policy | Soft delete must be enabled for Recovery Services Vaults. (built-in: Yes) | `31b8092a-36b8-434b-9af7-5ec844364148` | 1.0.1 | Audit, Disabled | audit-only |
+| REQ-BKP-09 | Audit that multi-user authorization (MUA) is enabled on Recovery Services vaults so privileged backup operations require a Resource Guard approval (issue #19 vault protection). | landingzones | azure-policy | Multi-User Authorization (MUA) must be enabled for Recovery Services Vaults. (built-in: Yes) | `c7031eab-0fc0-4cd9-acd0-4497bd66d91a` | 1.0.1 | Audit, Disabled | audit-only |
 
-**Required customer backup inputs:** `recoveryServicesVaultResourceId`, `backupRetentionStandardId`, `approvedVaultRegions`, `workloadToVaultMapping`, explicit `effect` values for REQ-BKP-04 through REQ-BKP-06, `enableDoubleEncryption`, `checkLockedImmutabilityOnly`, and `logAnalytics`. Defaults create and configure nothing; REQ-BKP-07 remediation remains explicit opt-in.
+**Required customer backup inputs:** `recoveryServicesVaultResourceId`, `backupRetentionStandardId`, `approvedVaultRegions`, `workloadToVaultMapping`, explicit `effect` values for REQ-BKP-04 through REQ-BKP-06 and REQ-BKP-08 through REQ-BKP-09, `enableDoubleEncryption`, `checkLockedImmutabilityOnly`, `checkAlwaysOnSoftDeleteOnly`, and `logAnalytics`. Defaults create and configure nothing; REQ-BKP-07 remediation remains explicit opt-in.
 
 ## NERC CIP
 
