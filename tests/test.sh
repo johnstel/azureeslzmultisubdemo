@@ -166,8 +166,12 @@ printf '    Confirm tag remediation workflows remain preview-first and explicitl
 bash_remediation="${PROJECT_DIR}/scripts/remediate-resource-tags.sh"
 powershell_remediation="${PROJECT_DIR}/scripts/remediate-resource-tags.ps1"
 bash -n "${bash_remediation}"
-pwsh -NoLogo -NoProfile -Command \
-  "\$errors = \$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${powershell_remediation}', [ref]\$null, [ref]\$errors); if (\$errors.Count) { exit 1 }"
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoLogo -NoProfile -Command \
+    "\$errors = \$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${powershell_remediation}', [ref]\$null, [ref]\$errors); if (\$errors.Count) { exit 1 }"
+else
+  printf '  (skipping PowerShell tag-remediation syntax parse: pwsh is not available; tests/test.ps1 provides full coverage)\n'
+fi
 rg -q -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION' "${bash_remediation}"
 rg -q -F 'IFS= read -r typed_confirmation' "${bash_remediation}"
 rg -q -F 'validate_live_controls' "${bash_remediation}"
