@@ -114,10 +114,25 @@
     "approvedRouteTablePrefixes": {
       "value": []
     },
+    "dataProtectionPolicyEffect": {
+      "value": "Audit"
+    },
+    "storageMinimumTlsVersion": {
+      "value": "TLS1_2"
+    },
+    "approvedCustomerManagedKeyVaultUris": {
+      "value": []
+    },
+    "approvedCustomerManagedKeyNames": {
+      "value": []
+    },
     "deployRoleAssignments": {
       "value": false
     },
     "deployEvidenceResources": {
+      "value": false
+    },
+    "enableTagInheritance": {
       "value": false
     },
     "evidenceLocation": {

@@ -60,12 +60,14 @@ root:
 | Demo root | Customer deployment-restrictions initiative: `eastus`/`eastus2`, approved resource types and VM SKUs, managed disks, and public IP creation | Deny members in `DoNotEnforce`; audit members remain Audit |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Landing Zones | Require `CostCenter`, `ApplicationName`, `Owner`, `Environment`, `DataClassification`, and `SSP-ID` tags on resource groups | Initiative assignment in `DoNotEnforce` |
+| Landing Zones | Inherit those six tags to taggable child resources only when missing | Modify initiative assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
 | Corp/Online and opt-in Critical Infrastructure | Audit selected PaaS public network access and private endpoint readiness | Audit |
 | Corp/Online and opt-in Critical Infrastructure | Audit supplied route-table expectations for an approved firewall | Explicit opt-in, Audit |
 | Demo root | Microsoft cloud security benchmark (built-in initiative, enabled by default) | Assignment in `DoNotEnforce` |
 | Demo root | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
 | Demo root | NIST SP 800-53 Rev. 5 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
+| Landing Zones | Storage and Key Vault data-protection initiative: secure transfer, minimum TLS, public blob and network access, shared-key posture, Key Vault soft delete, deletion protection, RBAC authorization, firewall/public network access, private-link and diagnostics readiness, and service-specific customer-managed key audits | Audit assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -76,6 +78,45 @@ assigned at Landing Zones. Change
 policy impact. The resource-group tagging initiative composes six instances of
 Azure's built-in **Require a tag on resource groups** definition and provides a
 tag-specific noncompliance message for each requirement.
+
+The companion tag-inheritance initiative composes six instances of the verified
+**Inherit a tag from the resource group if missing** built-in
+(`ea3f2387-9b95-492a-a190-fcdc54f7b070`). Its `Indexed` mode limits evaluation
+to taggable resources. Each `Modify` operation adds only an absent tag whose
+resource-group value is non-empty, so an existing resource value always wins.
+The Landing Zones assignment has a system-assigned identity in
+`deploymentLocation` and the role declared by the built-in: Contributor
+(`b24988ac-6180-42a0-ab88-20f7382dd24c`). The narrower Tag Contributor role
+cannot perform the resource update used by this built-in's remediation path.
+The assignment, identity, and RBAC are omitted unless
+`enableTagInheritance=true`; when enabled, the assignment still inherits the
+safe `DoNotEnforce` default and creates no remediation task.
+
+### Deliberately remediate existing resource tags
+
+After an approved deployment with `enableTagInheritance=true`, the
+`tagInheritanceRemediation` output provides the assignment ID and six definition
+reference IDs. Starting remediation remains a separate operator action. The
+scripts validate the live assignment ID, exact Landing Zones scope, initiative,
+system identity, non-global location, and exact six built-in references before
+showing a no-change preview:
+
+```bash
+./scripts/remediate-resource-tags.sh parameters/demo.parameters.json
+```
+
+```powershell
+.\scripts\remediate-resource-tags.ps1 -ParameterFile .\parameters\demo.parameters.json
+```
+
+Only after reviewing that preview, set
+`ESLZ_TAG_REMEDIATION_CONFIRMATION=REMEDIATE-MISSING-RESOURCE-TAGS` and rerun
+with `--execute` (Bash) or `-Execute` (PowerShell). Both workflows then require
+typing the validated tenant, scope, and assignment before revalidating the live
+controls and creating six tasks. The PowerShell workflow uses the supported
+`Start-AzPolicyRemediation` cmdlet. Do not substitute a different policy or
+role: these tasks only add missing values and must not overwrite
+customer-supplied resource tags.
 
 The customer-control profile is separate from the broader safe demo location
 profile. Its `customerAllowedLocations`, `customerAllowedResourceTypes`, and
@@ -98,6 +139,55 @@ public-IP audit remains the only public-IP resource control.
 For rollout phasing, prefer resource selectors or `DoNotEnforce` assignment
 mode. Use an exemption only when a specific deployed scope needs a reviewed,
 ticketed exception with a mandatory owner and expiry.
+
+### Storage, Key Vault, and customer-managed keys
+
+The Landing Zones data-protection initiative composes verified built-in
+definitions for storage secure transfer, minimum TLS version, public blob
+access, network access, shared-key authorization, and for Key Vault soft
+delete, deletion (purge) protection, RBAC authorization, firewall/public
+network access, and resource-log readiness. Private-link readiness for both
+services is owned by the private-access initiative described below
+(REQ-NET-04 and REQ-NET-05), so it is not repeated here. `dataProtectionPolicyEffect` defaults to `Audit`; controls whose
+built-in supports only `Audit`/`Disabled` or `AuditIfNotExists`/`Disabled`
+follow that choice without ever being escalated to `Deny`. Purge protection is
+only ever audited or required, never disabled: it is bound to a dedicated
+`purgeProtectionEffect` that allows `Audit` or `Deny` only, so selecting
+`Disabled` for `dataProtectionPolicyEffect` still leaves that control auditing.
+
+Each built-in member is pinned to the exact major version recorded in
+`policy/control-catalog.json` (for example `2.*.*`) through the reusable
+`definitionVersion` support in `modules/policy-initiative.bicep`, so a future
+major revision of a built-in never changes the assignment's behaviour without
+review. The in-repository custom member is intentionally unpinned, because
+`definitionVersion` applies only to built-in definitions.
+
+The public-access and diagnostics controls audit configuration and readiness
+only. They do not deploy a private endpoint, private DNS zone, virtual
+network, or diagnostic setting, so a compliant result must not be reported as
+delivered private connectivity or delivered logging.
+
+Customer-managed key (CMK) coverage is service-specific and audit-first, not a
+blanket deny across every Azure service. The verified storage CMK built-in only
+confirms that encryption uses a Key Vault key source, so the in-repository
+`${namePrefix}-audit-storage-cmk-approved-key` definition adds the approved
+inventory check driven by the `approvedCustomerManagedKeyVaultUris` and
+`approvedCustomerManagedKeyNames` parameters. Both default to empty, which
+reports nothing. Before enabling CMK, the customer owns these dependencies:
+
+- **Identity:** a managed identity granted `get`, `wrapKey`, and `unwrapKey` on
+  the key. This repository never grants key access or changes data-plane
+  permissions.
+- **Key rotation:** a documented rotation process and the re-wrap behavior of
+  each service that consumes the key.
+- **Availability:** a deleted, disabled, expired, or purged key makes encrypted
+  data unreadable, so key lifecycle must be monitored.
+- **Recovery:** Key Vault soft delete and purge protection must stay enabled;
+  purge protection must never be disabled once enabled.
+- **Private network:** when vault public network access is restricted, the
+  consuming service needs approved private connectivity that the customer
+  deploys and operates.
+
 ### Private access and firewall-route guardrails
 
 The private-access initiative audits Storage and Key Vault public network
@@ -305,7 +395,8 @@ to a supplied dedicated demo-root management group. It combines the verified
 built-in allowed-locations definition with the in-repository public-IP audit
 definition, passes audit-first initiative parameters through to the built-in,
 and creates no assignment or metered resource. The example is not called by
-`main.bicep`; domain initiatives remain explicit future work driven by the
+`main.bicep`; the deployed domain initiatives (workload network ingress and
+Landing Zones data protection) are composed directly in `main.bicep` from the
 authoritative [`policy/control-catalog.json`](policy/control-catalog.json).
 
 ### Reusable governed policy exemptions
@@ -544,8 +635,10 @@ For a first review, retain:
 
 ```json
 "denyPolicyEnforcementMode": { "value": "DoNotEnforce" },
+"dataProtectionPolicyEffect": { "value": "Audit" },
 "deployRoleAssignments": { "value": false },
-"deployEvidenceResources": { "value": false }
+"deployEvidenceResources": { "value": false },
+"enableTagInheritance": { "value": false }
 ```
 
 Benchmark defaults keep only the stable MCSB baseline enabled; add the CIS or
