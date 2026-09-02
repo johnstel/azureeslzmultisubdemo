@@ -87,7 +87,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/25 Validate repository versioning and branch guidance...'
+    Write-Host '1/26 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -105,7 +105,7 @@ try {
         }
     }
 
-    Write-Host '2/25 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/26 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -266,7 +266,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/25 Validate both parameter templates...'
+    Write-Host '3/26 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -409,7 +409,7 @@ try {
     if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
         $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
     }
-    Write-Host '4/25 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/26 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -419,7 +419,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/25 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    Write-Host '5/26 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
     if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
         Stop-Test 'A prohibited evidence resource type is declared.'
     }
@@ -433,14 +433,14 @@ try {
         Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/25 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/26 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/25 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/26 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -940,7 +940,7 @@ exit $LASTEXITCODE
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/25 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/26 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -1246,7 +1246,7 @@ exit $LASTEXITCODE
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '9/25 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/26 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -1286,7 +1286,7 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/25 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '10/26 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -1314,7 +1314,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '11/25 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '11/26 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -1336,7 +1336,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '12/25 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '12/26 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -1357,7 +1357,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '13/25 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '13/26 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -1369,7 +1369,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/25 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '14/26 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -1377,7 +1377,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '15/25 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '15/26 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -1389,7 +1389,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '16/25 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '16/26 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -1406,7 +1406,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '17/25 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '17/26 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -1509,7 +1509,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '18/25 Parse every PowerShell lifecycle and test script...'
+    Write-Host '18/26 Parse every PowerShell lifecycle and test script...'
     & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
@@ -1528,13 +1528,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/25 Validate reusable initiative composition...'
+    Write-Host '19/26 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '20/25 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '20/26 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '21/25 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '21/26 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -1544,10 +1544,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '22/25 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '22/26 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '23/25 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '23/26 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'
@@ -2175,7 +2175,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 
-    Write-Host '24/25 Confirm security benchmark assignments trace to the control catalog and stay optional...'
+    Write-Host '24/26 Confirm security benchmark assignments trace to the control catalog and stay optional...'
     $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
     $armParameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $benchmarkAssignments = @(
