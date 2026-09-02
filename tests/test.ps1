@@ -3243,9 +3243,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $accessReviewCriteria = Join-Path $ProjectDir 'policy/access-review-criteria.json'
     $accessReviewAssignments = Join-Path $ProjectDir 'tests/fixtures/privileged-access-assignments.json'
     $accessReviewExpectedFile = Join-Path $ProjectDir 'tests/fixtures/privileged-access-expected-report.json'
+    $accessReviewObservations = Join-Path $ProjectDir 'tests/fixtures/privileged-access-observations.json'
+    $accessReviewObservationsExpectedFile = Join-Path $ProjectDir 'tests/fixtures/privileged-access-expected-observations-report.json'
     $accessReviewTenant = '44444444-4444-4444-8444-444444444444'
     $accessReviewSubscription = '22222222-2222-4222-8222-222222222222'
-    foreach ($accessReviewFile in @($accessReviewScript, $accessReviewCriteria, $accessReviewAssignments, $accessReviewExpectedFile)) {
+    $accessReviewSecondSubscription = '66666666-6666-4666-8666-666666666666'
+    foreach ($accessReviewFile in @($accessReviewScript, $accessReviewCriteria, $accessReviewAssignments,
+            $accessReviewExpectedFile, $accessReviewObservations, $accessReviewObservationsExpectedFile)) {
         if (-not (Test-Path -LiteralPath $accessReviewFile -PathType Leaf)) {
             Stop-Test "Missing privileged access review artifact: $accessReviewFile"
         }
@@ -3300,6 +3304,70 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
+    # Every direct service-principal or managed-identity grant must appear in
+    # the inventory, including narrow, lower-privilege ones ranked low.
+    $accessReviewNonHuman = @($accessReviewReport.findings |
+        Where-Object { $_.principalType -in @('ServicePrincipal', 'MSI') })
+    if ($accessReviewNonHuman.Count -ne $accessReviewReport.summary.nonHumanAssignmentCount) {
+        Stop-Test 'Every direct service-principal and managed-identity grant must be surfaced as a finding.'
+    }
+    $accessReviewNarrowGrant = @($accessReviewReport.findings |
+        Where-Object { $_.principalId -eq '88888888-8888-4888-8888-888888888888' -and
+            $_.roleDefinitionName -eq 'Storage Blob Data Reader' })
+    if ($accessReviewNarrowGrant.Count -ne 1 -or $accessReviewNarrowGrant[0].severity -ne 'low' -or
+        $accessReviewNarrowGrant[0].scopeType -ne 'resource' -or
+        $accessReviewNarrowGrant[0].reasons -notcontains 'direct-non-human-principal-assignment') {
+        Stop-Test 'A narrow service-principal grant must be surfaced as a low-severity finding, not dropped.'
+    }
+
+    # Subscription queries use inherited results, so one management-group
+    # assignment is observed repeatedly; it must collapse to a single finding
+    # while the observing subscriptions stay attributed.
+    $accessReviewObservationsOut = Join-Path $TempDir 'access-review-observations'
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $accessReviewScript `
+        -TenantId $accessReviewTenant `
+        -SubscriptionId "$accessReviewSubscription,$accessReviewSecondSubscription" `
+        -ManagementGroupId 'demo-root' `
+        -AssignmentsFile $accessReviewObservations `
+        -OutputDirectory $accessReviewObservationsOut | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test 'The privileged access review failed against the inheritance fixture.'
+    }
+    $accessReviewObservationsReport = Get-Content -LiteralPath (
+        @(Get-ChildItem -LiteralPath $accessReviewObservationsOut -Filter 'privileged-access-review-*.json')[0].FullName) -Raw |
+        ConvertFrom-Json -Depth 20
+    $accessReviewObservationsExpected = Get-Content -LiteralPath $accessReviewObservationsExpectedFile -Raw |
+        ConvertFrom-Json -Depth 20
+    $accessReviewObservationsReport.PSObject.Properties.Remove('generatedOn')
+    if (($accessReviewObservationsReport | ConvertTo-Json -Depth 20 -Compress) -cne
+        ($accessReviewObservationsExpected | ConvertTo-Json -Depth 20 -Compress)) {
+        Stop-Test 'The deduplicated inheritance classification changed unexpectedly.'
+    }
+    if ($accessReviewObservationsReport.summary.assignmentsCollected -ne 9 -or
+        $accessReviewObservationsReport.summary.assignmentsEvaluated -ne 4 -or
+        $accessReviewObservationsReport.summary.duplicateObservationsCollapsed -ne 5) {
+        Stop-Test 'Repeated inherited observations were not deduplicated by assignment identity.'
+    }
+    foreach ($accessReviewInherited in @($accessReviewObservationsReport.findings |
+            Where-Object { $_.scopeType -eq 'managementGroup' })) {
+        if (@($accessReviewInherited.observedInSubscriptions) -join ',' -ne
+            "$accessReviewSubscription,$accessReviewSecondSubscription") {
+            Stop-Test 'An inherited finding must record every requested subscription that observed it.'
+        }
+    }
+    $accessReviewOwnerCounts = @($accessReviewObservationsReport.summary.subscriptionOwnerCounts)
+    if ($accessReviewOwnerCounts.Count -ne 2 -or
+        $accessReviewOwnerCounts[0].subscriptionId -ne $accessReviewSubscription -or
+        $accessReviewOwnerCounts[0].ownerPrincipalCount -ne 3 -or
+        $accessReviewOwnerCounts[0].directOwnerPrincipalCount -ne 1 -or
+        $accessReviewOwnerCounts[0].inheritedOwnerPrincipalCount -ne 2 -or
+        $accessReviewOwnerCounts[1].subscriptionId -ne $accessReviewSecondSubscription -or
+        $accessReviewOwnerCounts[1].ownerPrincipalCount -ne 2 -or
+        $accessReviewOwnerCounts[1].directOwnerPrincipalCount -ne 0 -or
+        $accessReviewOwnerCounts[1].inheritedOwnerPrincipalCount -ne 2) {
+        Stop-Test 'Inherited Owner grants were not attributed to the requested subscriptions that observed them.'
+    }
+
     $accessReviewStrictCriteria = Join-Path $TempDir 'access-review-strict-criteria.json'
     $accessReviewCriteriaDocument = Get-Content -LiteralPath $accessReviewCriteria -Raw | ConvertFrom-Json -Depth 20
     $accessReviewCriteriaDocument.maxOwnersPerSubscription = 1
@@ -3331,6 +3399,11 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $accessReviewAssignmentsDocument[0].PSObject.Properties.Remove('principalType')
     $accessReviewAssignmentsDocument | ConvertTo-Json -Depth 20 |
         Set-Content -LiteralPath $accessReviewBadAssignments -Encoding utf8NoBOM
+    $accessReviewBadObservations = Join-Path $TempDir 'access-review-bad-observations.json'
+    $accessReviewObservationsDocument = Get-Content -LiteralPath $accessReviewObservations -Raw | ConvertFrom-Json -Depth 20
+    $accessReviewObservationsDocument.observations[0].source.kind = 'resourceGroup'
+    $accessReviewObservationsDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewBadObservations -Encoding utf8NoBOM
     $accessReviewBadCriteria = Join-Path $TempDir 'access-review-bad-criteria.json'
     $accessReviewCriteriaDocument = Get-Content -LiteralPath $accessReviewCriteria -Raw | ConvertFrom-Json -Depth 20
     $accessReviewCriteriaDocument.highPrivilegeRoleNames = @()
@@ -3352,6 +3425,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             '-TenantId', $accessReviewTenant,
             '-SubscriptionId', $accessReviewSubscription,
             '-AssignmentsFile', $accessReviewBadAssignments) },
+        @{ Description = 'an observation with an unsupported source kind'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', $accessReviewSubscription,
+            '-AssignmentsFile', $accessReviewBadObservations) },
         @{ Description = 'an empty high-privilege role list'; Arguments = @(
             '-TenantId', $accessReviewTenant,
             '-SubscriptionId', $accessReviewSubscription,

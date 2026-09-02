@@ -48,6 +48,24 @@ array (or an `az`-style object with a `value` array) of objects containing
 `principalId`, `principalType`, `roleDefinitionName`, `scope`, and optionally
 `id`. That offline mode is what the repository tests exercise.
 
+Because subscription queries use `--include-inherited`, one management-group
+role assignment is returned by every subscription below it and again by the
+management-group query. The inventory therefore records each query as a
+separate observation and deduplicates the results by role-assignment ID,
+falling back to the composite `scope|principalId|roleDefinitionName` when an
+export omits `id` — Azure rejects duplicates of that triple, so it identifies
+an assignment uniquely. `summary.assignmentsCollected` and
+`summary.duplicateObservationsCollapsed` show how much was folded together.
+
+Deduplication keeps the provenance: every finding lists the requested
+subscriptions that actually observed the assignment in
+`observedInSubscriptions`, which is what makes an inherited grant actionable
+per subscription. An offline file may preserve that provenance by using the
+same `{"observations": [{"source": {"kind": "subscription", "id": "<guid>"},
+"assignments": [...]}]}` shape that live collection builds. A plain array or
+`value` export carries no provenance, so an inherited grant in such a file is
+attributed only to the subscription inside its own scope, if any.
+
 ## What the inventory surfaces
 
 Each assignment is evaluated against `policy/access-review-criteria.json` and
@@ -59,7 +77,9 @@ is reported as a finding when any of the following holds:
   (`tenantRoot`, `managementGroup`, or `subscription` by default);
 - the principal type is in `nonHumanPrincipalTypes` (`ServicePrincipal` and
   `MSI`, which covers app registrations, workload identities, and managed
-  identities) and the scope is broad.
+  identities), at any scope. Every direct service-principal and
+  managed-identity grant appears in the inventory; a narrow, low-privilege one
+  is ranked `low` rather than dropped.
 
 Severity is `high` when a high-privilege role is held either at a broad scope
 or directly by a service principal or managed identity, `medium` for the
@@ -70,10 +90,13 @@ severity, or reason means the code has determined that a grant is
 unnecessary.** Business necessity is decided only by the reviewers named
 below.
 
-The report also counts distinct Owner principals per subscription and flags
-subscriptions above `maxOwnersPerSubscription`. Owner assignments inherited
-from a management group appear as separate management-group-scoped findings
-and must be added to the per-subscription total by the reviewer.
+The report counts distinct Owner principals for every requested subscription
+and flags those above `maxOwnersPerSubscription`. Owner grants inherited from
+a management group are counted for each subscription that observed them, so
+`ownerPrincipalCount` is the reviewable total; `directOwnerPrincipalCount` and
+`inheritedOwnerPrincipalCount` split it for remediation. An inherited grant is
+attributed only where it was observed, because a management-group query alone
+does not prove which subscriptions it reaches.
 
 ## Configurable review criteria
 
@@ -87,7 +110,7 @@ scripts:
 | `reviewCadenceDays` | Documented maximum interval between reviews. |
 | `maxOwnersPerSubscription` | Owner-count threshold for the review below. |
 | `broadScopeTypes` | Scope types treated as broad. |
-| `nonHumanPrincipalTypes` | Principal types treated as workload identities. |
+| `nonHumanPrincipalTypes` | Principal types treated as workload identities; every grant to one is surfaced. |
 | `highPrivilegeRoleNames` | Roles that are always surfaced. |
 | `elevatedRoleNames` | Roles surfaced when held at a broad scope. |
 
@@ -103,8 +126,9 @@ after any privileged-access incident or bootstrap change.
 1. Compare `summary.subscriptionOwnerCounts` with the customer's approved
    Owner roster, including the emergency-access accounts described in
    [PIM-ready Azure RBAC](AZURE-RBAC-PIM.md).
-2. Add every management-group-scoped Owner finding to the affected
-   subscriptions before judging the count.
+2. Use `ownerPrincipalCount`, which already includes inherited Owners, and
+   read `inheritedOwnerPrincipalCount` to decide whether remediation belongs
+   at the subscription or at the management group.
 3. For each subscription in `summary.subscriptionsExceedingOwnerThreshold`,
    record for every Owner principal whether it stays, is replaced by an
    eligible time-bound assignment, or is removed.

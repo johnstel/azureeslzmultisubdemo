@@ -2674,10 +2674,14 @@ access_review_ps_script="${PROJECT_DIR}/scripts/review-privileged-access.ps1"
 access_review_criteria="${PROJECT_DIR}/policy/access-review-criteria.json"
 access_review_assignments="${PROJECT_DIR}/tests/fixtures/privileged-access-assignments.json"
 access_review_expected="${PROJECT_DIR}/tests/fixtures/privileged-access-expected-report.json"
+access_review_observations="${PROJECT_DIR}/tests/fixtures/privileged-access-observations.json"
+access_review_observations_expected="${PROJECT_DIR}/tests/fixtures/privileged-access-expected-observations-report.json"
 access_review_tenant='44444444-4444-4444-8444-444444444444'
 access_review_subscription='22222222-2222-4222-8222-222222222222'
+access_review_second_subscription='66666666-6666-4666-8666-666666666666'
 for access_review_file in "${access_review_script}" "${access_review_ps_script}" "${access_review_criteria}" \
-  "${access_review_assignments}" "${access_review_expected}"; do
+  "${access_review_assignments}" "${access_review_expected}" "${access_review_observations}" \
+  "${access_review_observations_expected}"; do
   [[ -f "${access_review_file}" ]] || {
     printf 'ERROR: Missing privileged access review artifact: %s\n' "${access_review_file}" >&2
     exit 1
@@ -2725,6 +2729,69 @@ jq -e '
 # The generated reports contain directory identifiers and must never be tracked.
 git -C "${PROJECT_DIR}" check-ignore -q "${PROJECT_DIR}/.access-reviews/privileged-access-review-example.json" || {
   printf 'ERROR: Locally generated access-review reports must be ignored by source control.\n' >&2
+  exit 1
+}
+
+# Every direct service-principal or managed-identity grant must appear in the
+# inventory, including narrow, lower-privilege ones that are only ranked low.
+jq -e '
+  ([.findings[] | select(.principalType == "ServicePrincipal" or .principalType == "MSI")] | length)
+    == .summary.nonHumanAssignmentCount
+  and (
+    [.findings[]
+      | select(.principalId == "88888888-8888-4888-8888-888888888888"
+        and .roleDefinitionName == "Storage Blob Data Reader")]
+    | length == 1
+      and (.[0].severity == "low")
+      and (.[0].scopeType == "resource")
+      and ((.[0].reasons | index("direct-non-human-principal-assignment")) != null)
+  )
+' "${access_review_report}" >/dev/null || {
+  printf 'ERROR: Direct service-principal and managed-identity grants must always be surfaced.\n' >&2
+  exit 1
+}
+
+# Subscription queries use --include-inherited, so the same management-group
+# assignment is observed repeatedly; it must collapse to one finding while the
+# observing subscriptions stay attributed.
+access_review_observations_out="${TEMP_DIR}/access-review-observations"
+"${access_review_script}" \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --subscription-id "${access_review_second_subscription}" \
+  --management-group demo-root \
+  --assignments-file "${access_review_observations}" \
+  --output-dir "${access_review_observations_out}" >/dev/null
+access_review_observations_report="$(ls "${access_review_observations_out}"/privileged-access-review-*.json)"
+jq -S 'del(.generatedOn)' "${access_review_observations_report}" \
+  > "${TEMP_DIR}/access-review-observations-actual.json"
+jq -S '.' "${access_review_observations_expected}" \
+  > "${TEMP_DIR}/access-review-observations-expected.json"
+diff -u "${TEMP_DIR}/access-review-observations-expected.json" \
+  "${TEMP_DIR}/access-review-observations-actual.json" || {
+  printf 'ERROR: The deduplicated inheritance classification changed unexpectedly.\n' >&2
+  exit 1
+}
+jq -e --arg first "${access_review_subscription}" --arg second "${access_review_second_subscription}" '
+  .summary.assignmentsCollected == 9
+  and .summary.assignmentsEvaluated == 4
+  and .summary.duplicateObservationsCollapsed == 5
+  and ([.findings[] | select(.scopeType == "managementGroup")] | length) == 2
+  and all(.findings[] | select(.scopeType == "managementGroup");
+    .observedInSubscriptions == [$first, $second])
+  and (
+    [.findings[] | select(.principalId == "77777777-7777-4777-8777-777777777777")]
+    | length == 1 and (.[0].observedInSubscriptions == [$first, $second])
+  )
+  and ((.summary.subscriptionOwnerCounts | map(.subscriptionId)) == [$first, $second])
+  and (.summary.subscriptionOwnerCounts[0]
+    | .ownerPrincipalCount == 3 and .directOwnerPrincipalCount == 1
+      and .inheritedOwnerPrincipalCount == 2)
+  and (.summary.subscriptionOwnerCounts[1]
+    | .ownerPrincipalCount == 2 and .directOwnerPrincipalCount == 0
+      and .inheritedOwnerPrincipalCount == 2)
+' "${access_review_observations_report}" >/dev/null || {
+  printf 'ERROR: Inherited assignments were not deduplicated and attributed to the requested subscriptions.\n' >&2
   exit 1
 }
 
@@ -2786,6 +2853,14 @@ expect_access_review_failure 'an assignment without a principal type' \
   --tenant-id "${access_review_tenant}" \
   --subscription-id "${access_review_subscription}" \
   --assignments-file "${access_review_bad_assignments}" \
+  --output-dir "${access_review_negative_out}"
+access_review_bad_observations="${TEMP_DIR}/access-review-bad-observations.json"
+jq '.observations[0].source.kind = "resourceGroup"' "${access_review_observations}" \
+  > "${access_review_bad_observations}"
+expect_access_review_failure 'an observation with an unsupported source kind' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_bad_observations}" \
   --output-dir "${access_review_negative_out}"
 access_review_bad_criteria="${TEMP_DIR}/access-review-bad-criteria.json"
 jq '.highPrivilegeRoleNames = []' "${access_review_criteria}" > "${access_review_bad_criteria}"
@@ -2875,6 +2950,21 @@ if command -v pwsh >/dev/null 2>&1; then
     > "${TEMP_DIR}/access-review-pwsh-actual.json"
   diff -u "${TEMP_DIR}/access-review-expected.json" "${TEMP_DIR}/access-review-pwsh-actual.json" || {
     printf 'ERROR: The PowerShell privileged access review report differs from the Bash report.\n' >&2
+    exit 1
+  }
+  access_review_ps_observations_out="${TEMP_DIR}/access-review-pwsh-observations"
+  pwsh -NoLogo -NoProfile -File "${access_review_ps_script}" \
+    -TenantId "${access_review_tenant}" \
+    -SubscriptionId "${access_review_subscription}","${access_review_second_subscription}" \
+    -ManagementGroupId demo-root \
+    -AssignmentsFile "${access_review_observations}" \
+    -OutputDirectory "${access_review_ps_observations_out}" >/dev/null
+  jq -S 'del(.generatedOn)' \
+    "$(ls "${access_review_ps_observations_out}"/privileged-access-review-*.json)" \
+    > "${TEMP_DIR}/access-review-pwsh-observations-actual.json"
+  diff -u "${TEMP_DIR}/access-review-observations-expected.json" \
+    "${TEMP_DIR}/access-review-pwsh-observations-actual.json" || {
+    printf 'ERROR: The PowerShell deduplicated inheritance report differs from the Bash report.\n' >&2
     exit 1
   }
 else

@@ -31,8 +31,14 @@ The script never creates, updates, or removes a role assignment, an access
 review, or any other Azure or Microsoft Entra object.
 
 --assignments-file classifies a previously exported assignment list offline and
-makes no Azure calls. Without it, the script reads live role assignments with
-Azure CLI using the explicitly supplied tenant and subscription context.
+makes no Azure calls. It accepts a JSON array, an object with a "value" array,
+or an object with an "observations" array of
+{"source": {"kind": "subscription"|"managementGroup", "id": "..."},
+ "assignments": [...]} entries, which is the shape live collection builds and
+the only shape that records which query observed an inherited grant.
+
+Without it, the script reads live role assignments with Azure CLI using the
+explicitly supplied tenant and subscription context.
 EOF
 }
 
@@ -140,7 +146,10 @@ collect_live_assignments() {
   [[ "$(printf '%s' "${signed_in_tenant}" | tr 'A-Z' 'a-z')" == "$(printf '%s' "${tenant_id}" | tr 'A-Z' 'a-z')" ]] \
     || fail "Signed-in tenant ${signed_in_tenant} does not match the requested --tenant-id."
 
-  local collected="[]"
+  # Each query is recorded as its own observation so that an inherited
+  # assignment returned by several queries can be collapsed later while still
+  # recording every requested subscription that observed it.
+  local observations="[]"
   local subscription_id
   local management_group_id
   local page
@@ -151,7 +160,11 @@ collect_live_assignments() {
       --all \
       --include-inherited \
       --output json)" || fail "Unable to read role assignments for subscription ${subscription_id}."
-    collected="$(jq -n --argjson current "${collected}" --argjson page "${page}" '$current + $page')"
+    observations="$(jq -n \
+      --argjson current "${observations}" \
+      --argjson page "${page}" \
+      --arg id "${subscription_id}" \
+      '$current + [{source: {kind: "subscription", id: $id}, assignments: $page}]')"
   done <<EOF
 ${subscription_ids}
 EOF
@@ -162,19 +175,39 @@ EOF
       --scope "/providers/Microsoft.Management/managementGroups/${management_group_id}" \
       --include-inherited \
       --output json)" || fail "Unable to read role assignments for management group ${management_group_id}."
-    collected="$(jq -n --argjson current "${collected}" --argjson page "${page}" '$current + $page')"
+    observations="$(jq -n \
+      --argjson current "${observations}" \
+      --argjson page "${page}" \
+      --arg id "${management_group_id}" \
+      '$current + [{source: {kind: "managementGroup", id: $id}, assignments: $page}]')"
   done <<EOF
 ${management_group_ids}
 EOF
 
-  printf '%s\n' "${collected}" > "${assignments_source}"
+  printf '%s\n' "${observations}" > "${assignments_source}"
 }
 
 if [[ -n "${assignments_file}" ]]; then
   [[ -f "${assignments_file}" ]] || fail "Assignments file not found: ${assignments_file}"
-  jq -e 'type == "array" or (type == "object" and (.value | type == "array"))' "${assignments_file}" >/dev/null \
-    || fail 'Assignments file must be a JSON array or an object with a "value" array.'
-  jq '(if type == "array" then . else .value end)' "${assignments_file}" > "${assignments_source}"
+  jq -e '
+    type == "array"
+    or (type == "object" and (.value | type == "array"))
+    or (type == "object"
+      and (.observations | type == "array")
+      and all(.observations[];
+        type == "object"
+        and (.assignments | type == "array")
+        and (.source | type == "object")
+        and (.source.kind == "subscription" or .source.kind == "managementGroup")
+        and (.source.id | type == "string" and length > 0)))
+  ' "${assignments_file}" >/dev/null \
+    || fail 'Assignments file must be a JSON array, an object with a "value" array, or an object with an "observations" array.'
+  jq '
+    if type == "array" then [{source: null, assignments: .}]
+    elif has("observations") then .observations
+    else [{source: null, assignments: .value}]
+    end
+  ' "${assignments_file}" > "${assignments_source}"
   review_mode='offline-file'
 else
   collect_live_assignments
@@ -182,7 +215,7 @@ else
 fi
 
 jq -e '
-  all(.[];
+  all(.[].assignments[];
     type == "object"
     and (.roleDefinitionName | type == "string" and length > 0)
     and (.scope | type == "string" and length > 0)
@@ -218,6 +251,15 @@ jq -n \
     ($scope | capture("^/subscriptions/(?<id>[^/]+)") | .id) // null;
   def severity_rank($severity):
     if $severity == "high" then 0 elif $severity == "medium" then 1 else 2 end;
+  # Azure returns a unique assignment ID for every role assignment, so it is the
+  # stable identity. The composite fallback below is only used when an exported
+  # assignment omits the ID; scope, principal, and role together still identify
+  # one assignment because Azure rejects a duplicate of that triple.
+  def assignment_key:
+    if (.id | type == "string") and ((.id | length) > 0) then "id:" + (.id | ascii_downcase)
+    else "composite:" + ((.scope | ascii_downcase) + "|" + (.principalId | ascii_downcase)
+      + "|" + (.roleDefinitionName | ascii_downcase))
+    end;
 
   ($criteria[0]) as $criteria |
   ($criteria.highPrivilegeRoleNames | lower_all) as $highPrivilegeRoles |
@@ -226,46 +268,84 @@ jq -n \
   ($criteria.broadScopeTypes | lower_all) as $broadScopes |
   ($subscriptionIds | split("\n") | map(select(length > 0))) as $subscriptions |
   ($managementGroupIds | split("\n") | map(select(length > 0))) as $managementGroups |
-  ($assignments[0] | map(
-    . as $assignment |
-    (scope_type($assignment.scope)) as $scopeType |
-    ($assignment.roleDefinitionName | ascii_downcase) as $roleKey |
-    ($assignment.principalType | ascii_downcase) as $principalKey |
-    ((($highPrivilegeRoles | index($roleKey)) != null)) as $isHighPrivilegeRole |
-    ((($elevatedRoles | index($roleKey)) != null)) as $isElevatedRole |
-    ((($nonHumanTypes | index($principalKey)) != null)) as $isNonHuman |
-    ((($broadScopes | index($scopeType | ascii_downcase)) != null)) as $isBroadScope |
-    {
-      assignmentId: ($assignment.id // null),
-      principalId: $assignment.principalId,
-      principalType: $assignment.principalType,
-      roleDefinitionName: $assignment.roleDefinitionName,
-      scope: $assignment.scope,
-      scopeType: $scopeType,
-      subscriptionId: subscription_of($assignment.scope),
-      isHighPrivilegeRole: $isHighPrivilegeRole,
-      isElevatedRole: $isElevatedRole,
-      isNonHumanPrincipal: $isNonHuman,
-      isBroadScope: $isBroadScope,
-      reasons: ([
-        (if $isHighPrivilegeRole then "high-privilege-role" else empty end),
-        (if $isElevatedRole then "elevated-role" else empty end),
-        (if ($isHighPrivilegeRole or $isElevatedRole) then empty else "unclassified-role" end),
-        (if $isNonHuman then "direct-non-human-principal-assignment" else empty end),
-        (if $isBroadScope then "broad-scope" else empty end)
-      ])
-    }
-  )) as $evaluated |
+  ($subscriptions | map(ascii_downcase)) as $requestedSubscriptionKeys |
 
+  # Flatten every observation, remembering which requested subscription observed
+  # each assignment. A subscription query with --include-inherited returns
+  # management-group assignments too, so the same assignment can arrive several
+  # times; collapsing by identity below prevents duplicate findings and inflated
+  # counts while preserving every observing subscription.
+  ($assignments[0]
+    | map(
+        .source as $source |
+        (.assignments | map({
+          assignment: .,
+          observedInSubscription: (
+            if ($source.kind? == "subscription") then $source.id
+            else null
+            end)
+        })))
+    | add // []) as $observed |
+
+  ($observed | length) as $observationCount |
+
+  ($observed
+    | group_by(.assignment | assignment_key)
+    | map(
+        (.[0].assignment) as $assignment |
+        (scope_type($assignment.scope)) as $scopeType |
+        ($assignment.roleDefinitionName | ascii_downcase) as $roleKey |
+        ($assignment.principalType | ascii_downcase) as $principalKey |
+        ((($highPrivilegeRoles | index($roleKey)) != null)) as $isHighPrivilegeRole |
+        ((($elevatedRoles | index($roleKey)) != null)) as $isElevatedRole |
+        ((($nonHumanTypes | index($principalKey)) != null)) as $isNonHuman |
+        ((($broadScopes | index($scopeType | ascii_downcase)) != null)) as $isBroadScope |
+        (subscription_of($assignment.scope)) as $scopeSubscription |
+        # A requested subscription is affected when it observed the assignment,
+        # or when the scope of the assignment sits inside that subscription.
+        ([(map(.observedInSubscription) | .[] | select(. != null)),
+          ($scopeSubscription | select(. != null))]
+          | map(ascii_downcase)
+          | unique
+          | map(select(. as $candidate | $requestedSubscriptionKeys | index($candidate) != null))
+          | map(. as $candidate | $subscriptions[$requestedSubscriptionKeys | index($candidate)])
+          | unique) as $observedInSubscriptions |
+        {
+          assignmentId: ($assignment.id // null),
+          principalId: $assignment.principalId,
+          principalType: $assignment.principalType,
+          roleDefinitionName: $assignment.roleDefinitionName,
+          scope: $assignment.scope,
+          scopeType: $scopeType,
+          subscriptionId: $scopeSubscription,
+          observedInSubscriptions: $observedInSubscriptions,
+          observationCount: length,
+          isHighPrivilegeRole: $isHighPrivilegeRole,
+          isElevatedRole: $isElevatedRole,
+          isNonHumanPrincipal: $isNonHuman,
+          isBroadScope: $isBroadScope,
+          reasons: ([
+            (if $isHighPrivilegeRole then "high-privilege-role" else empty end),
+            (if $isElevatedRole then "elevated-role" else empty end),
+            (if ($isHighPrivilegeRole or $isElevatedRole) then empty else "unclassified-role" end),
+            (if $isNonHuman then "direct-non-human-principal-assignment" else empty end),
+            (if $isBroadScope then "broad-scope" else empty end)
+          ])
+        }
+      )) as $evaluated |
+
+  # Every direct service-principal or managed-identity assignment is surfaced,
+  # regardless of scope; narrow, unprivileged workload grants are low severity
+  # but never disappear from the inventory.
   ($evaluated
     | map(select(
         .isHighPrivilegeRole
         or (.isElevatedRole and .isBroadScope)
-        or (.isNonHumanPrincipal and .isBroadScope)))
+        or .isNonHumanPrincipal))
     | map(. + {
         severity: (
           if (.isHighPrivilegeRole and (.isBroadScope or .isNonHumanPrincipal)) then "high"
-          elif (.isHighPrivilegeRole or (.isNonHumanPrincipal and .isBroadScope)) then "medium"
+          elif (.isHighPrivilegeRole or (.isNonHumanPrincipal and (.isBroadScope or .isElevatedRole))) then "medium"
           else "low"
           end),
         reviewAction: "manual-review-required"
@@ -278,19 +358,31 @@ jq -n \
         scope,
         scopeType,
         subscriptionId,
+        observedInSubscriptions,
         severity,
         reasons,
         reviewAction
       })
     | sort_by([severity_rank(.severity), .scope, .roleDefinitionName, .principalId])) as $findings |
 
-  ($evaluated
-    | map(select(.roleDefinitionName == "Owner" and .scopeType == "subscription" and .subscriptionId != null))
-    | group_by(.subscriptionId)
-    | map({
-        subscriptionId: .[0].subscriptionId,
-        ownerPrincipalCount: (map(.principalId) | unique | length),
-        exceedsThreshold: ((map(.principalId) | unique | length) > $criteria.maxOwnersPerSubscription)
+  # Owner counts attribute every Owner grant that applies to a requested
+  # subscription, including one inherited from a management group, so the count
+  # needs no manual folding-in by the reviewer.
+  ($subscriptions
+    | map(. as $subscription |
+      ($evaluated
+        | map(select(
+            .roleDefinitionName == "Owner"
+            and (.observedInSubscriptions | index($subscription)) != null))) as $ownerAssignments |
+      ($ownerAssignments | map(select(.scopeType == "subscription"))) as $directOwners |
+      ($ownerAssignments | map(select(.scopeType != "subscription"))) as $inheritedOwners |
+      {
+        subscriptionId: $subscription,
+        ownerPrincipalCount: ($ownerAssignments | map(.principalId) | unique | length),
+        directOwnerPrincipalCount: ($directOwners | map(.principalId) | unique | length),
+        inheritedOwnerPrincipalCount: ($inheritedOwners | map(.principalId) | unique | length),
+        exceedsThreshold: (($ownerAssignments | map(.principalId) | unique | length)
+          > $criteria.maxOwnersPerSubscription)
       })
     | sort_by(.subscriptionId)) as $ownerCounts |
 
@@ -311,11 +403,14 @@ jq -n \
       broadScopeTypes: $criteria.broadScopeTypes
     },
     summary: {
+      assignmentsCollected: $observationCount,
       assignmentsEvaluated: ($evaluated | length),
+      duplicateObservationsCollapsed: ($observationCount - ($evaluated | length)),
       findingCount: ($findings | length),
       highSeverityFindingCount: ($findings | map(select(.severity == "high")) | length),
       mediumSeverityFindingCount: ($findings | map(select(.severity == "medium")) | length),
       lowSeverityFindingCount: ($findings | map(select(.severity == "low")) | length),
+      nonHumanAssignmentCount: ($evaluated | map(select(.isNonHumanPrincipal)) | length),
       nonHumanHighPrivilegeAssignmentCount: ($evaluated
         | map(select(.isNonHumanPrincipal and .isHighPrivilegeRole)) | length),
       managementGroupScopedAssignmentCount: ($evaluated
@@ -345,36 +440,41 @@ jq -r '
   "",
   "| Measure | Value |",
   "| --- | --- |",
-  "| Assignments evaluated | \(.summary.assignmentsEvaluated) |",
+  "| Assignments collected | \(.summary.assignmentsCollected) |",
+  "| Duplicate observations collapsed | \(.summary.duplicateObservationsCollapsed) |",
+  "| Distinct assignments evaluated | \(.summary.assignmentsEvaluated) |",
   "| Findings | \(.summary.findingCount) |",
   "| High severity | \(.summary.highSeverityFindingCount) |",
   "| Medium severity | \(.summary.mediumSeverityFindingCount) |",
   "| Low severity | \(.summary.lowSeverityFindingCount) |",
+  "| Service-principal or managed-identity grants | \(.summary.nonHumanAssignmentCount) |",
   "| Service-principal or managed-identity high-privilege grants | \(.summary.nonHumanHighPrivilegeAssignmentCount) |",
   "| Management-group or tenant-root scoped assignments | \(.summary.managementGroupScopedAssignmentCount) |",
   "",
   "## Subscription Owner counts",
   "",
-  "| Subscription | Distinct Owner principals | Exceeds threshold |",
-  "| --- | --- | --- |",
+  "| Subscription | Distinct Owner principals | Direct | Inherited | Exceeds threshold |",
+  "| --- | --- | --- | --- | --- |",
   (if (.summary.subscriptionOwnerCounts | length) > 0
     then (.summary.subscriptionOwnerCounts[]
-      | "| \(.subscriptionId) | \(.ownerPrincipalCount) | \(if .exceedsThreshold then "yes" else "no" end) |")
-    else "| (no subscription-scoped Owner assignments found) | 0 | no |"
+      | "| \(.subscriptionId) | \(.ownerPrincipalCount) | \(.directOwnerPrincipalCount) | \(.inheritedOwnerPrincipalCount) | \(if .exceedsThreshold then "yes" else "no" end) |")
+    else "| (no requested subscriptions) | 0 | 0 | 0 | no |"
     end),
   "",
-  "Owner assignments inherited from a management group are reported as findings",
-  "with a management-group scope and must be added to these counts by the",
-  "reviewer.",
+  "Owner grants inherited from a management group are already counted for every",
+  "requested subscription that observed them, so these totals need no manual",
+  "folding-in. An inherited grant is attributed only where it was actually",
+  "observed; a management-group query alone cannot prove which subscriptions it",
+  "reaches.",
   "",
   "## Findings",
   "",
-  "| Severity | Principal type | Principal ID | Role | Scope | Reasons |",
-  "| --- | --- | --- | --- | --- | --- |",
+  "| Severity | Principal type | Principal ID | Role | Scope | Affected subscriptions | Reasons |",
+  "| --- | --- | --- | --- | --- | --- | --- |",
   (if (.findings | length) > 0
     then (.findings[]
-      | "| \(.severity) | \(.principalType) | \(.principalId) | \(.roleDefinitionName) | \(.scope) | \(.reasons | join(", ")) |")
-    else "| (none) | | | | | |"
+      | "| \(.severity) | \(.principalType) | \(.principalId) | \(.roleDefinitionName) | \(.scope) | \(if (.observedInSubscriptions | length) > 0 then (.observedInSubscriptions | join(", ")) else "(not observed in a requested subscription)" end) | \(.reasons | join(", ")) |")
+    else "| (none) | | | | | | |"
     end),
   "",
   "Every finding requires a documented reviewer decision: keep, reduce scope,",
@@ -385,7 +485,10 @@ jq -r '
 rm -f "${assignments_source}"
 
 printf 'Privileged access review complete (mode: %s, read-only).\n' "${review_mode}"
-printf '  Assignments evaluated: %s\n' "$(jq -r '.summary.assignmentsEvaluated' "${report_json}")"
+printf '  Assignments evaluated: %s (collected %s, duplicate observations collapsed %s)\n' \
+  "$(jq -r '.summary.assignmentsEvaluated' "${report_json}")" \
+  "$(jq -r '.summary.assignmentsCollected' "${report_json}")" \
+  "$(jq -r '.summary.duplicateObservationsCollapsed' "${report_json}")"
 printf '  Findings: %s (high: %s, medium: %s, low: %s)\n' \
   "$(jq -r '.summary.findingCount' "${report_json}")" \
   "$(jq -r '.summary.highSeverityFindingCount' "${report_json}")" \

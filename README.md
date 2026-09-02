@@ -362,11 +362,13 @@ automation. `scripts/review-privileged-access.sh` and
 inventory of Azure role assignments for an explicitly supplied tenant,
 subscriptions, and optional management groups. They highlight Owner, User
 Access Administrator, and other high-privilege roles, broad management-group
-or subscription scopes, and direct service-principal or managed-identity
-grants, and they count Owner principals per subscription. The scripts change
-nothing, never call Microsoft Graph, and never conclude that a grant is
-excessive; the criteria that decide what is surfaced live in
-`policy/access-review-criteria.json`.
+or subscription scopes, and every direct service-principal or managed-identity
+grant, and they count Owner principals per subscription, including Owners
+inherited from a management group. Results from inherited queries are
+deduplicated by role-assignment ID while recording which requested
+subscriptions observed each grant. The scripts change nothing, never call
+Microsoft Graph, and never conclude that a grant is excessive; the criteria
+that decide what is surfaced live in `policy/access-review-criteria.json`.
 
 ```bash
 ./scripts/review-privileged-access.sh \
