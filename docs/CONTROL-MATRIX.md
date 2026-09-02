@@ -2,10 +2,10 @@
 
 This document is the human-readable companion to the machine-readable [`policy/control-catalog.json`](../policy/control-catalog.json). It maps every customer requirement identified for v2.0 to its implementation mechanism, before any new policy code is written. Regenerate this document whenever the JSON catalog changes so the two stay consistent.
 
-- **Catalog version:** `1.1.0`
+- **Catalog version:** `1.2.0`
 - **Generated on:** `2026-09-01`
 - **Source issue:** https://github.com/johnstel/azureeslzmultisubdemo/issues/3
-- **Total control records:** 61
+- **Total control records:** 64
 
 ## Scope and safety
 
@@ -21,6 +21,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 - REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).
 - REQ-DEF-06 is a no-cost audit signal from the free Foundational CSPM tier. It does not deploy a vulnerability scanner or enable any paid Defender plan.
 - REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship.
+- Customer-managed key (CMK) controls (REQ-DATA-08, REQ-DATA-09, REQ-DATA-13) are service-specific and audit-first, never a blanket deny across every Azure service. Using a CMK adds customer-owned dependencies that Azure Policy cannot satisfy: a managed identity with get/wrapKey/unwrapKey access to the key, a key rotation process, key availability (a deleted, disabled, expired, or purged key makes the encrypted data unreadable), soft delete and purge protection for recovery (REQ-DATA-05 and REQ-DATA-06; purge protection must never be disabled once enabled), and private-network reachability of the vault when public network access is restricted (REQ-DATA-11 audits vault network configuration and REQ-NET-04/REQ-NET-05 audit private-link readiness; none of them deploy a private endpoint, DNS zone, key, or identity).
 
 ## Classification legend
 
@@ -107,6 +108,9 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | REQ-DATA-08 | Use customer-managed keys (CMK) for encryption at rest on Storage accounts, where the customer supplies a Key Vault and key. | landingzones | azure-policy | Storage accounts should use customer-managed key for encryption (built-in: Yes) | `6fac406b-40ca-413b-bf8e-0bf964659c25` | 1.0.3 | Audit, Disabled | audit-only |
 | REQ-DATA-09 | Use customer-managed keys (CMK) for encryption at rest on other eligible services beyond Storage (for example SQL, Cosmos DB), where the customer supplies a Key Vault and key. | landingzones | manual-evidence | Per-service CMK audit built-ins outside Storage (for example, SQL/Cosmos DB 'should use customer-managed key' policies) — not yet selected (built-in: No) | `—` | — | Audit, Disabled | manual-evidence |
 | REQ-DATA-10 | Require Storage accounts to reject Shared Key authorization requests, requiring Azure AD (Entra ID) authorization instead (issue #14 unsecured-storage-posture requirement). | landingzones | azure-policy | Storage accounts should prevent shared key access (built-in: Yes) | `8c6a50c6-9ffd-4ae7-986f-5fa6111f9a54` | 2.0.0 | Audit, Deny, Disabled | audit-only |
+| REQ-DATA-11 | Restrict Key Vault network access by requiring the vault firewall or disabled public network access (issue #14 Key Vault network posture). | landingzones | azure-policy | Azure Key Vault should have firewall enabled or public network access disabled (built-in: Yes) | `55615ac9-af46-4a59-874e-391cc3dfb490` | 3.3.0 | Audit, Deny, Disabled | audit-only |
+| REQ-DATA-12 | Audit Key Vault diagnostics readiness by confirming that Key Vault resource logs are enabled (issue #14 Key Vault diagnostics posture). | landingzones | azure-policy | Resource logs in Key Vault should be enabled (built-in: Yes) | `cf820ca0-f99e-4f3e-84fb-66e913812d21` | 5.0.0 | AuditIfNotExists, Disabled | audit-only |
+| REQ-DATA-13 | Audit that storage customer-managed keys come from the customer-approved Key Vault(s) and key name(s) supplied as parameters (issue #14 CMK dependency). | landingzones | azure-policy | Demo - audit storage customer-managed keys against approved Key Vaults and keys (built-in: No) | `${namePrefix}-audit-storage-cmk-approved-key` | 1.0.0 | Audit, Deny, Disabled | audit-only |
 
 ## MCSB / CIS / NIST / service baselines
 
@@ -156,6 +160,8 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 - **Tag requirement vs. tag inheritance:** REQ-TAG-01..06 (require tag on resource group) and REQ-TAG-07..12 (inherit tag to child resources) are complementary, not duplicative: the first establishes the source of truth at the resource-group scope, and the second propagates it without overwriting existing values.
 - **Vulnerability assessment audit independence:** REQ-DEF-06 audits Microsoft.Security/assessments directly and does not depend on, or duplicate, any paid Defender plan (REQ-DEF-02..04) or the unsafe, all-or-nothing REQ-DEF-01 initiative; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier, so this control stays no-cost-safe and independently opt-in per issue #20.
 - **Recovery Services vault diagnostics:** REQ-BKP-07 reuses REQ-LOG-02's existing ~140-member resource-diagnostics initiative (Microsoft.RecoveryServices/vaults confirmed as a member resource type) rather than creating a duplicate, backup-specific diagnostic-settings policy definition.
+- **Key Vault network access vs. private-link readiness:** REQ-DATA-11 audits the Key Vault's own firewall/public-network-access configuration, while REQ-NET-05 audits private-link readiness. They are complementary signals and neither deploys a private endpoint, so a compliant REQ-DATA-11 result must not be reported as private connectivity.
+- **Key Vault diagnostics readiness vs. diagnostics remediation:** REQ-DATA-12 is the audit-only Key Vault resource-log readiness signal; REQ-LOG-02 remains the opt-in DeployIfNotExists remediation that actually creates diagnostic settings. Assign REQ-DATA-12 for evidence without enabling remediation, and do not treat the two as duplicate enforcement.
 
 ## Verification methodology
 

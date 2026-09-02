@@ -8,8 +8,8 @@ func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(f
 func hasCanonicalArmIdSegments(value string) bool => startsWith(value, '/') && !endsWith(value, '/') && value == trim(value) && length(filter(skip(split(value, '/'), 1), segment => empty(segment) || segment != trim(segment))) == 0
 func stripAlpha(value string) string => replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(value), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', ''), 'g', ''), 'h', ''), 'i', ''), 'j', ''), 'k', ''), 'l', ''), 'm', ''), 'n', ''), 'o', ''), 'p', ''), 'q', ''), 'r', ''), 's', ''), 't', ''), 'u', ''), 'v', ''), 'w', ''), 'x', ''), 'y', ''), 'z', '')
 func stripAlphaNumeric(value string) string => stripAlpha(stripDigits(value))
-func stripResourceGroupNamePunctuation(value string) string => replace(replace(replace(replace(replace(value, '_', ''), '-', ''), '.', ''), '(', ''), ')', '')
-func isResourceGroupName(value string) bool => !empty(value) && length(value) <= 90 && value == trim(value) && !endsWith(value, '.') && empty(stripAlphaNumeric(stripResourceGroupNamePunctuation(value)))
+func hasDisallowedResourceGroupAsciiChars(value string) bool => contains(value, ' ') || contains(value, '!') || contains(value, '"') || contains(value, '#') || contains(value, '$') || contains(value, '%') || contains(value, '&') || contains(value, '*') || contains(value, '+') || contains(value, ',') || contains(value, '/') || contains(value, ':') || contains(value, ';') || contains(value, '<') || contains(value, '=') || contains(value, '>') || contains(value, '?') || contains(value, '@') || contains(value, '[') || contains(value, ']') || contains(value, '^') || contains(value, '`') || contains(value, '{') || contains(value, '|') || contains(value, '}') || contains(value, '~')
+func isResourceGroupName(value string) bool => !empty(value) && length(value) <= 90 && value == trim(value) && !endsWith(value, '.') && !hasDisallowedResourceGroupAsciiChars(value)
 func isLogAnalyticsWorkspaceName(value string) bool => length(value) >= 4 && length(value) <= 63 && value == trim(value) && !startsWith(value, '-') && !endsWith(value, '-') && empty(stripAlphaNumeric(replace(value, '-', '')))
 func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
 func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && hasCanonicalArmIdSegments(value) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceGroupName(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && isLogAnalyticsWorkspaceName(split(value, '/')[8])
@@ -99,6 +99,28 @@ param approvedRouteTableResourceIds array = []
 @description('CIDR prefixes that approved route tables must direct to the approved firewall private IP. Required when enableFirewallRouteGuardrails is true.')
 param approvedRouteTablePrefixes array = []
 
+@description('Effect for the Storage and Key Vault data-protection controls that support denial. Keep Audit until posture, exemptions, and customer-managed key dependencies are reviewed.')
+@allowed([
+  'Audit'
+  'Deny'
+  'Disabled'
+])
+param dataProtectionPolicyEffect string = 'Audit'
+
+@description('Minimum TLS version audited on storage accounts.')
+@allowed([
+  'TLS1_0'
+  'TLS1_1'
+  'TLS1_2'
+])
+param storageMinimumTlsVersion string = 'TLS1_2'
+
+@description('Customer-approved Key Vault URIs allowed to hold storage customer-managed keys. Leave empty to skip the approved-vault check; this never creates a Key Vault or grants key access.')
+param approvedCustomerManagedKeyVaultUris array = []
+
+@description('Customer-approved customer-managed key names. Leave empty to skip the approved-key-name check; this never creates or rotates a key.')
+param approvedCustomerManagedKeyNames array = []
+
 @description('Continental-US Azure regions allowed by the demo policy.')
 param allowedLocations array = [
   'centralus'
@@ -166,6 +188,9 @@ param deployRoleAssignments bool = false
 
 @description('Set true to create no-hourly-charge evidence resource groups, a VNet, and an NSG.')
 param deployEvidenceResources bool = false
+
+@description('Set true only after approving the tag-inheritance assignment, its managed identity, and its built-in-required remediation RBAC. This does not start remediation tasks.')
+param enableTagInheritance bool = false
 
 @description('Region for optional VNet/NSG evidence resources.')
 @allowed([
@@ -278,9 +303,18 @@ var connectivityManagementGroupId = '${namePrefix}-connectivity'
 var landingZonesManagementGroupId = '${namePrefix}-landingzones'
 var workloadManagementGroupId = '${namePrefix}-${workloadArchetype}'
 var criticalInfrastructureManagementGroupId = '${namePrefix}-criticalinfra'
+var dataProtectionAuditOnlyEffect = dataProtectionPolicyEffect == 'Disabled' ? 'Disabled' : 'Audit'
+// Key Vault purge protection must never be turned off, so a global Disabled
+// selection is mapped back to Audit instead of being propagated.
+var dataProtectionPurgeProtectionEffect = dataProtectionPolicyEffect == 'Deny' ? 'Deny' : 'Audit'
+var dataProtectionAuditIfNotExistsEffect = dataProtectionPolicyEffect == 'Disabled' ? 'Disabled' : 'AuditIfNotExists'
 var requireResourceGroupTagPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
   '96670d01-0a4d-4649-9c89-2d3abc0a5025'
+)
+var inheritResourceGroupTagPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  'ea3f2387-9b95-492a-a190-fcdc54f7b070'
 )
 var microsoftCloudSecurityBenchmarkPolicySetDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policySetDefinitions',
@@ -428,6 +462,89 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
         definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-ssp-id'
+        parameters: {
+          tagName: {
+            value: 'SSP-ID'
+          }
+        }
+        groupNames: []
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module tagInheritanceInitiative 'modules/policy-initiative.bicep' = {
+  name: 'tag-inheritance-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-inherit-rg-tags'
+    initiativeDisplayName: 'Demo - inherit resource group tags'
+    initiativeDescription: 'Inherits the six customer governance tags from resource groups to taggable child resources when missing.'
+    initiativeCategory: 'Tags'
+    initiativeVersion: '2.0.0'
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-cost-center'
+        parameters: {
+          tagName: {
+            value: 'CostCenter'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-application-name'
+        parameters: {
+          tagName: {
+            value: 'ApplicationName'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-owner'
+        parameters: {
+          tagName: {
+            value: 'Owner'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-environment'
+        parameters: {
+          tagName: {
+            value: 'Environment'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-data-classification'
+        parameters: {
+          tagName: {
+            value: 'DataClassification'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-ssp-id'
         parameters: {
           tagName: {
             value: 'SSP-ID'
@@ -764,6 +881,407 @@ module firewallRouteCriticalAssignment 'modules/policy-assignment.bicep' = if (e
   ]
 }
 
+module dataProtectionInitiative 'modules/policy-initiative.bicep' = {
+  name: 'data-protection-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-data-protection'
+    initiativeDisplayName: 'Demo - storage and Key Vault data-protection guardrails'
+    initiativeDescription: 'Audits storage secure transfer, minimum TLS, public and network access, shared-key posture, and Key Vault soft delete, deletion protection, RBAC authorization, network access, and diagnostics. Customer-managed key controls are service-specific and audit-first; nothing here creates a storage account, Key Vault, key, private endpoint, or managed identity.'
+    initiativeCategory: 'Data Protection'
+    initiativeVersion: '1.0.0'
+    initiativeParameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Data-protection effect'
+          description: 'Audit is the safe default for the controls that support denial. Select Deny only after reviewing existing storage accounts, Key Vaults, and exemptions.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      purgeProtectionEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Key Vault purge protection effect'
+          description: 'Key Vault purge protection is never disabled, so this control only ever audits or denies. A global Disabled selection still maps to Audit here.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+        ]
+        defaultValue: 'Audit'
+      }
+      auditOnlyEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Audit-only effect'
+          description: 'Effect for controls whose verified built-in supports Audit or Disabled only, including the storage customer-managed key and Key Vault private-link readiness audits.'
+        }
+        allowedValues: [
+          'Audit'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      auditIfNotExistsEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'AuditIfNotExists effect'
+          description: 'Effect for the readiness controls whose verified built-in supports AuditIfNotExists or Disabled only. These controls never deploy a private endpoint or a diagnostic setting.'
+        }
+        allowedValues: [
+          'AuditIfNotExists'
+          'Disabled'
+        ]
+        defaultValue: 'AuditIfNotExists'
+      }
+      minimumTlsVersion: {
+        type: 'String'
+        metadata: {
+          displayName: 'Storage minimum TLS version'
+          description: 'Minimum TLS version audited on storage accounts.'
+        }
+        allowedValues: [
+          'TLS1_0'
+          'TLS1_1'
+          'TLS1_2'
+        ]
+        defaultValue: 'TLS1_2'
+      }
+      approvedKeyVaultUris: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Approved Key Vault URIs'
+          description: 'Customer-approved Key Vault URIs that may hold storage customer-managed keys. Empty (the default) skips the approved-vault check.'
+        }
+        defaultValue: []
+      }
+      approvedKeyNames: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Approved key names'
+          description: 'Customer-approved customer-managed key names. Empty (the default) skips the approved-key-name check.'
+        }
+        defaultValue: []
+      }
+    }
+    policyDefinitionGroups: [
+      {
+        name: 'storage-data-protection'
+        displayName: 'Storage data protection'
+        category: 'Data Protection'
+        description: 'Transport security, encryption, and public/network exposure posture for storage accounts.'
+      }
+      {
+        name: 'key-vault-data-protection'
+        displayName: 'Key Vault data protection'
+        category: 'Data Protection'
+        description: 'Recoverability, authorization, network access, and diagnostics posture for Key Vault.'
+      }
+      {
+        name: 'customer-managed-keys'
+        displayName: 'Customer-managed keys'
+        category: 'Data Protection'
+        description: 'Service-specific, audit-first customer-managed key controls that depend on a customer-supplied Key Vault, key, and identity.'
+      }
+    ]
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '404c3081-a854-4457-ae30-26a93ef643f9'
+        )
+        definitionVersion: '2.*.*'
+        policyDefinitionReferenceId: 'storage-secure-transfer'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'storage-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          'fe83a0eb-a853-422d-aac2-1bffd182c5d0'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'storage-minimum-tls'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+          minimumTlsVersion: {
+            value: '[parameters(\'minimumTlsVersion\')]'
+          }
+        }
+        groupNames: [
+          'storage-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '4fa4b6c0-31ca-4c0d-b10d-24b96f62a751'
+        )
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'storage-public-blob-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'storage-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '34c877ad-507e-4c82-993e-3452a6e0ad3c'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'storage-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'storage-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '8c6a50c6-9ffd-4ae7-986f-5fa6111f9a54'
+        )
+        definitionVersion: '2.*.*'
+        policyDefinitionReferenceId: 'storage-shared-key-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'storage-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '1e66c121-a66a-4b1f-9b83-0fd99bf0fc2d'
+        )
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'key-vault-soft-delete'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'key-vault-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '0b60c0b2-2dc2-4e1c-b5c9-abbed971de53'
+        )
+        definitionVersion: '2.*.*'
+        policyDefinitionReferenceId: 'key-vault-deletion-protection'
+        parameters: {
+          // Bound to purgeProtectionEffect, which can only be Audit or Deny, so
+          // purge protection can never be disabled from the reviewed effect.
+          effect: {
+            value: '[parameters(\'purgeProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'key-vault-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '12d4fa5e-1f9f-4c21-97a9-b99b3c6611b5'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'key-vault-rbac-authorization'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'key-vault-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '55615ac9-af46-4a59-874e-391cc3dfb490'
+        )
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'key-vault-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+        }
+        groupNames: [
+          'key-vault-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          'cf820ca0-f99e-4f3e-84fb-66e913812d21'
+        )
+        definitionVersion: '5.*.*'
+        policyDefinitionReferenceId: 'key-vault-diagnostics-readiness'
+        parameters: {
+          effect: {
+            value: '[parameters(\'auditIfNotExistsEffect\')]'
+          }
+        }
+        groupNames: [
+          'key-vault-data-protection'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '6fac406b-40ca-413b-bf8e-0bf964659c25'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'storage-customer-managed-key'
+        parameters: {
+          effect: {
+            value: '[parameters(\'auditOnlyEffect\')]'
+          }
+        }
+        groupNames: [
+          'customer-managed-keys'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.storageCmkApprovedKeyPolicyDefinitionId
+        policyDefinitionReferenceId: 'storage-approved-customer-managed-key'
+        parameters: {
+          effect: {
+            value: '[parameters(\'effect\')]'
+          }
+          approvedKeyVaultUris: {
+            value: '[parameters(\'approvedKeyVaultUris\')]'
+          }
+          approvedKeyNames: {
+            value: '[parameters(\'approvedKeyNames\')]'
+          }
+        }
+        groupNames: [
+          'customer-managed-keys'
+        ]
+      }
+    ]
+  }
+}
+
+module dataProtectionAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-data-protection'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-data-protection'
+    displayName: 'Demo - storage and Key Vault data-protection guardrails'
+    description: 'Audits storage and Key Vault data-protection posture, including service-specific customer-managed key requirements, across the Landing Zones branch.'
+    policyDefinitionId: dataProtectionInitiative.outputs.policySetDefinitionId
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: dataProtectionPolicyEffect
+      }
+      purgeProtectionEffect: {
+        value: dataProtectionPurgeProtectionEffect
+      }
+      auditOnlyEffect: {
+        value: dataProtectionAuditOnlyEffect
+      }
+      auditIfNotExistsEffect: {
+        value: dataProtectionAuditIfNotExistsEffect
+      }
+      minimumTlsVersion: {
+        value: storageMinimumTlsVersion
+      }
+      approvedKeyVaultUris: {
+        value: approvedCustomerManagedKeyVaultUris
+      }
+      approvedKeyNames: {
+        value: approvedCustomerManagedKeyNames
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Storage accounts must require secure transfer (HTTPS). Enable supportsHttpsTrafficOnly or obtain a governed exemption.'
+        policyDefinitionReferenceId: 'storage-secure-transfer'
+      }
+      {
+        message: 'Storage accounts must set the approved minimum TLS version (TLS1_2 by default).'
+        policyDefinitionReferenceId: 'storage-minimum-tls'
+      }
+      {
+        message: 'Public blob access must be disallowed on storage accounts. Use Entra ID authorization or a user delegation SAS instead of anonymous access.'
+        policyDefinitionReferenceId: 'storage-public-blob-access'
+      }
+      {
+        message: 'Storage account network access must be restricted to approved networks. This control audits the account firewall only; it does not deploy a private endpoint.'
+        policyDefinitionReferenceId: 'storage-network-access'
+      }
+      {
+        message: 'Storage accounts must reject Shared Key authorization and require Entra ID authorization. Migrate tooling that depends on account keys before enforcing.'
+        policyDefinitionReferenceId: 'storage-shared-key-access'
+      }
+      {
+        message: 'Key vaults must have soft delete enabled so deleted vaults and secrets stay recoverable.'
+        policyDefinitionReferenceId: 'key-vault-soft-delete'
+      }
+      {
+        message: 'Key vaults must have deletion (purge) protection enabled in addition to soft delete. Purge protection must never be disabled once enabled.'
+        policyDefinitionReferenceId: 'key-vault-deletion-protection'
+      }
+      {
+        message: 'Key vaults must use the Azure RBAC permission model for data-plane authorization instead of vault access policies.'
+        policyDefinitionReferenceId: 'key-vault-rbac-authorization'
+      }
+      {
+        message: 'Key vaults must enable the vault firewall or disable public network access. This control audits network configuration only; it does not deploy a private endpoint.'
+        policyDefinitionReferenceId: 'key-vault-network-access'
+      }
+      {
+        message: 'Key Vault resource logs are not configured. This control audits diagnostics readiness only; it does not create a diagnostic setting or a Log Analytics workspace.'
+        policyDefinitionReferenceId: 'key-vault-diagnostics-readiness'
+      }
+      {
+        message: 'Storage accounts in scope for customer-managed keys must encrypt with a key from a customer-supplied Key Vault. The customer owns the key, its identity access, rotation, availability, and recovery.'
+        policyDefinitionReferenceId: 'storage-customer-managed-key'
+      }
+      {
+        message: 'The storage customer-managed key is outside the approved Key Vault or key-name list. Update the approved inputs or move the account to an approved key.'
+        policyDefinitionReferenceId: 'storage-approved-customer-managed-key'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 module expensiveResourcesAssignment 'modules/policy-assignment.bicep' = {
   name: 'assign-expensive-resources'
   scope: managementGroup(demoRootManagementGroupId)
@@ -829,6 +1347,29 @@ module resourceGroupTagsAssignment 'modules/policy-assignment.bicep' = {
         policyDefinitionReferenceId: 'require-ssp-id'
       }
     ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module tagInheritanceAssignment 'modules/remediating-policy-assignment.bicep' = if (enableTagInheritance) {
+  name: 'assign-tag-inheritance'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-inherit-rg-tags'
+    displayName: 'Demo - inherit resource group tags'
+    description: 'Inherits missing customer governance tags from resource groups without replacing existing resource tag values. Existing resources require a deliberate remediation task.'
+    policyDefinitionId: tagInheritanceInitiative.outputs.policySetDefinitionId
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      contributorRoleDefinitionId
+    ]
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
   }
   dependsOn: [
     hierarchy
@@ -1153,6 +1694,7 @@ output hierarchy object = {
   criticalInfrastructure: hierarchy.outputs.criticalInfrastructureManagementGroupId
 }
 output denyPolicyEnforcementMode string = denyPolicyEnforcementMode
+output dataProtectionPolicyEffect string = dataProtectionPolicyEffect
 output roleAssignmentsEnabled bool = deployRoleAssignments
 output evidenceResourcesEnabled bool = deployEvidenceResources
 output criticalInfrastructureEnabled bool = enableCriticalInfrastructure
@@ -1184,4 +1726,10 @@ output loggingAssignments object = {
     categoryGroup: resourceDiagnosticsCategoryGroup
     policySetDefinitionId: resourceDiagnosticsPolicySetDefinitionId
   }
+}
+output tagInheritanceRemediation object = {
+  enabled: enableTagInheritance
+  policyAssignmentId: tagInheritanceAssignment.?outputs.?policyAssignmentId ?? ''
+  policyDefinitionReferenceIds: tagInheritanceInitiative.outputs.policyDefinitionReferenceIds
+  remediationStarted: false
 }
