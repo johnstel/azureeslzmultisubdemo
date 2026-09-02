@@ -21,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/24 Validate repository versioning and branch guidance...\n'
+printf '1/25 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -32,7 +32,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/24 Build the complete tenant template and validate policy assignment shapes...\n'
+printf '2/25 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -78,7 +78,7 @@ jq -e '
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/24 Validate the ARM parameter template...\n'
+printf '3/25 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -110,14 +110,14 @@ jq -e '
   .parameters.approvedRouteTablePrefixes.value == []
 ' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
-printf '4/24 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/25 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/24 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+printf '5/25 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
 find_prohibited_paid_declarations() {
   jq -r '
     def prohibited:
@@ -151,13 +151,13 @@ az bicep build \
   exit 1
 }
 
-printf '6/24 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/25 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/24 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+printf '7/25 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 4 ]] || {
   printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
@@ -623,7 +623,7 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/24 Confirm region policy and workload network guardrails are safe by default...\n'
+printf '8/25 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -866,7 +866,7 @@ for case in fixture["cases"]:
         raise SystemExit(f"ERROR: Firewall route semantic case failed: {case['name']}")
 PYEOF
 
-printf '9/24 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/25 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -899,7 +899,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '10/25 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -915,7 +915,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '11/24 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '11/25 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -939,7 +939,7 @@ landingzones_delete_line_ps1="$(rg -n '\$managementGroups \+= "\$prefix-landingz
   exit 1
 }
 
-printf '12/24 Confirm central monitoring defaults create no metered resources...\n'
+printf '12/25 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -955,17 +955,17 @@ rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceReque
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '14/24 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '14/25 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '15/24 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '15/25 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '16/24 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '16/25 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -988,7 +988,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '17/24 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '17/25 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -1036,7 +1036,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '18/24 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '18/25 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
@@ -1107,19 +1107,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '19/24 Validate reusable initiative composition...\n'
+printf '19/25 Validate reusable initiative composition...\n'
 "${SCRIPT_DIR}/validate-initiative-composition.sh"
 
-printf '20/24 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '20/25 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '21/24 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '21/25 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '22/24 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '22/25 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '23/24 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '23/25 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
@@ -1551,7 +1551,7 @@ rm -f "${CASE_INSENSITIVE_IMG}"
 
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
-printf '24/24 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
+printf '24/25 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
 control_catalog="${PROJECT_DIR}/policy/control-catalog.json"
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
@@ -1563,7 +1563,7 @@ jq -e --slurpfile catalog "${control_catalog}" '
   def pinned_version($id):
     "\(control($id).mechanism.majorVersion).*.*";
   def assigned_at_demo_root($deployment):
-    $deployment.scope | contains("demoRootManagementGroupId");
+    $deployment.scope == "[format(\u0027Microsoft.Management/managementGroups/{0}\u0027, variables(\u0027demoRootManagementGroupId\u0027))]";
   deployment("assign-mcsb-baseline") as $mcsb |
   deployment("assign-cis-foundations") as $cis |
   deployment("assign-nist-sp-800-53-r5") as $nist |
@@ -1653,5 +1653,223 @@ jq -e '
   printf 'ERROR: The ARM parameter template must enable only the stable MCSB baseline by default.\n' >&2
   exit 1
 }
+
+printf '25/25 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
+jq -e '
+  .parameters.dataProtectionPolicyEffect.defaultValue == "Audit" and
+  .parameters.dataProtectionPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and
+  .parameters.storageMinimumTlsVersion.defaultValue == "TLS1_2" and
+  .parameters.storageMinimumTlsVersion.allowedValues == ["TLS1_0", "TLS1_1", "TLS1_2"] and
+  .parameters.approvedCustomerManagedKeyVaultUris.defaultValue == [] and
+  .parameters.approvedCustomerManagedKeyNames.defaultValue == [] and
+  .variables.dataProtectionAuditOnlyEffect == "[if(equals(parameters(\u0027dataProtectionPolicyEffect\u0027), \u0027Disabled\u0027), \u0027Disabled\u0027, \u0027Audit\u0027)]" and
+  .variables.dataProtectionAuditIfNotExistsEffect == "[if(equals(parameters(\u0027dataProtectionPolicyEffect\u0027), \u0027Disabled\u0027), \u0027Disabled\u0027, \u0027AuditIfNotExists\u0027)]" and
+  .variables.dataProtectionPurgeProtectionEffect == "[if(equals(parameters(\u0027dataProtectionPolicyEffect\u0027), \u0027Deny\u0027), \u0027Deny\u0027, \u0027Audit\u0027)]" and
+  .resources as $resources |
+  ($resources | map(select(.name == "data-protection-initiative")) | first) as $initiative |
+  ($resources | map(select(.name == "assign-data-protection")) | first) as $assignment |
+  ($initiative.scope == "[format(\u0027Microsoft.Management/managementGroups/{0}\u0027, variables(\u0027demoRootManagementGroupId\u0027))]") and
+  ($assignment.scope == "[format(\u0027Microsoft.Management/managementGroups/{0}\u0027, variables(\u0027landingZonesManagementGroupId\u0027))]") and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == [
+    "key-vault-deletion-protection",
+    "key-vault-diagnostics-readiness",
+    "key-vault-network-access",
+    "key-vault-rbac-authorization",
+    "key-vault-soft-delete",
+    "storage-approved-customer-managed-key",
+    "storage-customer-managed-key",
+    "storage-minimum-tls",
+    "storage-network-access",
+    "storage-public-blob-access",
+    "storage-secure-transfer",
+    "storage-shared-key-access"
+  ] and
+  ($assignment.properties.parameters.parameters.value.effect.value == "[parameters(\u0027dataProtectionPolicyEffect\u0027)]") and
+  ($assignment.properties.parameters.parameters.value.auditOnlyEffect.value == "[variables(\u0027dataProtectionAuditOnlyEffect\u0027)]") and
+  ($assignment.properties.parameters.parameters.value.purgeProtectionEffect.value == "[variables(\u0027dataProtectionPurgeProtectionEffect\u0027)]") and
+  ($assignment.properties.parameters.parameters.value.auditIfNotExistsEffect.value == "[variables(\u0027dataProtectionAuditIfNotExistsEffect\u0027)]") and
+  ($assignment.properties.parameters.parameters.value.minimumTlsVersion.value == "[parameters(\u0027storageMinimumTlsVersion\u0027)]") and
+  ($assignment.properties.parameters.parameters.value.approvedKeyVaultUris.value == "[parameters(\u0027approvedCustomerManagedKeyVaultUris\u0027)]") and
+  ($assignment.properties.parameters.parameters.value.approvedKeyNames.value == "[parameters(\u0027approvedCustomerManagedKeyNames\u0027)]") and
+  ($assignment.properties.parameters.nonComplianceMessages.value | length) == 12 and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
+    ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) and
+  ($assignment.properties.parameters.nonComplianceMessages.value | all(.message | length > 0))
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The data-protection initiative or assignment is missing an audit-first default, a control reference, or a non-compliance message.\n' >&2
+  exit 1
+}
+
+# Every built-in referenced by the initiative must be one of the GUIDs recorded
+# in the verified control catalog, so a control can never be wired to an
+# unverified or invented definition ID.
+data_protection_builtin_ids="$(jq -r '
+  .resources[]
+  | select(.name == "data-protection-initiative")
+  | .properties.parameters.policyDefinitionReferences.value[]
+  | .policyDefinitionId
+  | select(startswith("[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, "))
+  | capture("(?<guid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})").guid
+' "${TEMP_DIR}/main.json" | sort -u)"
+[[ "$(printf '%s\n' "${data_protection_builtin_ids}" | wc -l | tr -d ' ')" -eq 11 ]] || {
+  printf 'ERROR: Expected 11 distinct verified built-in definitions in the data-protection initiative.\n' >&2
+  exit 1
+}
+while IFS= read -r builtin_id; do
+  jq -e --arg id "${builtin_id}" '
+    [.controls[] | select(.mechanism.builtIn == true and .mechanism.definitionId == $id)] | length > 0
+  ' "${PROJECT_DIR}/policy/control-catalog.json" >/dev/null || {
+    printf 'ERROR: Data-protection built-in %s is not a verified control-catalog definition ID.\n' "${builtin_id}" >&2
+    exit 1
+  }
+done <<< "${data_protection_builtin_ids}"
+
+# Every built-in member must be pinned to the exact major version verified in
+# the control catalog, and the in-repository custom member must stay unpinned
+# because definitionVersion applies only to built-in definitions.
+data_protection_reference_pins="$(jq -r '
+  .resources[]
+  | select(.name == "data-protection-initiative")
+  | .properties.parameters.policyDefinitionReferences.value[]
+  | [
+      .policyDefinitionReferenceId,
+      (.policyDefinitionId | capture("(?<guid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})").guid? // "custom"),
+      (.definitionVersion // "")
+    ]
+  | @tsv
+' "${TEMP_DIR}/main.json")"
+while IFS="$(printf '\t')" read -r reference_id builtin_id pinned_version; do
+  if [[ "${builtin_id}" == 'custom' ]]; then
+    [[ -z "${pinned_version}" ]] || {
+      printf 'ERROR: Custom data-protection reference %s must not declare definitionVersion.\n' "${reference_id}" >&2
+      exit 1
+    }
+    continue
+  fi
+  expected_major="$(jq -r --arg id "${builtin_id}" '
+    [.controls[] | select(.mechanism.builtIn == true and .mechanism.definitionId == $id) | .mechanism.majorVersion] | first // ""
+  ' "${PROJECT_DIR}/policy/control-catalog.json")"
+  [[ -n "${expected_major}" ]] || {
+    printf 'ERROR: Data-protection built-in %s has no verified majorVersion in the control catalog.\n' "${builtin_id}" >&2
+    exit 1
+  }
+  [[ "${pinned_version}" == "${expected_major}.*.*" ]] || {
+    printf 'ERROR: Data-protection reference %s must pin definitionVersion %s.*.* but pins "%s".\n' \
+      "${reference_id}" "${expected_major}" "${pinned_version}" >&2
+    exit 1
+  }
+done <<< "${data_protection_reference_pins}"
+
+# The exact expected pin per reference is spelled out so an unpinned, removed,
+# or silently re-pointed built-in fails even if the catalog changes too.
+jq -e '
+  (.resources[] | select(.name == "data-protection-initiative")
+    | .properties.parameters.policyDefinitionReferences.value
+    | map({ (.policyDefinitionReferenceId): (.definitionVersion // null) })
+    | add) == {
+    "storage-secure-transfer": "2.*.*",
+    "storage-minimum-tls": "1.*.*",
+    "storage-public-blob-access": "3.*.*",
+    "storage-network-access": "1.*.*",
+    "storage-shared-key-access": "2.*.*",
+    "key-vault-soft-delete": "3.*.*",
+    "key-vault-deletion-protection": "2.*.*",
+    "key-vault-rbac-authorization": "1.*.*",
+    "key-vault-network-access": "3.*.*",
+    "key-vault-diagnostics-readiness": "5.*.*",
+    "storage-customer-managed-key": "1.*.*",
+    "storage-approved-customer-managed-key": null
+  }
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Data-protection references must pin the exact verified built-in majors and leave the custom member unpinned.\n' >&2
+  exit 1
+}
+
+# Purge protection is only ever audited or denied, never turned off, and the
+# audit-only and readiness controls can never be escalated to Deny.
+jq -e '
+  (.resources | map(select(.name == "data-protection-initiative")) | first) as $initiative |
+  $initiative.properties.parameters.initiativeParameters.value as $initiativeParameters |
+  $initiativeParameters.effect.allowedValues == ["Audit", "Deny", "Disabled"] and
+  $initiativeParameters.effect.defaultValue == "Audit" and
+  $initiativeParameters.auditOnlyEffect.allowedValues == ["Audit", "Disabled"] and
+  $initiativeParameters.auditIfNotExistsEffect.allowedValues == ["AuditIfNotExists", "Disabled"] and
+  $initiativeParameters.purgeProtectionEffect.allowedValues == ["Audit", "Deny"] and
+  $initiativeParameters.purgeProtectionEffect.defaultValue == "Audit" and
+  ($initiative.properties.parameters.policyDefinitionReferences.value
+    | map(select(.policyDefinitionReferenceId == "key-vault-deletion-protection"))
+    | first
+    | .parameters.effect.value) == "[[parameters(\u0027purgeProtectionEffect\u0027)]" and
+  ($initiative.properties.parameters.policyDefinitionReferences.value
+    | map(select(.policyDefinitionReferenceId == "storage-customer-managed-key"))
+    | first
+    | .parameters.effect.value) == "[[parameters(\u0027auditOnlyEffect\u0027)]"
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Data-protection effects must stay audit-first, must never disable Key Vault purge protection, and must bind the operative built-in parameter names.\n' >&2
+  exit 1
+}
+
+# The in-repository customer-managed key control must stay parameterized and
+# must report nothing until the customer supplies an approved key inventory.
+jq -e '
+  (.resources[] | select(.name | startswith("[format(\u0027policy-library-"))) as $library |
+  ($library.properties.template.resources
+    | map(select(.properties.displayName == "Demo - audit storage customer-managed keys against approved Key Vaults and keys"))
+    | first) as $cmk |
+  $cmk.properties.parameters.approvedKeyVaultUris.defaultValue == [] and
+  $cmk.properties.parameters.approvedKeyNames.defaultValue == [] and
+  $cmk.properties.parameters.effect.defaultValue == "Audit" and
+  ($cmk.properties.policyRule.if | tostring | contains("length(parameters(\u0027approvedKeyVaultUris\u0027))")) and
+  ($cmk.properties.policyRule.if | tostring | contains("length(parameters(\u0027approvedKeyNames\u0027))")) and
+  ($cmk.properties.policyRule.if | tostring | contains("encryption.keyvaultproperties.keyvaulturi")) and
+  ($cmk.properties.policyRule.if | tostring | contains("encryption.keyvaultproperties.keyname"))
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The storage customer-managed key audit must be parameterized and silent until approved inputs are supplied.\n' >&2
+  exit 1
+}
+
+# Restricting public access must never be implemented by deploying a Key Vault,
+# a key, a private endpoint, or a private DNS zone in this template, and the
+# data-protection controls must never request a managed identity (which would
+# imply remediation rights or paid/data-plane changes).
+prohibited_data_protection_types="$(jq -r '
+  [.. | objects
+    | select((.type? | type) == "string")
+    | select(.apiVersion?)
+    | select(.type | test("^Microsoft\\.(KeyVault/vaults(/keys|/secrets)?|Network/(privateEndpoints|privateDnsZones))$"; "i"))
+    | .type
+  ] | unique | .[]
+' "${TEMP_DIR}/main.json")"
+[[ -z "${prohibited_data_protection_types}" ]] || {
+  printf 'ERROR: The data-protection controls must not declare a Key Vault, key, secret, private endpoint, or private DNS zone.\n' >&2
+  exit 1
+}
+jq -e '
+  .resources as $resources |
+  [$resources[] | select(.name == "data-protection-initiative" or .name == "assign-data-protection")] as $deployments |
+  ($deployments | length) == 2 and
+  ($deployments | all(has("identity") | not)) and
+  ([$deployments[] | .properties.template.resources[]] | length) == 2 and
+  ([$deployments[] | .properties.template.resources[] | .type] | sort) == [
+    "Microsoft.Authorization/policyAssignments",
+    "Microsoft.Authorization/policySetDefinitions"
+  ] and
+  ([$deployments[] | .properties.template.resources[]] | all((has("identity") | not) and (has("location") | not))) and
+  ([$deployments[] | .properties.template.resources[]]
+    | all(.type | test("^Microsoft\\.(ManagedIdentity|KeyVault|Storage|Network|OperationalInsights)/"; "i") | not))
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The data-protection initiative and assignment must declare only policy resources with no system-assigned or user-assigned identity.\n' >&2
+  exit 1
+}
+jq -e '
+  .parameters.dataProtectionPolicyEffect.value == "Audit" and
+  .parameters.storageMinimumTlsVersion.value == "TLS1_2" and
+  .parameters.approvedCustomerManagedKeyVaultUris.value == [] and
+  .parameters.approvedCustomerManagedKeyNames.value == []
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
+  printf 'ERROR: The JSON parameter template must keep audit-first data-protection defaults with no approved key inputs.\n' >&2
+  exit 1
+}
+jq -e '.parameters.dataProtectionPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
 printf '\nAll local validation and safety tests passed.\n'

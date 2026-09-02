@@ -87,7 +87,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/24 Validate repository versioning and branch guidance...'
+    Write-Host '1/25 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -105,7 +105,7 @@ try {
         }
     }
 
-    Write-Host '2/24 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/25 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -203,7 +203,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/24 Validate both parameter templates...'
+    Write-Host '3/25 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -254,7 +254,7 @@ try {
     if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
         $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
     }
-    Write-Host '4/24 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/25 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -264,7 +264,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/24 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    Write-Host '5/25 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
     if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
         Stop-Test 'A prohibited evidence resource type is declared.'
     }
@@ -278,14 +278,14 @@ try {
         Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/24 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/25 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/24 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/25 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -785,7 +785,7 @@ exit $LASTEXITCODE
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/24 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/25 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -1091,7 +1091,7 @@ exit $LASTEXITCODE
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '9/24 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/25 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -1131,7 +1131,7 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/24 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '10/25 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -1159,7 +1159,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '11/24 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '11/25 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -1181,7 +1181,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '12/24 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '12/25 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -1202,7 +1202,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '13/24 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '13/25 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -1214,7 +1214,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/24 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '14/25 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -1222,7 +1222,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '15/24 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '15/25 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -1234,7 +1234,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '16/24 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '16/25 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -1251,7 +1251,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '17/24 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '17/25 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -1354,7 +1354,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '18/24 Parse every PowerShell lifecycle and test script...'
+    Write-Host '18/25 Parse every PowerShell lifecycle and test script...'
     & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
@@ -1373,13 +1373,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/24 Validate reusable initiative composition...'
+    Write-Host '19/25 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '20/24 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '20/25 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '21/24 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '21/25 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -1389,10 +1389,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '22/24 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '22/25 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '23/24 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '23/25 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'
@@ -2020,7 +2020,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 
-    Write-Host '24/24 Confirm security benchmark assignments trace to the control catalog and stay optional...'
+    Write-Host '24/25 Confirm security benchmark assignments trace to the control catalog and stay optional...'
     $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
     $armParameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $benchmarkAssignments = @(
@@ -2064,7 +2064,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         if ($deployment.condition -ne "[parameters('$($benchmark.ParameterName)')]") {
             Stop-Test "$($benchmark.DeploymentName) must be gated by $($benchmark.ParameterName)."
         }
-        if ($deployment.scope -notmatch 'demoRootManagementGroupId') {
+        if ($deployment.scope -cne "[format('Microsoft.Management/managementGroups/{0}', variables('demoRootManagementGroupId'))]") {
             Stop-Test "$($benchmark.DeploymentName) must be assigned at the dedicated demo root."
         }
         $expectedDefinitionId = "[tenantResourceId('Microsoft.Authorization/policySetDefinitions', '$($control.mechanism.definitionId)')]"
@@ -2154,6 +2154,232 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             $caseParameters.parameters.enableCisAzureFoundationsBenchmark.value -ne $benchmarkCase[1] -or
             $caseParameters.parameters.enableNistSp80053Rev5.value -ne $benchmarkCase[2]) {
             Stop-Test "Benchmark combination $($caseValues -join ',') did not compile to the expected parameter values."
+        }
+    }
+
+    Write-Host '25/25 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
+    if ($compiledJson.parameters.dataProtectionPolicyEffect.defaultValue -ne 'Audit' -or
+        (Compare-Object @($compiledJson.parameters.dataProtectionPolicyEffect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
+        Stop-Test 'Compiled dataProtectionPolicyEffect must allow Audit, Deny, and Disabled and default to Audit.'
+    }
+    if ($compiledJson.parameters.storageMinimumTlsVersion.defaultValue -ne 'TLS1_2' -or
+        (Compare-Object @($compiledJson.parameters.storageMinimumTlsVersion.allowedValues) @('TLS1_0', 'TLS1_1', 'TLS1_2'))) {
+        Stop-Test 'Compiled storageMinimumTlsVersion must allow TLS1_0, TLS1_1, and TLS1_2 and default to TLS1_2.'
+    }
+    if (@($compiledJson.parameters.approvedCustomerManagedKeyVaultUris.defaultValue).Count -ne 0 -or
+        @($compiledJson.parameters.approvedCustomerManagedKeyNames.defaultValue).Count -ne 0) {
+        Stop-Test 'Approved customer-managed key inputs must default to empty arrays.'
+    }
+    if ($parameterTemplate.parameters.dataProtectionPolicyEffect.value -ne 'Audit' -or
+        $parameterTemplate.parameters.storageMinimumTlsVersion.value -ne 'TLS1_2' -or
+        @($parameterTemplate.parameters.approvedCustomerManagedKeyVaultUris.value).Count -ne 0 -or
+        @($parameterTemplate.parameters.approvedCustomerManagedKeyNames.value).Count -ne 0) {
+        Stop-Test 'The JSON parameter template must keep audit-first data-protection defaults with no approved key inputs.'
+    }
+    if ($compiledParameters.parameters.dataProtectionPolicyEffect.value -ne 'Audit') {
+        Stop-Test 'dataProtectionPolicyEffect must default to Audit in the Bicep parameter template.'
+    }
+
+    $dataProtectionInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'data-protection-initiative' })
+    $dataProtectionAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-data-protection' })
+    if ($dataProtectionInitiative.Count -ne 1 -or $dataProtectionAssignment.Count -ne 1) {
+        Stop-Test 'Expected exactly one data-protection initiative and one data-protection assignment.'
+    }
+    if ($dataProtectionInitiative[0].scope -cne "[format('Microsoft.Management/managementGroups/{0}', variables('demoRootManagementGroupId'))]") {
+        Stop-Test 'The data-protection initiative must be created at the dedicated demo root.'
+    }
+    if ($dataProtectionAssignment[0].scope -cne "[format('Microsoft.Management/managementGroups/{0}', variables('landingZonesManagementGroupId'))]") {
+        Stop-Test 'The data-protection initiative must be assigned at the Landing Zones management group.'
+    }
+
+    $expectedDataProtectionReferenceIds = @(
+        'key-vault-deletion-protection',
+        'key-vault-diagnostics-readiness',
+        'key-vault-network-access',
+        'key-vault-rbac-authorization',
+        'key-vault-soft-delete',
+        'storage-approved-customer-managed-key',
+        'storage-customer-managed-key',
+        'storage-minimum-tls',
+        'storage-network-access',
+        'storage-public-blob-access',
+        'storage-secure-transfer',
+        'storage-shared-key-access'
+    )
+    $dataProtectionReferences = @($dataProtectionInitiative[0].properties.parameters.policyDefinitionReferences.value)
+    if (Compare-Object ($dataProtectionReferences | ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object) ($expectedDataProtectionReferenceIds | Sort-Object)) {
+        Stop-Test 'The data-protection initiative does not compose exactly the expected storage and Key Vault controls.'
+    }
+
+    $dataProtectionAssignmentParameters = $dataProtectionAssignment[0].properties.parameters.parameters.value
+    foreach ($expectedBinding in @(
+        @{ Name = 'effect'; Value = "[parameters('dataProtectionPolicyEffect')]" },
+        @{ Name = 'auditOnlyEffect'; Value = "[variables('dataProtectionAuditOnlyEffect')]" },
+        @{ Name = 'purgeProtectionEffect'; Value = "[variables('dataProtectionPurgeProtectionEffect')]" },
+        @{ Name = 'auditIfNotExistsEffect'; Value = "[variables('dataProtectionAuditIfNotExistsEffect')]" },
+        @{ Name = 'minimumTlsVersion'; Value = "[parameters('storageMinimumTlsVersion')]" },
+        @{ Name = 'approvedKeyVaultUris'; Value = "[parameters('approvedCustomerManagedKeyVaultUris')]" },
+        @{ Name = 'approvedKeyNames'; Value = "[parameters('approvedCustomerManagedKeyNames')]" }
+    )) {
+        if ($dataProtectionAssignmentParameters.($expectedBinding.Name).value -ne $expectedBinding.Value) {
+            Stop-Test "The data-protection assignment does not bind $($expectedBinding.Name) to its template input."
+        }
+    }
+    $dataProtectionMessages = @($dataProtectionAssignment[0].properties.parameters.nonComplianceMessages.value)
+    if ($dataProtectionMessages.Count -ne $expectedDataProtectionReferenceIds.Count -or
+        (Compare-Object ($dataProtectionMessages | ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object) ($expectedDataProtectionReferenceIds | Sort-Object)) -or
+        @($dataProtectionMessages | Where-Object { [string]::IsNullOrWhiteSpace($_.message) }).Count -ne 0) {
+        Stop-Test 'Every data-protection control must have its own non-empty non-compliance message.'
+    }
+
+    # Every built-in referenced by the initiative must be one of the GUIDs
+    # recorded in the verified control catalog, so a control can never be wired
+    # to an unverified or invented definition ID.
+    $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
+    $verifiedBuiltInIds = @($controlCatalog.controls |
+        Where-Object { $_.mechanism.builtIn -eq $true -and $_.mechanism.definitionId } |
+        ForEach-Object { $_.mechanism.definitionId })
+    $referencedBuiltInIds = @($dataProtectionReferences |
+        Where-Object { $_.policyDefinitionId.StartsWith("[tenantResourceId('Microsoft.Authorization/policyDefinitions', ") } |
+        ForEach-Object { [regex]::Match($_.policyDefinitionId, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}').Value } |
+        Sort-Object -Unique)
+    if ($referencedBuiltInIds.Count -ne 11) {
+        Stop-Test "Expected 11 distinct verified built-in definitions in the data-protection initiative, found $($referencedBuiltInIds.Count)."
+    }
+    foreach ($referencedBuiltInId in $referencedBuiltInIds) {
+        if ($referencedBuiltInId -notin $verifiedBuiltInIds) {
+            Stop-Test "Data-protection built-in $referencedBuiltInId is not a verified control-catalog definition ID."
+        }
+    }
+
+    # Every built-in member must be pinned to the exact major version verified in
+    # the control catalog, and the in-repository custom member must stay unpinned
+    # because definitionVersion applies only to built-in definitions.
+    $expectedDefinitionVersions = [ordered]@{
+        'storage-secure-transfer'                = '2.*.*'
+        'storage-minimum-tls'                    = '1.*.*'
+        'storage-public-blob-access'             = '3.*.*'
+        'storage-network-access'                 = '1.*.*'
+        'storage-shared-key-access'              = '2.*.*'
+        'key-vault-soft-delete'                  = '3.*.*'
+        'key-vault-deletion-protection'          = '2.*.*'
+        'key-vault-rbac-authorization'           = '1.*.*'
+        'key-vault-network-access'               = '3.*.*'
+        'key-vault-diagnostics-readiness'        = '5.*.*'
+        'storage-customer-managed-key'           = '1.*.*'
+        'storage-approved-customer-managed-key'  = $null
+    }
+    foreach ($dataProtectionReference in $dataProtectionReferences) {
+        $referenceId = $dataProtectionReference.policyDefinitionReferenceId
+        if (-not $expectedDefinitionVersions.Contains($referenceId)) {
+            Stop-Test "Unexpected data-protection policy definition reference '$referenceId'."
+        }
+        $actualDefinitionVersion = $null
+        if ($dataProtectionReference.PSObject.Properties['definitionVersion']) {
+            $actualDefinitionVersion = $dataProtectionReference.definitionVersion
+        }
+        if ($actualDefinitionVersion -ne $expectedDefinitionVersions[$referenceId]) {
+            Stop-Test "Data-protection reference '$referenceId' must pin definitionVersion '$($expectedDefinitionVersions[$referenceId])' but pins '$actualDefinitionVersion'."
+        }
+        $referenceBuiltInId = [regex]::Match($dataProtectionReference.policyDefinitionId, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}').Value
+        if (-not $referenceBuiltInId) {
+            if ($null -ne $actualDefinitionVersion) {
+                Stop-Test "Custom data-protection reference '$referenceId' must not declare definitionVersion."
+            }
+            continue
+        }
+        $catalogMajor = @($controlCatalog.controls |
+            Where-Object { $_.mechanism.builtIn -eq $true -and $_.mechanism.definitionId -eq $referenceBuiltInId } |
+            ForEach-Object { $_.mechanism.majorVersion })
+        if ($catalogMajor.Count -lt 1 -or $actualDefinitionVersion -ne "$($catalogMajor[0]).*.*") {
+            Stop-Test "Data-protection reference '$referenceId' must pin the catalog-verified major for built-in $referenceBuiltInId."
+        }
+    }
+
+    # Purge protection is only ever audited or denied, never turned off, and the
+    # audit-only and readiness controls can never be escalated to Deny.
+    $dataProtectionInitiativeParameters = $dataProtectionInitiative[0].properties.parameters.initiativeParameters.value
+    if ((Compare-Object @($dataProtectionInitiativeParameters.effect.allowedValues) @('Audit', 'Deny', 'Disabled')) -or
+        $dataProtectionInitiativeParameters.effect.defaultValue -ne 'Audit' -or
+        (Compare-Object @($dataProtectionInitiativeParameters.auditOnlyEffect.allowedValues) @('Audit', 'Disabled')) -or
+        (Compare-Object @($dataProtectionInitiativeParameters.auditIfNotExistsEffect.allowedValues) @('AuditIfNotExists', 'Disabled'))) {
+        Stop-Test 'Data-protection effects must stay audit-first, with no Deny option for audit-only or readiness controls.'
+    }
+    if ((Compare-Object @($dataProtectionInitiativeParameters.purgeProtectionEffect.allowedValues) @('Audit', 'Deny')) -or
+        $dataProtectionInitiativeParameters.purgeProtectionEffect.defaultValue -ne 'Audit') {
+        Stop-Test 'The Key Vault purge protection effect must only ever allow Audit or Deny.'
+    }
+    if ($compiledJson.variables.dataProtectionPurgeProtectionEffect -cne "[if(equals(parameters('dataProtectionPolicyEffect'), 'Deny'), 'Deny', 'Audit')]") {
+        Stop-Test 'A Disabled data-protection effect must still map to Audit for Key Vault purge protection.'
+    }
+    $deletionProtectionReference = @($dataProtectionReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'key-vault-deletion-protection' })
+    if ($deletionProtectionReference[0].parameters.effect.value -ne "[[parameters('purgeProtectionEffect')]") {
+        Stop-Test 'Key Vault purge protection must bind the Audit/Deny-only purge protection effect and must never be disabled.'
+    }
+    $storageCmkReference = @($dataProtectionReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'storage-customer-managed-key' })
+    if ($storageCmkReference[0].parameters.effect.value -ne "[[parameters('auditOnlyEffect')]") {
+        Stop-Test 'The storage customer-managed key audit must stay bound to the audit-only effect.'
+    }
+
+    # The in-repository customer-managed key control must stay parameterized and
+    # must report nothing until the customer supplies an approved key inventory.
+    $storageCmkDefinition = @($policyDefinitions | Where-Object {
+        $_.properties.displayName -eq 'Demo - audit storage customer-managed keys against approved Key Vaults and keys'
+    })
+    if ($storageCmkDefinition.Count -ne 1) {
+        Stop-Test 'Expected exactly one approved customer-managed key audit definition.'
+    }
+    if (@($storageCmkDefinition[0].properties.parameters.approvedKeyVaultUris.defaultValue).Count -ne 0 -or
+        @($storageCmkDefinition[0].properties.parameters.approvedKeyNames.defaultValue).Count -ne 0 -or
+        $storageCmkDefinition[0].properties.parameters.effect.defaultValue -ne 'Audit') {
+        Stop-Test 'The approved customer-managed key audit must default to Audit with empty approved inputs.'
+    }
+    $storageCmkRuleText = $storageCmkDefinition[0].properties.policyRule.if | ConvertTo-Json -Depth 100 -Compress
+    foreach ($requiredExpression in @(
+        "length(parameters('approvedKeyVaultUris'))",
+        "length(parameters('approvedKeyNames'))",
+        'encryption.keyvaultproperties.keyvaulturi',
+        'encryption.keyvaultproperties.keyname'
+    )) {
+        if (-not $storageCmkRuleText.Contains($requiredExpression)) {
+            Stop-Test "The approved customer-managed key audit is missing expression: $requiredExpression"
+        }
+    }
+
+    # Restricting public access must never be implemented by deploying a Key
+    # Vault, a key, a private endpoint, or a private DNS zone in this template,
+    # and the data-protection controls must never request a managed identity
+    # (which would imply remediation rights or paid/data-plane changes).
+    $prohibitedDataProtectionResources = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and
+        $node.PSObject.Properties['apiVersion'] -and
+        ($node.type -is [string]) -and
+        ($node.type -match '^Microsoft\.(KeyVault/vaults(/keys|/secrets)?|Network/(privateEndpoints|privateDnsZones))$')
+    }
+    if (@($prohibitedDataProtectionResources).Count -ne 0) {
+        Stop-Test 'The data-protection controls must not declare a Key Vault, key, secret, private endpoint, or private DNS zone.'
+    }
+    $dataProtectionDeployments = @($dataProtectionInitiative[0], $dataProtectionAssignment[0])
+    # Compiled nested templates use symbolic-name resource maps, so the nested
+    # resources are enumerated as property values rather than array elements.
+    $dataProtectionNestedResources = @($dataProtectionDeployments | ForEach-Object {
+        $nested = $_.properties.template.resources
+        if ($nested -is [System.Collections.IEnumerable] -and $nested -isnot [string]) { $nested } else { $nested.PSObject.Properties.Value }
+    })
+    if (@($dataProtectionNestedResources).Count -ne 2 -or
+        (Compare-Object @($dataProtectionNestedResources | ForEach-Object { $_.type } | Sort-Object) @(
+            'Microsoft.Authorization/policyAssignments',
+            'Microsoft.Authorization/policySetDefinitions'))) {
+        Stop-Test 'The data-protection initiative and assignment must declare only policy resources.'
+    }
+    foreach ($dataProtectionResource in ($dataProtectionDeployments + $dataProtectionNestedResources)) {
+        if ($dataProtectionResource.PSObject.Properties['identity']) {
+            Stop-Test 'The data-protection initiative and assignment must not request a system-assigned or user-assigned identity.'
+        }
+        if ($dataProtectionResource.PSObject.Properties['type'] -and
+            $dataProtectionResource.type -match '^Microsoft\.(ManagedIdentity|KeyVault|Storage|Network|OperationalInsights)/') {
+            Stop-Test "The data-protection controls must not declare $($dataProtectionResource.type)."
         }
     }
 
