@@ -21,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/26 Validate repository versioning and branch guidance...\n'
+printf '1/27 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -32,7 +32,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/26 Build the complete tenant template and validate policy assignment shapes...\n'
+printf '2/27 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -115,7 +115,7 @@ jq -e '
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/26 Validate the ARM parameter template...\n'
+printf '3/27 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -207,14 +207,14 @@ powershell_create_line="$(rg -n -F 'Start-AzPolicyRemediation `' "${powershell_r
   && "${powershell_revalidation_line}" -lt "${powershell_create_line}" ]] \
   || { printf 'ERROR: PowerShell tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
 
-printf '4/26 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/27 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/26 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+printf '5/27 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
 find_prohibited_paid_declarations() {
   jq -r '
     def prohibited:
@@ -248,13 +248,13 @@ az bicep build \
   exit 1
 }
 
-printf '6/26 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/27 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/26 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+printf '7/27 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 4 ]] || {
   printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
@@ -720,7 +720,7 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/26 Confirm region policy and workload network guardrails are safe by default...\n'
+printf '8/27 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -963,7 +963,7 @@ for case in fixture["cases"]:
         raise SystemExit(f"ERROR: Firewall route semantic case failed: {case['name']}")
 PYEOF
 
-printf '9/26 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/27 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -996,7 +996,234 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/26 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '10/27 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...\n'
+rg -q "^param enableDefenderCspm bool = false$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param enableDefenderForServers bool = false$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param enableDefenderForStorage bool = false$" "${PROJECT_DIR}/main.bicep"
+jq -e '
+  .parameters.enableDefenderCspm.defaultValue == false and
+  .parameters.enableDefenderForServers.defaultValue == false and
+  .parameters.enableDefenderForStorage.defaultValue == false
+' "${TEMP_DIR}/main.json" >/dev/null
+jq -e '
+  .parameters.enableDefenderCspm.value == false and
+  .parameters.enableDefenderForServers.value == false and
+  .parameters.enableDefenderForStorage.value == false
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
+jq -e '
+  .parameters.enableDefenderCspm.value == false and
+  .parameters.enableDefenderForServers.value == false and
+  .parameters.enableDefenderForStorage.value == false
+' "${TEMP_DIR}/main.parameters.json" >/dev/null
+rg -q "^param plan .cspm. \| .servers. \| .storage.$" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
+rg -q "type: enablePlan \\? 'SystemAssigned' : 'None'" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
+rg -q "value: enablePlan \\? 'DeployIfNotExists' : 'Disabled'" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
+! rg -q "roleDefinitionId" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" || {
+  printf 'ERROR: modules/defender-plan-assignment.bicep must never reference a roleDefinitionId; it must never auto-grant a role.\n' >&2
+  exit 1
+}
+! rg -q "Microsoft.Authorization/roleAssignments" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" || {
+  printf 'ERROR: modules/defender-plan-assignment.bicep must never create a role assignment.\n' >&2
+  exit 1
+}
+rg -q "^param enableDefenderCiem bool = true$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param defenderForServersSubPlan string = 'P2'$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param defenderForServersAgentlessVmScanningEnabled bool = true$" "${PROJECT_DIR}/main.bicep"
+defender_plan_assignments="$(jq '
+  [.. | objects
+    | select(.type? == "Microsoft.Resources/deployments")
+    | select(.name? == "assign-defender-cspm" or .name? == "assign-defender-servers" or .name? == "assign-defender-storage")
+  ]
+' "${TEMP_DIR}/main.json")"
+[[ "$(printf '%s' "${defender_plan_assignments}" | jq 'length')" -eq 3 ]] || {
+  printf 'ERROR: Expected exactly three Defender plan assignment module deployments (cspm/servers/storage).\n' >&2
+  exit 1
+}
+# Each of the three deployments must map to its own distinct plan/scope/opt-in
+# wiring; an "any of the three" style assertion could pass even if, for
+# example, the CSPM deployment were accidentally wired to the Storage GUID.
+cspm_deployment="$(printf '%s' "${defender_plan_assignments}" | jq -c '.[] | select(.name == "assign-defender-cspm")')"
+servers_deployment="$(printf '%s' "${defender_plan_assignments}" | jq -c '.[] | select(.name == "assign-defender-servers")')"
+storage_deployment="$(printf '%s' "${defender_plan_assignments}" | jq -c '.[] | select(.name == "assign-defender-storage")')"
+printf '%s' "${cspm_deployment}" | jq -e '
+  .properties.parameters.plan.value == "cspm" and
+  .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderCspm\u0027)]" and
+  .properties.parameters.cspmEntraPermissionsManagementEnabled.value == "[parameters(\u0027enableDefenderCiem\u0027)]" and
+  (.scope | contains("demoRootManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-defender-cspm must be scoped to the demo root management group and wired to enableDefenderCspm/enableDefenderCiem.\n' >&2
+  exit 1
+}
+printf '%s' "${servers_deployment}" | jq -e '
+  .properties.parameters.plan.value == "servers" and
+  .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderForServers\u0027)]" and
+  .properties.parameters.serversSubPlan.value == "[parameters(\u0027defenderForServersSubPlan\u0027)]" and
+  .properties.parameters.serversAgentlessVmScanningEnabled.value == "[parameters(\u0027defenderForServersAgentlessVmScanningEnabled\u0027)]" and
+  (.scope | contains("landingZonesManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-defender-servers must be scoped to the Landing Zones management group and wired to enableDefenderForServers/defenderForServersSubPlan/defenderForServersAgentlessVmScanningEnabled.\n' >&2
+  exit 1
+}
+printf '%s' "${storage_deployment}" | jq -e '
+  .properties.parameters.plan.value == "storage" and
+  .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderForStorage\u0027)]" and
+  .properties.parameters.storageOnUploadMalwareScanningEnabled.value == "[parameters(\u0027enableDefenderStorageMalwareScanning\u0027)]" and
+  .properties.parameters.storageCapGBPerMonthPerStorageAccount.value == "[parameters(\u0027defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount\u0027)]" and
+  (.scope | contains("landingZonesManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage/enableDefenderStorageMalwareScanning/defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount.\n' >&2
+  exit 1
+}
+rg -q "^param enableDefenderStorageMalwareScanning bool = false$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount int = 10000$" "${PROJECT_DIR}/main.bicep"
+jq -e '
+  .parameters.enableDefenderStorageMalwareScanning.defaultValue == false
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: enableDefenderStorageMalwareScanning must default to false so enabling the base Storage plan never silently enables the metered malware-scanning extension.\n' >&2
+  exit 1
+}
+jq -e '
+  .parameters.enableDefenderStorageMalwareScanning.value == false
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
+  printf 'ERROR: parameters/demo.parameters.template.json must default enableDefenderStorageMalwareScanning to false.\n' >&2
+  exit 1
+}
+# The module itself must map each verified plan to its own distinct
+# definitionId/definitionVersion/parameter-object entry ("switch"), not a
+# shared/ambiguous shape.
+rg -q "definitionId: .72f8cee7-2937-403d-84a1-a4e3e57f3c21." "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
+rg -q "definitionId: .5eb6d64a-4086-4d7a-92da-ec51aed0332d." "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
+rg -q "definitionId: .cfdc5972-75b3-4418-8ae1-7f5c36839390." "${PROJECT_DIR}/modules/defender-plan-assignment.bicep"
+rg -c "definitionVersion: '1\.\*\.\*'" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" | rg -q '^3$'
+printf '%s' "${cspm_deployment}" | jq -e '
+  .properties.template.variables.planDefinitions.cspm.definitionId == "72f8cee7-2937-403d-84a1-a4e3e57f3c21" and
+  .properties.template.variables.planDefinitions.cspm.definitionVersion == "1.*.*" and
+  (.properties.template.variables.planParameters.cspm | has("isSensitiveDataDiscoveryEnabled") and has("isContainerRegistriesVulnerabilityAssessmentsEnabled") and has("isAgentlessDiscoveryForKubernetesEnabled") and has("isAgentlessVmScanningEnabled") and has("isEntraPermissionsManagementEnabled"))
+' >/dev/null || {
+  printf 'ERROR: The compiled CSPM plan definition/parameter switch is missing an expected field.\n' >&2
+  exit 1
+}
+printf '%s' "${servers_deployment}" | jq -e '
+  .properties.template.variables.planDefinitions.servers.definitionId == "5eb6d64a-4086-4d7a-92da-ec51aed0332d" and
+  .properties.template.variables.planDefinitions.servers.definitionVersion == "1.*.*" and
+  (.properties.template.variables.planParameters.servers | has("subPlan") and has("isAgentlessVmScanningEnabled") and has("isMdeDesignatedSubscriptionEnabled"))
+' >/dev/null || {
+  printf 'ERROR: The compiled Servers plan definition/parameter switch is missing an expected field.\n' >&2
+  exit 1
+}
+printf '%s' "${storage_deployment}" | jq -e '
+  .properties.template.variables.planDefinitions.storage.definitionId == "cfdc5972-75b3-4418-8ae1-7f5c36839390" and
+  .properties.template.variables.planDefinitions.storage.definitionVersion == "1.*.*" and
+  (.properties.template.variables.planParameters.storage | has("isOnUploadMalwareScanningEnabled") and has("capGBPerMonthPerStorageAccount") and has("isSensitiveDataDiscoveryEnabled"))
+' >/dev/null || {
+  printf 'ERROR: The compiled Storage plan definition/parameter switch is missing an expected field.\n' >&2
+  exit 1
+}
+# Assert the exact compiled identity/effect/policyDefinitionId/definitionVersion
+# wiring on the nested assignment resource itself (not just the shared
+# module's source text) for every one of the three plan deployments, so a
+# regression in any single plan's compiled shape is caught even if the
+# module source text still looks correct.
+for defender_deployment_var in cspm_deployment servers_deployment storage_deployment; do
+  printf '%s' "${!defender_deployment_var}" | jq -e '
+    .properties.template.resources.assignment.identity.type == "[if(parameters(\u0027enablePlan\u0027), \u0027SystemAssigned\u0027, \u0027None\u0027)]" and
+    .properties.template.resources.assignment.properties.policyDefinitionId == "[variables(\u0027policyDefinitionId\u0027)]" and
+    .properties.template.resources.assignment.properties.definitionVersion == "[variables(\u0027selectedPlan\u0027).definitionVersion]" and
+    .properties.template.resources.assignment.properties.parameters == "[union(createObject(\u0027effect\u0027, createObject(\u0027value\u0027, if(parameters(\u0027enablePlan\u0027), \u0027DeployIfNotExists\u0027, \u0027Disabled\u0027))), variables(\u0027planParameters\u0027)[parameters(\u0027plan\u0027)])]"
+  ' >/dev/null || {
+    printf 'ERROR: %s does not compile the expected identity/effect/policyDefinitionId/definitionVersion wiring on its nested assignment resource.\n' "${defender_deployment_var}" >&2
+    exit 1
+  }
+done
+printf '%s' "${servers_deployment}" | jq -e '
+  .properties.template.variables.validatedServersAgentlessVmScanningEnabled == "[if(and(and(equals(parameters(\u0027plan\u0027), \u0027servers\u0027), equals(parameters(\u0027serversSubPlan\u0027), \u0027P1\u0027)), parameters(\u0027serversAgentlessVmScanningEnabled\u0027)), fail(\u0027serversAgentlessVmScanningEnabled must be false when serversSubPlan is P1; agentless VM scanning is only supported on the Servers P2 sub-plan.\u0027), parameters(\u0027serversAgentlessVmScanningEnabled\u0027))]" and
+  .properties.template.variables.planParameters.servers.isAgentlessVmScanningEnabled.value == "[if(variables(\u0027validatedServersAgentlessVmScanningEnabled\u0027), \u0027true\u0027, \u0027false\u0027)]"
+' >/dev/null || {
+  printf 'ERROR: assign-defender-servers must compile the exact P1/agentless-scanning fail() rejection expression, and isAgentlessVmScanningEnabled must be wired through the validated variable rather than the raw parameter.\n' >&2
+  exit 1
+}
+# The built-in's own parameter metadata documents capGBPerMonthPerStorageAccount
+# as "an integer, 10GB or higher" or "-1 for unlimited scanning"; values from
+# 0 through 9 (or anything below -1) must be rejected explicitly rather than
+# forwarded unchanged.
+printf '%s' "${storage_deployment}" | jq -e '
+  .properties.template.variables.validatedStorageCapGBPerMonthPerStorageAccount == "[if(or(equals(parameters(\u0027storageCapGBPerMonthPerStorageAccount\u0027), -1), greaterOrEquals(parameters(\u0027storageCapGBPerMonthPerStorageAccount\u0027), 10)), parameters(\u0027storageCapGBPerMonthPerStorageAccount\u0027), fail(\u0027storageCapGBPerMonthPerStorageAccount must be -1 (unlimited) or at least 10 GB per storage account per month.\u0027))]" and
+  .properties.template.variables.planParameters.storage.capGBPerMonthPerStorageAccount.value == "[variables(\u0027validatedStorageCapGBPerMonthPerStorageAccount\u0027)]"
+' >/dev/null || {
+  printf 'ERROR: assign-defender-storage must compile the exact -1-or->=10 fail() rejection expression for storageCapGBPerMonthPerStorageAccount, and capGBPerMonthPerStorageAccount must be wired through the validated variable rather than the raw parameter.\n' >&2
+  exit 1
+}
+! rg -q "475aae12-b88a-4572-8b36-9b712b2b3a17" "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" || {
+  printf 'ERROR: The deprecated Log Analytics (MMA) auto-provisioning policy definition must never be referenced.\n' >&2
+  exit 1
+}
+rg -q "c02729e5-e5e7-4458-97fa-2b5ad0661f28" "${PROJECT_DIR}/main.bicep"
+rg -q "1afdc4b6-581a-45fb-b630-f1e6051e3e7a" "${PROJECT_DIR}/main.bicep"
+ama_audit_assignments="$(jq '
+  [.. | objects
+    | select(.type? == "Microsoft.Resources/deployments")
+    | select(.name? == "assign-defender-ama-audit-windows" or .name? == "assign-defender-ama-audit-linux")
+  ]
+' "${TEMP_DIR}/main.json")"
+[[ "$(printf '%s' "${ama_audit_assignments}" | jq 'length')" -eq 2 ]] || {
+  printf 'ERROR: Expected exactly two Azure Monitor Agent audit policy assignment module deployments (Windows/Linux).\n' >&2
+  exit 1
+}
+printf '%s' "${ama_audit_assignments}" | jq -e '
+  (.[] | select(.name == "assign-defender-ama-audit-windows") | .properties.parameters.policyDefinitionId.value) == "[variables(\u0027windowsAmaAuditPolicyDefinitionId\u0027)]" and
+  (.[] | select(.name == "assign-defender-ama-audit-linux") | .properties.parameters.policyDefinitionId.value) == "[variables(\u0027linuxAmaAuditPolicyDefinitionId\u0027)]"
+' >/dev/null || {
+  printf 'ERROR: The Windows/Linux AMA audit assignments must each be wired to their own dedicated policyDefinitionId variable.\n' >&2
+  exit 1
+}
+jq -e '
+  .variables.windowsAmaAuditPolicyDefinitionId == "[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, \u0027c02729e5-e5e7-4458-97fa-2b5ad0661f28\u0027)]" and
+  .variables.linuxAmaAuditPolicyDefinitionId == "[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, \u00271afdc4b6-581a-45fb-b630-f1e6051e3e7a\u0027)]"
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The Windows/Linux AMA audit policy definition IDs must each resolve to their own verified built-in GUID.\n' >&2
+  exit 1
+}
+printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.parameters.definitionVersion.value == "3.*.*")' >/dev/null
+printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.template.resources.assignment.identity == null)' >/dev/null
+printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .scope | contains("landingZonesManagementGroupId"))' >/dev/null || {
+  printf 'ERROR: Both AMA audit assignments must be scoped to the Landing Zones management group.\n' >&2
+  exit 1
+}
+printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.parameters.parameters.value.effect.value == "AuditIfNotExists")' >/dev/null || {
+  printf 'ERROR: Both AMA audit assignments must explicitly pass effect: AuditIfNotExists rather than silently inheriting the built-in'"'"'s own default.\n' >&2
+  exit 1
+}
+# The free vulnerability-assessment audit assignment must independently pin
+# its own verified GUID/version/scope and must never attach an identity
+# (it has no paid-plan dependency and performs no remediation).
+vuln_assessment_deployment="$(jq -c '
+  [.. | objects | select(.type? == "Microsoft.Resources/deployments") | select(.name? == "assign-vuln-assessment-audit")][0]
+' "${TEMP_DIR}/main.json")"
+[[ "${vuln_assessment_deployment}" != "null" ]] || {
+  printf 'ERROR: Expected an assign-vuln-assessment-audit module deployment.\n' >&2
+  exit 1
+}
+printf '%s' "${vuln_assessment_deployment}" | jq -e '
+  .properties.parameters.policyDefinitionId.value == "[variables(\u0027vulnerabilityAssessmentAuditPolicyDefinitionId\u0027)]" and
+  .properties.parameters.definitionVersion.value == "3.*.*" and
+  .properties.parameters.parameters.value.effect.value == "AuditIfNotExists" and
+  .properties.template.resources.assignment.identity == null and
+  (.scope | contains("landingZonesManagementGroupId"))
+' >/dev/null || {
+  printf 'ERROR: assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, explicitly set effect: AuditIfNotExists, and must never attach an identity.\n' >&2
+  exit 1
+}
+jq -e '
+  .variables.vulnerabilityAssessmentAuditPolicyDefinitionId == "[tenantResourceId(\u0027Microsoft.Authorization/policyDefinitions\u0027, \u0027501541f7-f7e7-4cd6-868c-4190fdad3ac9\u0027)]"
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: vulnerabilityAssessmentAuditPolicyDefinitionId must resolve to its own verified built-in GUID.\n' >&2
+  exit 1
+}
+
+rg -q '"REQ-DEF-09"' "${PROJECT_DIR}/policy/control-catalog.json"
+rg -q "Foundational CSPM" "${PROJECT_DIR}/README.md"
+
+printf '11/27 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -1012,7 +1239,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '11/26 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '12/27 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -1036,7 +1263,7 @@ landingzones_delete_line_ps1="$(rg -n '\$managementGroups \+= "\$prefix-landingz
   exit 1
 }
 
-printf '12/26 Confirm central monitoring defaults create no metered resources...\n'
+printf '13/27 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -1046,23 +1273,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "13/26 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "14/27 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '14/26 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '15/27 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '15/26 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '16/27 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '16/26 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '17/27 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -1085,7 +1312,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '17/26 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '18/27 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -1133,7 +1360,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '18/26 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '19/27 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
@@ -1204,19 +1431,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '19/26 Validate reusable initiative composition...\n'
+printf '20/27 Validate reusable initiative composition...\n'
 "${SCRIPT_DIR}/validate-initiative-composition.sh"
 
-printf '20/26 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '21/27 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '21/26 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '22/27 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '22/26 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '23/27 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '23/26 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '24/27 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
@@ -1648,7 +1875,7 @@ rm -f "${CASE_INSENSITIVE_IMG}"
 
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
-printf '24/26 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
+printf '25/27 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
 control_catalog="${PROJECT_DIR}/policy/control-catalog.json"
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
@@ -1751,7 +1978,7 @@ jq -e '
   exit 1
 }
 
-printf '25/26 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
+printf '26/27 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
 rg -q -F "func hasCanonicalArmIdSegments" "${PROJECT_DIR}/main.bicep"
 rg -q "func hasDisallowedResourceGroupAsciiChars" "${PROJECT_DIR}/main.bicep"
 rg -q "func isResourceGroupName\\(value string\\) bool => .*length\\(value\\) <= 90.*!hasDisallowedResourceGroupAsciiChars\\(value\\)" "${PROJECT_DIR}/main.bicep"
@@ -2223,7 +2450,7 @@ if covered_category_modes != {"audit", "allLogs"}:
 if ("Disabled", "Disabled") not in covered_effect_states or ("DeployIfNotExists", "DeployIfNotExists") not in covered_effect_states:
     raise SystemExit("ERROR: Logging matrix must include both disabled and enabled remediation effect combinations.")
 PYEOF
-printf '26/26 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
+printf '27/27 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
 jq -e '
   .parameters.dataProtectionPolicyEffect.defaultValue == "Audit" and
   .parameters.dataProtectionPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and

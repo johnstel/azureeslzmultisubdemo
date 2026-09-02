@@ -436,6 +436,87 @@ adding and assigning explicit custom diagnostics policies or a custom initiative
 in this repository after verifying required aliases, categories, and
 least-privilege remediation roles.
 
+### Microsoft Defender for Cloud governance markers
+
+This project assigns Microsoft Defender CSPM (Cloud Security Posture
+Management, including CIEM findings), Defender for Servers, and Defender for
+Storage, each behind its own explicit, safe-by-default (`false`) opt-in
+parameter: `enableDefenderCspm`, `enableDefenderForServers`,
+`enableDefenderForStorage`. While a parameter stays `false` (the default),
+the corresponding assignment creates **no managed identity at all**
+(`identity.type` is `None`) and its `effect` is `Disabled`, so a normal
+deployment of this project can never enable a paid plan, incur license cost,
+or create any standing identity or role. A free, audit-only policy that
+checks for a supported vulnerability assessment solution on virtual machines
+is also always assigned (no parameter); it never deploys a scanner and never
+depends on a paid plan. Two further free, audit-only policies — one for
+Windows, one for Linux — check that the current, supported Azure Monitor
+Agent is present on virtual machines; like the vulnerability-assessment
+audit, they require no identity, no role, and no opt-in.
+
+Setting an `enableDefender*` parameter to `true` only flips that plan's
+`identity.type` to `SystemAssigned` and its `effect` to
+`DeployIfNotExists` — it still never grants that identity any role. These
+three paid-plan built-ins only support remediation via the Owner role at the
+subscription scope, and this project's automatic RBAC granting deliberately
+refuses to grant Owner or User Access Administrator to any managed identity
+(see `modules/remediating-policy-assignment.bicep`) as a
+privilege-escalation guardrail. A single management-group-scoped identity
+inherited across every descendant subscription would be Owner everywhere at
+once, which is too broad a blast radius to grant automatically or even
+semi-automatically. Opting in therefore fails closed: the identity exists
+but is role-less until a customer separately, and temporarily, authorizes
+Owner outside this template — following the same fail-closed,
+separately-approved, time-bounded posture documented in
+`docs/AZURE-RBAC-PIM.md` (that workflow targets a different principal type
+and scope and is not invoked directly by these assignments, but is the
+established precedent to follow rather than granting standing Owner).
+Enabling any of these plans still requires the customer to review current
+Defender plan licensing/per-resource pricing and any role assignments
+Microsoft's own tooling then requires.
+
+Each built-in's own extension parameters beyond `effect` are explicitly
+modeled in `modules/defender-plan-assignment.bicep` — defaulted to match the
+built-in's own verified default so behavior is unchanged, but now named,
+documented, and auditable rather than silently inherited. Two of these are
+also exposed at the top level of this project: `enableDefenderCiem` (default
+`true`, only applies when `enableDefenderCspm` is `true`) explicitly toggles
+the CSPM plan's Entra Permissions Management (CIEM) extension by name, per
+issue #20; `defenderForServersSubPlan` (default `P2`) and
+`defenderForServersAgentlessVmScanningEnabled` (default `true`) explicitly
+choose the Defender for Servers sub-plan and its agentless-VM-scanning
+extension, so this project makes and documents that choice itself instead of
+leaving it to whatever a customer separately selects in Defender for Cloud
+later. Microsoft documents agentless VM scanning as supported only on the
+Servers P2 sub-plan, so `modules/defender-plan-assignment.bicep` fails
+deployment rather than silently accepting `defenderForServersSubPlan = 'P1'`
+together with agentless scanning still requested. This project still never
+configures or claims to configure the Azure Monitor Agent itself — the two
+AMA audit policies above only audit current agent presence, independent of
+any paid plan.
+
+This project never silently enables Defender plans, configures Microsoft
+Sentinel analytics/incidents, or claims that any of these controls alone
+prove Microsoft Cloud Security Benchmark (MCSB) or
+regulatory-compliance-dashboard compliance; see `docs/CONTROL-MATRIX.md` for
+the full REQ-DEF-01 through REQ-DEF-09 mapping, including why the
+all-or-nothing "Configure Microsoft Defender for Cloud plans" initiative and
+the deprecated Log Analytics (MMA) auto-provisioning policy are intentionally
+never assigned. REQ-DEF-09 separately documents Foundational CSPM — the free
+Defender for Cloud baseline that populates the audit-only controls above —
+as its own catalog entry distinct from the paid Defender CSPM plan
+(REQ-DEF-02): Foundational CSPM is configured via the
+`Microsoft.Security/pricings` `CloudPosture` resource's Free pricing tier at
+subscription scope, not an Azure Policy assignment, so this template
+intentionally never deploys it (out of scope: modifying a live
+subscription). Foundational CSPM's enabled/disabled state on an existing
+subscription is whatever a customer has separately configured — it is not
+tied to whether REQ-DEF-02 is ever opted in — but starting October 27, 2026
+Microsoft stops auto-enabling it only for newly created Azure subscriptions;
+customers must explicitly opt in per new subscription outside this template
+(existing subscriptions are unaffected). See REQ-DEF-09's notes in
+`policy/control-catalog.json` for the verified source.
+
 ## Required permissions
 
 The person or service principal running the deployment must have:

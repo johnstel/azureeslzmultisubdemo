@@ -87,7 +87,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/26 Validate repository versioning and branch guidance...'
+    Write-Host '1/27 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -105,7 +105,7 @@ try {
         }
     }
 
-    Write-Host '2/26 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/27 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -266,7 +266,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/26 Validate both parameter templates...'
+    Write-Host '3/27 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -409,7 +409,7 @@ try {
     if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
         $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
     }
-    Write-Host '4/26 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/27 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -419,7 +419,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/26 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    Write-Host '5/27 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
     if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
         Stop-Test 'A prohibited evidence resource type is declared.'
     }
@@ -433,14 +433,14 @@ try {
         Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/26 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/27 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/26 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/27 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -940,7 +940,7 @@ exit $LASTEXITCODE
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/26 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/27 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -1246,7 +1246,7 @@ exit $LASTEXITCODE
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '9/26 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/27 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -1286,7 +1286,259 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/26 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '10/27 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
+    $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
+    if ($mainBicepText -notmatch '(?m)^param enableDefenderCspm bool = false$') {
+        Stop-Test 'enableDefenderCspm parameter must default to false.'
+    }
+    if ($mainBicepText -notmatch '(?m)^param enableDefenderForServers bool = false$') {
+        Stop-Test 'enableDefenderForServers parameter must default to false.'
+    }
+    if ($mainBicepText -notmatch '(?m)^param enableDefenderForStorage bool = false$') {
+        Stop-Test 'enableDefenderForStorage parameter must default to false.'
+    }
+    if ($compiledJson.parameters.enableDefenderCspm.defaultValue -ne $false -or
+        $compiledJson.parameters.enableDefenderForServers.defaultValue -ne $false -or
+        $compiledJson.parameters.enableDefenderForStorage.defaultValue -ne $false) {
+        Stop-Test 'Compiled enableDefender* defaults must all be false.'
+    }
+    if ($parameterTemplate.parameters.enableDefenderCspm.value -ne $false -or
+        $parameterTemplate.parameters.enableDefenderForServers.value -ne $false -or
+        $parameterTemplate.parameters.enableDefenderForStorage.value -ne $false) {
+        Stop-Test 'ARM parameter template enableDefender* values must all be false.'
+    }
+    if ($compiledParameters.parameters.enableDefenderCspm.value -ne $false -or
+        $compiledParameters.parameters.enableDefenderForServers.value -ne $false -or
+        $compiledParameters.parameters.enableDefenderForStorage.value -ne $false) {
+        Stop-Test 'Compiled Bicep parameter template enableDefender* values must all be false.'
+    }
+    if ($mainBicepText -notmatch '(?m)^param enableDefenderCiem bool = true$') {
+        Stop-Test 'enableDefenderCiem parameter must default to true.'
+    }
+    if ($mainBicepText -notmatch "(?m)^param defenderForServersSubPlan string = 'P2'$") {
+        Stop-Test 'defenderForServersSubPlan parameter must default to P2.'
+    }
+    if ($mainBicepText -notmatch '(?m)^param defenderForServersAgentlessVmScanningEnabled bool = true$') {
+        Stop-Test 'defenderForServersAgentlessVmScanningEnabled parameter must default to true.'
+    }
+    $defenderPlanBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/defender-plan-assignment.bicep') -Raw
+    if ($defenderPlanBicepText -notmatch "(?m)^param plan 'cspm' \| 'servers' \| 'storage'$") {
+        Stop-Test 'defender-plan-assignment.bicep must restrict plan to the cspm/servers/storage enum.'
+    }
+    if ($defenderPlanBicepText -notmatch "type: enablePlan \? 'SystemAssigned' : 'None'") {
+        Stop-Test 'defender-plan-assignment.bicep must toggle identity.type between SystemAssigned and None based on enablePlan.'
+    }
+    if ($defenderPlanBicepText -notmatch "value: enablePlan \? 'DeployIfNotExists' : 'Disabled'") {
+        Stop-Test 'defender-plan-assignment.bicep must toggle effect between DeployIfNotExists and Disabled based on enablePlan.'
+    }
+    if ($defenderPlanBicepText -match 'roleDefinitionId') {
+        Stop-Test 'defender-plan-assignment.bicep must never reference a roleDefinitionId; it must never auto-grant a role.'
+    }
+    if ($defenderPlanBicepText -match 'Microsoft\.Authorization/roleAssignments') {
+        Stop-Test 'defender-plan-assignment.bicep must never create a role assignment.'
+    }
+    if ($defenderPlanBicepText -notmatch "definitionId: '72f8cee7-2937-403d-84a1-a4e3e57f3c21'" -or
+        $defenderPlanBicepText -notmatch "definitionId: '5eb6d64a-4086-4d7a-92da-ec51aed0332d'" -or
+        $defenderPlanBicepText -notmatch "definitionId: 'cfdc5972-75b3-4418-8ae1-7f5c36839390'") {
+        Stop-Test 'defender-plan-assignment.bicep is missing one of the verified CSPM/Servers/Storage built-in definition IDs.'
+    }
+    if (([regex]::Matches($defenderPlanBicepText, "definitionVersion: '1\.\*\.\*'")).Count -ne 3) {
+        Stop-Test 'defender-plan-assignment.bicep must pin all three plans to definitionVersion 1.*.*.'
+    }
+    if ($mainBicepText -match '475aae12-b88a-4572-8b36-9b712b2b3a17' -or $defenderPlanBicepText -match '475aae12-b88a-4572-8b36-9b712b2b3a17') {
+        Stop-Test 'The deprecated Log Analytics (MMA) auto-provisioning policy definition must never be referenced.'
+    }
+    if ($mainBicepText -notmatch 'c02729e5-e5e7-4458-97fa-2b5ad0661f28') {
+        Stop-Test 'main.bicep must reference the Windows Azure Monitor Agent audit built-in (REQ-DEF-07).'
+    }
+    if ($mainBicepText -notmatch '1afdc4b6-581a-45fb-b630-f1e6051e3e7a') {
+        Stop-Test 'main.bicep must reference the Linux Azure Monitor Agent audit built-in (REQ-DEF-08).'
+    }
+    $defenderPlanDeployments = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and ($node.name -in @('assign-defender-cspm', 'assign-defender-servers', 'assign-defender-storage'))
+    }
+    if (@($defenderPlanDeployments).Count -ne 3) {
+        Stop-Test 'Expected exactly three Defender plan assignment module deployments (cspm/servers/storage).'
+    }
+    # Each of the three deployments must map to its own distinct plan/scope/
+    # opt-in wiring; an "any of the three" style assertion could pass even if,
+    # for example, the CSPM deployment were accidentally wired to the Storage
+    # GUID.
+    $cspmDeployment = $defenderPlanDeployments | Where-Object { $_.name -eq 'assign-defender-cspm' } | Select-Object -First 1
+    $serversDeployment = $defenderPlanDeployments | Where-Object { $_.name -eq 'assign-defender-servers' } | Select-Object -First 1
+    $storageDeployment = $defenderPlanDeployments | Where-Object { $_.name -eq 'assign-defender-storage' } | Select-Object -First 1
+    if ($cspmDeployment.properties.parameters.plan.value -ne 'cspm' -or
+        $cspmDeployment.properties.parameters.enablePlan.value -ne "[parameters('enableDefenderCspm')]" -or
+        $cspmDeployment.properties.parameters.cspmEntraPermissionsManagementEnabled.value -ne "[parameters('enableDefenderCiem')]" -or
+        $cspmDeployment.scope -notmatch 'demoRootManagementGroupId') {
+        Stop-Test 'assign-defender-cspm must be scoped to the demo root management group and wired to enableDefenderCspm/enableDefenderCiem.'
+    }
+    if ($serversDeployment.properties.parameters.plan.value -ne 'servers' -or
+        $serversDeployment.properties.parameters.enablePlan.value -ne "[parameters('enableDefenderForServers')]" -or
+        $serversDeployment.properties.parameters.serversSubPlan.value -ne "[parameters('defenderForServersSubPlan')]" -or
+        $serversDeployment.properties.parameters.serversAgentlessVmScanningEnabled.value -ne "[parameters('defenderForServersAgentlessVmScanningEnabled')]" -or
+        $serversDeployment.scope -notmatch 'landingZonesManagementGroupId') {
+        Stop-Test 'assign-defender-servers must be scoped to the Landing Zones management group and wired to enableDefenderForServers/defenderForServersSubPlan/defenderForServersAgentlessVmScanningEnabled.'
+    }
+    if ($storageDeployment.properties.parameters.plan.value -ne 'storage' -or
+        $storageDeployment.properties.parameters.enablePlan.value -ne "[parameters('enableDefenderForStorage')]" -or
+        $storageDeployment.properties.parameters.storageOnUploadMalwareScanningEnabled.value -ne "[parameters('enableDefenderStorageMalwareScanning')]" -or
+        $storageDeployment.properties.parameters.storageCapGBPerMonthPerStorageAccount.value -ne "[parameters('defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount')]" -or
+        $storageDeployment.scope -notmatch 'landingZonesManagementGroupId') {
+        Stop-Test 'assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage/enableDefenderStorageMalwareScanning/defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount.'
+    }
+    if ($mainBicepText -notmatch "(?m)^param enableDefenderStorageMalwareScanning bool = false$") {
+        Stop-Test 'enableDefenderStorageMalwareScanning parameter must default to false so enabling the base Storage plan never silently enables the metered malware-scanning extension.'
+    }
+    if ($mainBicepText -notmatch "(?m)^param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount int = 10000$") {
+        Stop-Test 'defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount parameter must default to 10000.'
+    }
+    if ($compiledJson.parameters.enableDefenderStorageMalwareScanning.defaultValue -ne $false) {
+        Stop-Test 'The compiled template must default enableDefenderStorageMalwareScanning to false.'
+    }
+    $demoParametersTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
+    if ($demoParametersTemplate.parameters.enableDefenderStorageMalwareScanning.value -ne $false) {
+        Stop-Test 'parameters/demo.parameters.template.json must default enableDefenderStorageMalwareScanning to false.'
+    }
+    # The module itself must map each verified plan to its own distinct
+    # definitionId/definitionVersion/parameter-object entry ("switch"), not a
+    # shared/ambiguous shape.
+    $cspmPlanDefinition = $cspmDeployment.properties.template.variables.planDefinitions.cspm
+    $cspmPlanParameters = $cspmDeployment.properties.template.variables.planParameters.cspm
+    if ($cspmPlanDefinition.definitionId -ne '72f8cee7-2937-403d-84a1-a4e3e57f3c21' -or
+        $cspmPlanDefinition.definitionVersion -ne '1.*.*' -or
+        -not $cspmPlanParameters.PSObject.Properties['isSensitiveDataDiscoveryEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isContainerRegistriesVulnerabilityAssessmentsEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isAgentlessDiscoveryForKubernetesEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isAgentlessVmScanningEnabled'] -or
+        -not $cspmPlanParameters.PSObject.Properties['isEntraPermissionsManagementEnabled']) {
+        Stop-Test 'The compiled CSPM plan definition/parameter switch is missing an expected field.'
+    }
+    $serversPlanDefinition = $serversDeployment.properties.template.variables.planDefinitions.servers
+    $serversPlanParameters = $serversDeployment.properties.template.variables.planParameters.servers
+    if ($serversPlanDefinition.definitionId -ne '5eb6d64a-4086-4d7a-92da-ec51aed0332d' -or
+        $serversPlanDefinition.definitionVersion -ne '1.*.*' -or
+        -not $serversPlanParameters.PSObject.Properties['subPlan'] -or
+        -not $serversPlanParameters.PSObject.Properties['isAgentlessVmScanningEnabled'] -or
+        -not $serversPlanParameters.PSObject.Properties['isMdeDesignatedSubscriptionEnabled']) {
+        Stop-Test 'The compiled Servers plan definition/parameter switch is missing an expected field.'
+    }
+    $storagePlanDefinition = $storageDeployment.properties.template.variables.planDefinitions.storage
+    $storagePlanParameters = $storageDeployment.properties.template.variables.planParameters.storage
+    if ($storagePlanDefinition.definitionId -ne 'cfdc5972-75b3-4418-8ae1-7f5c36839390' -or
+        $storagePlanDefinition.definitionVersion -ne '1.*.*' -or
+        -not $storagePlanParameters.PSObject.Properties['isOnUploadMalwareScanningEnabled'] -or
+        -not $storagePlanParameters.PSObject.Properties['capGBPerMonthPerStorageAccount'] -or
+        -not $storagePlanParameters.PSObject.Properties['isSensitiveDataDiscoveryEnabled']) {
+        Stop-Test 'The compiled Storage plan definition/parameter switch is missing an expected field.'
+    }
+    # Assert the exact compiled identity/effect/policyDefinitionId/definitionVersion
+    # wiring on the nested assignment resource itself (not just the shared
+    # module's source text) for every one of the three plan deployments, so a
+    # regression in any single plan's compiled shape is caught even if the
+    # module source text still looks correct.
+    $expectedIdentityTypeExpr = "[if(parameters('enablePlan'), 'SystemAssigned', 'None')]"
+    $expectedPolicyDefinitionIdExpr = "[variables('policyDefinitionId')]"
+    $expectedDefinitionVersionExpr = "[variables('selectedPlan').definitionVersion]"
+    $expectedParametersExpr = "[union(createObject('effect', createObject('value', if(parameters('enablePlan'), 'DeployIfNotExists', 'Disabled'))), variables('planParameters')[parameters('plan')])]"
+    foreach ($deploymentEntry in @(
+        @{ Name = 'assign-defender-cspm'; Deployment = $cspmDeployment },
+        @{ Name = 'assign-defender-servers'; Deployment = $serversDeployment },
+        @{ Name = 'assign-defender-storage'; Deployment = $storageDeployment }
+    )) {
+        $assignmentResource = $deploymentEntry.Deployment.properties.template.resources.assignment
+        if ($assignmentResource.identity.type -ne $expectedIdentityTypeExpr -or
+            $assignmentResource.properties.policyDefinitionId -ne $expectedPolicyDefinitionIdExpr -or
+            $assignmentResource.properties.definitionVersion -ne $expectedDefinitionVersionExpr -or
+            $assignmentResource.properties.parameters -ne $expectedParametersExpr) {
+            Stop-Test "$($deploymentEntry.Name) does not compile the expected identity/effect/policyDefinitionId/definitionVersion wiring on its nested assignment resource."
+        }
+    }
+    $expectedValidatedServersAgentlessVmScanningEnabledExpr = "[if(and(and(equals(parameters('plan'), 'servers'), equals(parameters('serversSubPlan'), 'P1')), parameters('serversAgentlessVmScanningEnabled')), fail('serversAgentlessVmScanningEnabled must be false when serversSubPlan is P1; agentless VM scanning is only supported on the Servers P2 sub-plan.'), parameters('serversAgentlessVmScanningEnabled'))]"
+    if ($serversDeployment.properties.template.variables.validatedServersAgentlessVmScanningEnabled -ne $expectedValidatedServersAgentlessVmScanningEnabledExpr) {
+        Stop-Test 'assign-defender-servers must compile the exact P1/agentless-scanning fail() rejection expression (validatedServersAgentlessVmScanningEnabled).'
+    }
+    $expectedServersIsAgentlessVmScanningEnabledExpr = "[if(variables('validatedServersAgentlessVmScanningEnabled'), 'true', 'false')]"
+    if ($serversDeployment.properties.template.variables.planParameters.servers.isAgentlessVmScanningEnabled.value -ne $expectedServersIsAgentlessVmScanningEnabledExpr) {
+        Stop-Test 'assign-defender-servers must wire isAgentlessVmScanningEnabled through the validated variable rather than the raw parameter.'
+    }
+    # The built-in's own parameter metadata documents capGBPerMonthPerStorageAccount
+    # as "an integer, 10GB or higher" or "-1 for unlimited scanning"; values from
+    # 0 through 9 (or anything below -1) must be rejected explicitly rather than
+    # forwarded unchanged.
+    $expectedValidatedStorageCapExpr = "[if(or(equals(parameters('storageCapGBPerMonthPerStorageAccount'), -1), greaterOrEquals(parameters('storageCapGBPerMonthPerStorageAccount'), 10)), parameters('storageCapGBPerMonthPerStorageAccount'), fail('storageCapGBPerMonthPerStorageAccount must be -1 (unlimited) or at least 10 GB per storage account per month.'))]"
+    if ($storageDeployment.properties.template.variables.validatedStorageCapGBPerMonthPerStorageAccount -ne $expectedValidatedStorageCapExpr) {
+        Stop-Test 'assign-defender-storage must compile the exact -1-or->=10 fail() rejection expression for storageCapGBPerMonthPerStorageAccount.'
+    }
+    $expectedStorageCapParameterExpr = "[variables('validatedStorageCapGBPerMonthPerStorageAccount')]"
+    if ($storageDeployment.properties.template.variables.planParameters.storage.capGBPerMonthPerStorageAccount.value -ne $expectedStorageCapParameterExpr) {
+        Stop-Test 'assign-defender-storage must wire capGBPerMonthPerStorageAccount through the validated variable rather than the raw parameter.'
+    }
+    $amaAuditDeployments = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and ($node.name -in @('assign-defender-ama-audit-windows', 'assign-defender-ama-audit-linux'))
+    }
+    if (@($amaAuditDeployments).Count -ne 2) {
+        Stop-Test 'Expected exactly two Azure Monitor Agent audit policy assignment module deployments (Windows/Linux).'
+    }
+    $windowsAmaDeployment = $amaAuditDeployments | Where-Object { $_.name -eq 'assign-defender-ama-audit-windows' } | Select-Object -First 1
+    $linuxAmaDeployment = $amaAuditDeployments | Where-Object { $_.name -eq 'assign-defender-ama-audit-linux' } | Select-Object -First 1
+    if ($windowsAmaDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('windowsAmaAuditPolicyDefinitionId')]" -or
+        $linuxAmaDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('linuxAmaAuditPolicyDefinitionId')]") {
+        Stop-Test 'The Windows/Linux AMA audit assignments must each be wired to their own dedicated policyDefinitionId variable.'
+    }
+    if ($compiledJson.variables.windowsAmaAuditPolicyDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policyDefinitions', 'c02729e5-e5e7-4458-97fa-2b5ad0661f28')]" -or
+        $compiledJson.variables.linuxAmaAuditPolicyDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '1afdc4b6-581a-45fb-b630-f1e6051e3e7a')]") {
+        Stop-Test 'The Windows/Linux AMA audit policy definition IDs must each resolve to their own verified built-in GUID.'
+    }
+    foreach ($deployment in $amaAuditDeployments) {
+        if ($deployment.properties.parameters.definitionVersion.value -ne '3.*.*') {
+            Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must pin definitionVersion to 3.*.*."
+        }
+        if ($deployment.properties.template.resources.assignment.PSObject.Properties['identity']) {
+            Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must never create a managed identity."
+        }
+        if ($deployment.properties.parameters.parameters.value.effect.value -ne 'AuditIfNotExists') {
+            Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must explicitly pass effect: AuditIfNotExists rather than silently inheriting the built-in's own default."
+        }
+        if ($deployment.scope -notmatch 'landingZonesManagementGroupId') {
+            Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must be scoped to the Landing Zones management group."
+        }
+    }
+    # The free vulnerability-assessment audit assignment must independently
+    # pin its own verified GUID/version/scope and must never attach an
+    # identity (it has no paid-plan dependency and performs no remediation).
+    $vulnAssessmentDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-vuln-assessment-audit'
+    } | Select-Object -First 1
+    if (-not $vulnAssessmentDeployment) {
+        Stop-Test 'Expected an assign-vuln-assessment-audit module deployment.'
+    }
+    if ($vulnAssessmentDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('vulnerabilityAssessmentAuditPolicyDefinitionId')]" -or
+        $vulnAssessmentDeployment.properties.parameters.definitionVersion.value -ne '3.*.*' -or
+        $vulnAssessmentDeployment.properties.parameters.parameters.value.effect.value -ne 'AuditIfNotExists' -or
+        $vulnAssessmentDeployment.properties.template.resources.assignment.PSObject.Properties['identity'] -or
+        $vulnAssessmentDeployment.scope -notmatch 'landingZonesManagementGroupId') {
+        Stop-Test 'assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, explicitly set effect: AuditIfNotExists, and must never attach an identity.'
+    }
+    if ($compiledJson.variables.vulnerabilityAssessmentAuditPolicyDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '501541f7-f7e7-4cd6-868c-4190fdad3ac9')]") {
+        Stop-Test 'vulnerabilityAssessmentAuditPolicyDefinitionId must resolve to its own verified built-in GUID.'
+    }
+    $catalogText = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw
+    if ($catalogText -notmatch '"REQ-DEF-09"') {
+        Stop-Test 'policy/control-catalog.json must include the REQ-DEF-09 Foundational CSPM record.'
+    }
+    $readmeText = Get-Content -LiteralPath (Join-Path $ProjectDir 'README.md') -Raw
+    if ($readmeText -notmatch 'Foundational CSPM') {
+        Stop-Test 'README.md must document Foundational CSPM.'
+    }
+
+    Write-Host '11/27 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -1314,7 +1566,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '11/26 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '12/27 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -1336,7 +1588,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '12/26 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '13/27 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -1357,7 +1609,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '13/26 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '14/27 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -1369,7 +1621,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/26 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '15/27 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -1377,7 +1629,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '15/26 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '16/27 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -1389,7 +1641,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '16/26 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '17/27 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -1406,7 +1658,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '17/26 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '18/27 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -1509,7 +1761,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '18/26 Parse every PowerShell lifecycle and test script...'
+    Write-Host '19/27 Parse every PowerShell lifecycle and test script...'
     & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
@@ -1528,13 +1780,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/26 Validate reusable initiative composition...'
+    Write-Host '20/27 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '20/26 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '21/27 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '21/26 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '22/27 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -1544,10 +1796,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '22/26 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '23/27 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '23/26 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '24/27 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'
@@ -2175,7 +2427,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 
-    Write-Host '24/26 Confirm security benchmark assignments trace to the control catalog and stay optional...'
+    Write-Host '25/27 Confirm security benchmark assignments trace to the control catalog and stay optional...'
     $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
     $armParameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $benchmarkAssignments = @(
@@ -2312,7 +2564,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '25/26 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
+    Write-Host '26/27 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
     if (-not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func hasCanonicalArmIdSegments' -Quiet) -or
         -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func hasDisallowedResourceGroupAsciiChars' -Quiet) -or
         -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func isResourceGroupName\(value string\) bool => .*length\(value\) <= 90.*!hasDisallowedResourceGroupAsciiChars\(value\)' -Quiet) -or
@@ -2759,7 +3011,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (-not $effectStates.Contains('Disabled|Disabled') -or -not $effectStates.Contains('DeployIfNotExists|DeployIfNotExists')) {
         Stop-Test 'Logging matrix coverage must include both fully disabled and fully remediation-enabled effect combinations.'
     }
-    Write-Host '26/26 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
+
+    Write-Host '27/27 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
     if ($compiledJson.parameters.dataProtectionPolicyEffect.defaultValue -ne 'Audit' -or
         (Compare-Object @($compiledJson.parameters.dataProtectionPolicyEffect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
         Stop-Test 'Compiled dataProtectionPolicyEffect must allow Audit, Deny, and Disabled and default to Audit.'
