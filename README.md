@@ -60,6 +60,7 @@ root:
 | Demo root | Customer deployment-restrictions initiative: `eastus`/`eastus2`, approved resource types and VM SKUs, managed disks, and public IP creation | Deny members in `DoNotEnforce`; audit members remain Audit |
 | Platform | Audit `Owner` and `CostCenter` tags on taggable resources | Audit |
 | Landing Zones | Require `CostCenter`, `ApplicationName`, `Owner`, `Environment`, `DataClassification`, and `SSP-ID` tags on resource groups | Initiative assignment in `DoNotEnforce` |
+| Landing Zones | Inherit those six tags to taggable child resources only when missing | Modify initiative assignment in `DoNotEnforce` |
 | Corp/Online | Audit public inbound SSH/RDP NSG rules and subnets without NSGs | Audit assignment in `DoNotEnforce` |
 | Corp/Online and opt-in Critical Infrastructure | Audit selected PaaS public network access and private endpoint readiness | Audit |
 | Corp/Online and opt-in Critical Infrastructure | Audit supplied route-table expectations for an approved firewall | Explicit opt-in, Audit |
@@ -77,6 +78,45 @@ assigned at Landing Zones. Change
 policy impact. The resource-group tagging initiative composes six instances of
 Azure's built-in **Require a tag on resource groups** definition and provides a
 tag-specific noncompliance message for each requirement.
+
+The companion tag-inheritance initiative composes six instances of the verified
+**Inherit a tag from the resource group if missing** built-in
+(`ea3f2387-9b95-492a-a190-fcdc54f7b070`). Its `Indexed` mode limits evaluation
+to taggable resources. Each `Modify` operation adds only an absent tag whose
+resource-group value is non-empty, so an existing resource value always wins.
+The Landing Zones assignment has a system-assigned identity in
+`deploymentLocation` and the role declared by the built-in: Contributor
+(`b24988ac-6180-42a0-ab88-20f7382dd24c`). The narrower Tag Contributor role
+cannot perform the resource update used by this built-in's remediation path.
+The assignment, identity, and RBAC are omitted unless
+`enableTagInheritance=true`; when enabled, the assignment still inherits the
+safe `DoNotEnforce` default and creates no remediation task.
+
+### Deliberately remediate existing resource tags
+
+After an approved deployment with `enableTagInheritance=true`, the
+`tagInheritanceRemediation` output provides the assignment ID and six definition
+reference IDs. Starting remediation remains a separate operator action. The
+scripts validate the live assignment ID, exact Landing Zones scope, initiative,
+system identity, non-global location, and exact six built-in references before
+showing a no-change preview:
+
+```bash
+./scripts/remediate-resource-tags.sh parameters/demo.parameters.json
+```
+
+```powershell
+.\scripts\remediate-resource-tags.ps1 -ParameterFile .\parameters\demo.parameters.json
+```
+
+Only after reviewing that preview, set
+`ESLZ_TAG_REMEDIATION_CONFIRMATION=REMEDIATE-MISSING-RESOURCE-TAGS` and rerun
+with `--execute` (Bash) or `-Execute` (PowerShell). Both workflows then require
+typing the validated tenant, scope, and assignment before revalidating the live
+controls and creating six tasks. The PowerShell workflow uses the supported
+`Start-AzPolicyRemediation` cmdlet. Do not substitute a different policy or
+role: these tasks only add missing values and must not overwrite
+customer-supplied resource tags.
 
 The customer-control profile is separate from the broader safe demo location
 profile. Its `customerAllowedLocations`, `customerAllowedResourceTypes`, and
@@ -437,7 +477,8 @@ For a first review, retain:
 "denyPolicyEnforcementMode": { "value": "DoNotEnforce" },
 "dataProtectionPolicyEffect": { "value": "Audit" },
 "deployRoleAssignments": { "value": false },
-"deployEvidenceResources": { "value": false }
+"deployEvidenceResources": { "value": false },
+"enableTagInheritance": { "value": false }
 ```
 
 Benchmark defaults keep only the stable MCSB baseline enabled; add the CIS or
