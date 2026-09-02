@@ -5,8 +5,10 @@ func stripHex(value string) string => replace(replace(replace(replace(replace(re
 func isGuid(value string) bool => length(value) == 36 ? substring(value, 8, 1) == '-' && substring(value, 13, 1) == '-' && substring(value, 18, 1) == '-' && substring(value, 23, 1) == '-' && length(replace(value, '-', '')) == 32 && empty(stripHex(replace(value, '-', ''))) : false
 func isIpv4(value string) bool => length(split(value, '.')) == 4 && value == trim(value) && !empty(value) && empty(filter(split(value, '.'), octet => empty(octet) || !empty(stripDigits(octet)) || int(octet) > 255))
 func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(first(split(value, '/'))) && !empty(last(split(value, '/'))) && empty(stripDigits(last(split(value, '/')))) && int(last(split(value, '/'))) >= 0 && int(last(split(value, '/'))) <= 32
+func hasCanonicalArmIdSegments(value string) bool => startsWith(value, '/') && !endsWith(value, '/') && value == trim(value) && length(filter(skip(split(value, '/'), 1), segment => empty(segment) || segment != trim(segment))) == 0
+func isCanonicalNameSegment(value string) bool => !empty(value) && value == trim(value) && value != '.' && value != '..'
 func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
-func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && !empty(trim(split(value, '/')[8])) && value == trim(value)
+func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && hasCanonicalArmIdSegments(value) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isCanonicalNameSegment(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && isCanonicalNameSegment(split(value, '/')[8])
 
 @description('Azure region used only to store tenant deployment metadata.')
 param deploymentLocation string = 'eastus'
@@ -887,8 +889,40 @@ module nistSp80053Rev5Assignment 'modules/remediating-policy-assignment.bicep' =
   ]
 }
 
-module activityLogExportAssignment 'modules/remediating-policy-assignment.bicep' = {
+module activityLogExportAssignment 'modules/policy-assignment.bicep' = if (!activityLogRemediationDeployRequested) {
   name: 'assign-activity-logs'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-activity-logs'
+    displayName: 'Demo - export Activity Logs to Log Analytics'
+    description: 'Configures subscription Activity Log diagnostic settings to stream to the effective central Log Analytics workspace.'
+    policyDefinitionId: activityLogExportPolicyDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: activityLogExportPolicyEffect
+      }
+      logsEnabled: {
+        value: activityLogExportLogsEnabled
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace.'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module activityLogExportRemediatingAssignment 'modules/remediating-policy-assignment.bicep' = if (activityLogRemediationDeployRequested) {
+  name: 'assign-activity-logs-remediating'
   scope: managementGroup(demoRootManagementGroupId)
   params: {
     assignmentName: 'demo-activity-logs'
@@ -928,8 +962,37 @@ module activityLogExportAssignment 'modules/remediating-policy-assignment.bicep'
   ]
 }
 
-module resourceDiagnosticsAssignment 'modules/remediating-policy-assignment.bicep' = {
+module resourceDiagnosticsAssignment 'modules/policy-assignment.bicep' = if (!resourceDiagnosticsRemediationDeployRequested) {
   name: 'assign-resource-diagnostics'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-resource-diags'
+    displayName: 'Demo - export supported resource diagnostics'
+    description: 'Assigns the built-in supported-resource diagnostics initiative to stream logs to the effective central Log Analytics workspace.'
+    policyDefinitionId: resourceDiagnosticsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: resourceDiagnosticsPolicyEffect
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types.'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module resourceDiagnosticsRemediatingAssignment 'modules/remediating-policy-assignment.bicep' = if (resourceDiagnosticsRemediationDeployRequested) {
+  name: 'assign-resource-diagnostics-remediating'
   scope: managementGroup(demoRootManagementGroupId)
   params: {
     assignmentName: 'demo-resource-diags'
@@ -970,9 +1033,8 @@ module activityLogWorkspaceDestinationRbac 'modules/workspace-remediation-rbac.b
   scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
   params: {
     workspaceName: loggingWorkspaceName
-    principalId: activityLogExportAssignment.outputs.identityPrincipalId
+    principalId: activityLogExportRemediatingAssignment!.outputs.identityPrincipalId
     roleDefinitionIds: [
-      monitoringContributorRoleDefinitionId
       logAnalyticsContributorRoleDefinitionId
     ]
   }
@@ -983,7 +1045,7 @@ module resourceDiagnosticsWorkspaceDestinationRbac 'modules/workspace-remediatio
   scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
   params: {
     workspaceName: loggingWorkspaceName
-    principalId: resourceDiagnosticsAssignment.outputs.identityPrincipalId
+    principalId: resourceDiagnosticsRemediatingAssignment!.outputs.identityPrincipalId
     roleDefinitionIds: [
       logAnalyticsContributorRoleDefinitionId
     ]
@@ -1101,18 +1163,18 @@ output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.confl
 output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
 output loggingAssignments object = {
   activityLogExport: {
-    policyAssignmentId: activityLogExportAssignment.outputs.policyAssignmentId
-    identityPrincipalId: activityLogExportAssignment.outputs.identityPrincipalId
-    roleAssignmentIds: activityLogExportAssignment.outputs.roleAssignmentIds
-    remediationRoleAssignmentIds: activityLogExportAssignment.outputs.roleAssignmentIds
+    policyAssignmentId: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.policyAssignmentId : activityLogExportAssignment!.outputs.policyAssignmentId
+    identityPrincipalId: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.identityPrincipalId : ''
+    roleAssignmentIds: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.roleAssignmentIds : []
+    remediationRoleAssignmentIds: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.roleAssignmentIds : []
     workspaceDestinationRoleAssignmentIds: deployActivityLogRemediationRoleAssignments ? activityLogWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
     effect: activityLogExportPolicyEffect
   }
   resourceDiagnostics: {
-    policyAssignmentId: resourceDiagnosticsAssignment.outputs.policyAssignmentId
-    identityPrincipalId: resourceDiagnosticsAssignment.outputs.identityPrincipalId
-    roleAssignmentIds: resourceDiagnosticsAssignment.outputs.roleAssignmentIds
-    remediationRoleAssignmentIds: resourceDiagnosticsAssignment.outputs.roleAssignmentIds
+    policyAssignmentId: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.policyAssignmentId : resourceDiagnosticsAssignment!.outputs.policyAssignmentId
+    identityPrincipalId: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.identityPrincipalId : ''
+    roleAssignmentIds: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.roleAssignmentIds : []
+    remediationRoleAssignmentIds: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.roleAssignmentIds : []
     workspaceDestinationRoleAssignmentIds: deployResourceDiagnosticsRemediationRoleAssignments ? resourceDiagnosticsWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
     effect: resourceDiagnosticsPolicyEffect
     categoryGroup: resourceDiagnosticsCategoryGroup

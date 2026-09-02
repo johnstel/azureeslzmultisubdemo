@@ -1657,6 +1657,9 @@ jq -e '
 }
 
 printf '25/25 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
+rg -q -F "func hasCanonicalArmIdSegments" "${PROJECT_DIR}/main.bicep"
+rg -q -F "func isCanonicalNameSegment" "${PROJECT_DIR}/main.bicep"
+rg -q -F "func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && hasCanonicalArmIdSegments(value)" "${PROJECT_DIR}/main.bicep"
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
     first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
@@ -1670,7 +1673,9 @@ jq -e --slurpfile catalog "${control_catalog}" '
   def assigned_at_demo_root($deployment):
     $deployment.scope | contains("demoRootManagementGroupId");
   deployment("assign-activity-logs") as $activity |
+  deployment("assign-activity-logs-remediating") as $activity_remediating |
   deployment("assign-resource-diagnostics") as $diagnostics |
+  deployment("assign-resource-diagnostics-remediating") as $diagnostics_remediating |
   deployment("activity-log-workspace-destination-rbac") as $activity_workspace_rbac |
   deployment("resource-diagnostics-workspace-destination-rbac") as $diagnostics_workspace_rbac |
   .parameters.activityLogExportPolicyEffect.defaultValue == "Disabled" and
@@ -1692,47 +1697,103 @@ jq -e --slurpfile catalog "${control_catalog}" '
     "[if(parameters(\u0027deployCentralLogAnalytics\u0027), format(\u0027log-{0}-central\u0027, parameters(\u0027namePrefix\u0027)), variables(\u0027existingWorkspaceResourceIdParts\u0027)[8])]" and
   .variables.monitoringContributorRoleDefinitionId == (control("REQ-LOG-01").roleDefinitionIds | first) and
   .variables.logAnalyticsContributorRoleDefinitionId == (control("REQ-LOG-02").roleDefinitionIds | first) and
-  assigned_at_demo_root($activity) and assigned_at_demo_root($diagnostics) and
-  all(($activity, $diagnostics);
-    .properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
-    .properties.parameters.identity.value == {type: "SystemAssigned"} and
+  .variables.activityLogRemediationDeployRequested == "[equals(parameters(\u0027activityLogExportPolicyEffect\u0027), \u0027DeployIfNotExists\u0027)]" and
+  .variables.resourceDiagnosticsRemediationDeployRequested == "[equals(parameters(\u0027resourceDiagnosticsPolicyEffect\u0027), \u0027DeployIfNotExists\u0027)]" and
+  assigned_at_demo_root($activity) and assigned_at_demo_root($activity_remediating) and
+  assigned_at_demo_root($diagnostics) and assigned_at_demo_root($diagnostics_remediating) and
+  all(($activity, $activity_remediating, $diagnostics, $diagnostics_remediating);
     .properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]") and
+  ($activity.properties.parameters | has("location") | not) and
+  ($activity.properties.parameters | has("identity") | not) and
+  ($activity.properties.parameters | has("verifiedRoleDefinitionIds") | not) and
+  ($activity.properties.parameters | has("deployRemediationRoleAssignments") | not) and
+  ($diagnostics.properties.parameters | has("location") | not) and
+  ($diagnostics.properties.parameters | has("identity") | not) and
+  ($diagnostics.properties.parameters | has("verifiedRoleDefinitionIds") | not) and
+  ($diagnostics.properties.parameters | has("deployRemediationRoleAssignments") | not) and
+  all(($activity_remediating, $diagnostics_remediating);
+    .properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
+    .properties.parameters.identity.value == {type: "SystemAssigned"}) and
   $activity.properties.parameters.policyDefinitionId.value ==
     "[variables(\u0027activityLogExportPolicyDefinitionId\u0027)]" and
+  $activity_remediating.properties.parameters.policyDefinitionId.value ==
+    "[variables(\u0027activityLogExportPolicyDefinitionId\u0027)]" and
   $activity.properties.parameters.definitionVersion.value == "1.*.*" and
+  $activity_remediating.properties.parameters.definitionVersion.value == "1.*.*" and
   $activity.properties.parameters.parameters.value.effect.value ==
+    "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
+  $activity_remediating.properties.parameters.parameters.value.effect.value ==
     "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
   $activity.properties.parameters.parameters.value.logsEnabled.value ==
     "[parameters(\u0027activityLogExportLogsEnabled\u0027)]" and
+  $activity_remediating.properties.parameters.parameters.value.logsEnabled.value ==
+    "[parameters(\u0027activityLogExportLogsEnabled\u0027)]" and
   ($activity.properties.parameters.parameters.value.logAnalytics.value |
+    contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
+  ($activity_remediating.properties.parameters.parameters.value.logAnalytics.value |
     contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
   ($activity.properties.parameters.parameters.value.logAnalytics.value |
     contains("fail(\u0027Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID in the exact form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>")) and
-  $activity.properties.parameters.verifiedRoleDefinitionIds.value ==
+  ($activity_remediating.properties.parameters.parameters.value.logAnalytics.value |
+    contains("fail(\u0027Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID in the exact form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>")) and
+  ($activity.properties.parameters.parameters.value.logAnalytics.value |
+    contains("__bicep.isWorkspaceResourceId")) and
+  ($activity_remediating.properties.parameters.parameters.value.logAnalytics.value |
+    contains("__bicep.isWorkspaceResourceId")) and
+  $activity_remediating.properties.parameters.verifiedRoleDefinitionIds.value ==
     ["[variables(\u0027monitoringContributorRoleDefinitionId\u0027)]", "[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
-  $activity.properties.parameters.deployRemediationRoleAssignments.value ==
+  $activity_remediating.properties.parameters.deployRemediationRoleAssignments.value ==
     "[variables(\u0027deployActivityLogRemediationRoleAssignments\u0027)]" and
   $activity.properties.parameters.nonComplianceMessages.value == [
     {
       "message": "Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace."
     }
   ] and
+  $activity_remediating.properties.parameters.nonComplianceMessages.value == [
+    {
+      "message": "Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace."
+    }
+  ] and
   $diagnostics.properties.parameters.policyDefinitionId.value ==
     "[variables(\u0027resourceDiagnosticsPolicySetDefinitionId\u0027)]" and
+  $diagnostics_remediating.properties.parameters.policyDefinitionId.value ==
+    "[variables(\u0027resourceDiagnosticsPolicySetDefinitionId\u0027)]" and
   $diagnostics.properties.parameters.definitionVersion.value == "1.*.*" and
+  $diagnostics_remediating.properties.parameters.definitionVersion.value == "1.*.*" and
   $diagnostics.properties.parameters.parameters.value.effect.value ==
+    "[parameters(\u0027resourceDiagnosticsPolicyEffect\u0027)]" and
+  $diagnostics_remediating.properties.parameters.parameters.value.effect.value ==
     "[parameters(\u0027resourceDiagnosticsPolicyEffect\u0027)]" and
   ($diagnostics.properties.parameters.parameters.value.logAnalytics.value |
     contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
-  $diagnostics.properties.parameters.verifiedRoleDefinitionIds.value ==
+  ($diagnostics.properties.parameters.parameters.value.logAnalytics.value |
+    contains("fail(\u0027Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID in the exact form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>")) and
+  ($diagnostics.properties.parameters.parameters.value.logAnalytics.value |
+    contains("__bicep.isWorkspaceResourceId")) and
+  ($diagnostics_remediating.properties.parameters.parameters.value.logAnalytics.value |
+    contains("reference(\u0027centralMonitoring\u0027).outputs.effectiveLogAnalyticsWorkspaceResourceId.value")) and
+  ($diagnostics_remediating.properties.parameters.parameters.value.logAnalytics.value |
+    contains("fail(\u0027Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID in the exact form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>")) and
+  ($diagnostics_remediating.properties.parameters.parameters.value.logAnalytics.value |
+    contains("__bicep.isWorkspaceResourceId")) and
+  $diagnostics_remediating.properties.parameters.verifiedRoleDefinitionIds.value ==
     ["[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
-  $diagnostics.properties.parameters.deployRemediationRoleAssignments.value ==
+  $diagnostics_remediating.properties.parameters.deployRemediationRoleAssignments.value ==
     "[variables(\u0027deployResourceDiagnosticsRemediationRoleAssignments\u0027)]" and
   $diagnostics.properties.parameters.nonComplianceMessages.value == [
     {
       "message": "Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types."
     }
   ] and
+  $diagnostics_remediating.properties.parameters.nonComplianceMessages.value == [
+    {
+      "message": "Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types."
+    }
+  ] and
+  $activity.condition == "[not(variables(\u0027activityLogRemediationDeployRequested\u0027))]" and
+  $activity_remediating.condition == "[variables(\u0027activityLogRemediationDeployRequested\u0027)]" and
+  $diagnostics.condition == "[not(variables(\u0027resourceDiagnosticsRemediationDeployRequested\u0027))]" and
+  $diagnostics_remediating.condition == "[variables(\u0027resourceDiagnosticsRemediationDeployRequested\u0027)]" and
   $activity_workspace_rbac.condition ==
     "[variables(\u0027deployActivityLogRemediationRoleAssignments\u0027)]" and
   $diagnostics_workspace_rbac.condition ==
@@ -1743,12 +1804,30 @@ jq -e --slurpfile catalog "${control_catalog}" '
   $diagnostics_workspace_rbac.resourceGroup == "[variables(\u0027loggingWorkspaceResourceGroupName\u0027)]" and
   $activity_workspace_rbac.properties.parameters.workspaceName.value == "[variables(\u0027loggingWorkspaceName\u0027)]" and
   $diagnostics_workspace_rbac.properties.parameters.workspaceName.value == "[variables(\u0027loggingWorkspaceName\u0027)]" and
+  $activity_workspace_rbac.properties.parameters.roleDefinitionIds.value ==
+    ["[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
   $activity_workspace_rbac.properties.template.resources.remediationRoleAssignments.scope ==
     "[resourceId(\u0027Microsoft.OperationalInsights/workspaces\u0027, parameters(\u0027workspaceName\u0027))]" and
   $activity_workspace_rbac.properties.template.resources.remediationRoleAssignments.properties.roleDefinitionId ==
     "[tenantResourceId(\u0027Microsoft.Authorization/roleDefinitions\u0027, parameters(\u0027roleDefinitionIds\u0027)[copyIndex()])]" and
+  .outputs.loggingAssignments.value.activityLogExport.policyAssignmentId ==
+    "[if(variables(\u0027activityLogRemediationDeployRequested\u0027), reference(\u0027activityLogExportRemediatingAssignment\u0027).outputs.policyAssignmentId.value, reference(\u0027activityLogExportAssignment\u0027).outputs.policyAssignmentId.value)]" and
+  .outputs.loggingAssignments.value.activityLogExport.identityPrincipalId ==
+    "[if(variables(\u0027activityLogRemediationDeployRequested\u0027), reference(\u0027activityLogExportRemediatingAssignment\u0027).outputs.identityPrincipalId.value, \u0027\u0027)]" and
+  .outputs.loggingAssignments.value.activityLogExport.roleAssignmentIds ==
+    "[if(variables(\u0027activityLogRemediationDeployRequested\u0027), reference(\u0027activityLogExportRemediatingAssignment\u0027).outputs.roleAssignmentIds.value, createArray())]" and
+  .outputs.loggingAssignments.value.activityLogExport.remediationRoleAssignmentIds ==
+    "[if(variables(\u0027activityLogRemediationDeployRequested\u0027), reference(\u0027activityLogExportRemediatingAssignment\u0027).outputs.roleAssignmentIds.value, createArray())]" and
   .outputs.loggingAssignments.value.activityLogExport.effect ==
     "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
+  .outputs.loggingAssignments.value.resourceDiagnostics.policyAssignmentId ==
+    "[if(variables(\u0027resourceDiagnosticsRemediationDeployRequested\u0027), reference(\u0027resourceDiagnosticsRemediatingAssignment\u0027).outputs.policyAssignmentId.value, reference(\u0027resourceDiagnosticsAssignment\u0027).outputs.policyAssignmentId.value)]" and
+  .outputs.loggingAssignments.value.resourceDiagnostics.identityPrincipalId ==
+    "[if(variables(\u0027resourceDiagnosticsRemediationDeployRequested\u0027), reference(\u0027resourceDiagnosticsRemediatingAssignment\u0027).outputs.identityPrincipalId.value, \u0027\u0027)]" and
+  .outputs.loggingAssignments.value.resourceDiagnostics.roleAssignmentIds ==
+    "[if(variables(\u0027resourceDiagnosticsRemediationDeployRequested\u0027), reference(\u0027resourceDiagnosticsRemediatingAssignment\u0027).outputs.roleAssignmentIds.value, createArray())]" and
+  .outputs.loggingAssignments.value.resourceDiagnostics.remediationRoleAssignmentIds ==
+    "[if(variables(\u0027resourceDiagnosticsRemediationDeployRequested\u0027), reference(\u0027resourceDiagnosticsRemediatingAssignment\u0027).outputs.roleAssignmentIds.value, createArray())]" and
   .outputs.loggingAssignments.value.resourceDiagnostics.effect ==
     "[parameters(\u0027resourceDiagnosticsPolicyEffect\u0027)]" and
   .outputs.loggingAssignments.value.resourceDiagnostics.categoryGroup ==
@@ -1787,6 +1866,8 @@ template_text = template_path.read_text(encoding="utf-8")
 valid_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central"
 wrong_type_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.Storage/storageAccounts/not-a-workspace"
 malformed_workspace = "/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/"
+malformed_prefix_workspace = "junk/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central"
+forbidden_segment_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/./providers/Microsoft.OperationalInsights/workspaces/.."
 
 cases = [
     {
@@ -1869,6 +1950,26 @@ cases = [
         "deployRoleAssignments": "true",
         "deployLoggingRemediationRoleAssignments": "true",
     },
+    {
+        "name": "enabled-malformed-prefix-existing-id",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": malformed_prefix_workspace,
+        "activityLogExportPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsPolicyEffect": "Disabled",
+        "resourceDiagnosticsCategoryGroup": "audit",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "enabled-forbidden-segment-existing-id",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": forbidden_segment_workspace,
+        "activityLogExportPolicyEffect": "Disabled",
+        "resourceDiagnosticsPolicyEffect": "AuditIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "allLogs",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
 ]
 
 def replace_param(text: str, name: str, value_literal: str) -> str:
@@ -1921,10 +2022,22 @@ for case in cases:
         covered_workspace_modes.add("existing-malformed")
     elif existing_id == wrong_type_workspace:
         covered_workspace_modes.add("existing-wrong-type")
+    elif existing_id == malformed_prefix_workspace:
+        covered_workspace_modes.add("existing-malformed-prefix")
+    elif existing_id == forbidden_segment_workspace:
+        covered_workspace_modes.add("existing-forbidden-segment")
     covered_category_modes.add(case["resourceDiagnosticsCategoryGroup"])
     covered_effect_states.add((case["activityLogExportPolicyEffect"], case["resourceDiagnosticsPolicyEffect"]))
 
-required_workspace_modes = {"new", "empty", "existing-valid", "existing-malformed", "existing-wrong-type"}
+required_workspace_modes = {
+    "new",
+    "empty",
+    "existing-valid",
+    "existing-malformed",
+    "existing-wrong-type",
+    "existing-malformed-prefix",
+    "existing-forbidden-segment",
+}
 if covered_workspace_modes != required_workspace_modes:
     raise SystemExit(f"ERROR: Logging matrix coverage mismatch for workspace-path modes: {covered_workspace_modes}")
 if covered_category_modes != {"audit", "allLogs"}:
