@@ -162,6 +162,30 @@
     "criticalInfrastructureSubscriptionIds": {
       "value": []
     },
+    "enableDefenderCspm": {
+      "value": false
+    },
+    "enableDefenderCiem": {
+      "value": true
+    },
+    "enableDefenderForServers": {
+      "value": false
+    },
+    "defenderForServersSubPlan": {
+      "value": "P2"
+    },
+    "defenderForServersAgentlessVmScanningEnabled": {
+      "value": true
+    },
+    "enableDefenderForStorage": {
+      "value": false
+    },
+    "enableDefenderStorageMalwareScanning": {
+      "value": false
+    },
+    "defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount": {
+      "value": 10000
+    },
     "enableMicrosoftCloudSecurityBenchmark": {
       "value": true
     },
