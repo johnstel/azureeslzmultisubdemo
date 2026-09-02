@@ -322,7 +322,7 @@ param enableDefenderForStorage bool = false
 @description('Only applies when enableDefenderForStorage is true. Explicit, separate opt-in for the Defender for Storage plan\'s on-upload malware-scanning extension -- an additional metered, per-GB feature distinct from the base plan\'s own cost. Defaults to false (disabled) even though the built-in\'s own verified default is true, so enabling the Storage plan alone never silently enables this additional metered feature; a customer must separately approve it here.')
 param enableDefenderStorageMalwareScanning bool = false
 
-@description('Only applies when enableDefenderStorage is true and enableDefenderStorageMalwareScanning is true. Monthly GB cap per storage account for the malware-scanning extension. Defaults to 10000, matching the built-in\'s own verified default; only meaningful once malware scanning is separately approved above.')
+@description('Only applies when enableDefenderForStorage is true and enableDefenderStorageMalwareScanning is true. Monthly GB cap per storage account for the malware-scanning extension. Defaults to 10000, matching the built-in\'s own verified default; only meaningful once malware scanning is separately approved above.')
 param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount int = 10000
 
 var demoRootManagementGroupId = namePrefix
