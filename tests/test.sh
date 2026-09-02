@@ -121,6 +121,14 @@ jq -e '
   .parameters.deployEvidenceResources.value == false and
   .parameters.enableTagInheritance.value == false and
   .parameters.denyPolicyEnforcementMode.value == "DoNotEnforce" and
+  .parameters.networkIngressPolicyEffect.value == "Audit" and
+  .parameters.privateAccessPublicNetworkPolicyEffect.value == "Audit" and
+  .parameters.privateAccessServiceCategories.value == ["Storage", "KeyVault"] and
+  .parameters.enableFirewallRouteGuardrails.value == false and
+  .parameters.approvedFirewallResourceId.value == "" and
+  .parameters.approvedFirewallPrivateIp.value == "" and
+  .parameters.approvedRouteTableResourceIds.value == [] and
+  .parameters.approvedRouteTablePrefixes.value == [] and
   .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
   (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
   (.parameters.customerAllowedVmSkus.value | length) > 0 and
@@ -129,7 +137,16 @@ jq -e '
 az bicep build-params \
   --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
-jq -e '.parameters.networkIngressPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
+jq -e '
+  .parameters.networkIngressPolicyEffect.value == "Audit" and
+  .parameters.privateAccessPublicNetworkPolicyEffect.value == "Audit" and
+  .parameters.privateAccessServiceCategories.value == ["Storage", "KeyVault"] and
+  .parameters.enableFirewallRouteGuardrails.value == false and
+  .parameters.approvedFirewallResourceId.value == "" and
+  .parameters.approvedFirewallPrivateIp.value == "" and
+  .parameters.approvedRouteTableResourceIds.value == [] and
+  .parameters.approvedRouteTablePrefixes.value == []
+' "${TEMP_DIR}/main.parameters.json" >/dev/null
 jq -e '.parameters.enableTagInheritance.value == false' "${TEMP_DIR}/main.parameters.json" >/dev/null
 for tag_inheritance_enabled in false true; do
   tag_params="${TEMP_DIR}/tag-inheritance-${tag_inheritance_enabled}.bicepparam"
@@ -166,18 +183,22 @@ fi
 bash_preview_line="$(rg -n -F 'if [[ "${MODE}" != '"'"'--execute'"'"' ]]' "${bash_remediation}" | cut -d: -f1)"
 bash_environment_line="$(rg -n -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION' "${bash_remediation}" | tail -n 1 | cut -d: -f1)"
 bash_typed_line="$(rg -n -F 'IFS= read -r typed_confirmation' "${bash_remediation}" | cut -d: -f1)"
+bash_revalidation_line="$(rg -n -F 'validate_live_controls' "${bash_remediation}" | tail -n 1 | cut -d: -f1)"
 bash_create_line="$(rg -n -F 'az policy remediation create' "${bash_remediation}" | cut -d: -f1)"
 [[ "${bash_preview_line}" -lt "${bash_environment_line}" \
   && "${bash_environment_line}" -lt "${bash_typed_line}" \
-  && "${bash_typed_line}" -lt "${bash_create_line}" ]] \
+  && "${bash_typed_line}" -lt "${bash_revalidation_line}" \
+  && "${bash_revalidation_line}" -lt "${bash_create_line}" ]] \
   || { printf 'ERROR: Bash tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
 powershell_preview_line="$(rg -n -F 'if (-not $Execute)' "${powershell_remediation}" | cut -d: -f1)"
 powershell_environment_line="$(rg -n -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION' "${powershell_remediation}" | tail -n 1 | cut -d: -f1)"
 powershell_typed_line="$(rg -n -F '$typedConfirmation = Read-Host' "${powershell_remediation}" | cut -d: -f1)"
+powershell_revalidation_line="$(rg -n -F 'Test-LiveControls' "${powershell_remediation}" | tail -n 1 | cut -d: -f1)"
 powershell_create_line="$(rg -n -F 'Start-AzPolicyRemediation `' "${powershell_remediation}" | cut -d: -f1)"
 [[ "${powershell_preview_line}" -lt "${powershell_environment_line}" \
   && "${powershell_environment_line}" -lt "${powershell_typed_line}" \
-  && "${powershell_typed_line}" -lt "${powershell_create_line}" ]] \
+  && "${powershell_typed_line}" -lt "${powershell_revalidation_line}" \
+  && "${powershell_revalidation_line}" -lt "${powershell_create_line}" ]] \
   || { printf 'ERROR: PowerShell tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
 
 printf '4/24 Confirm there are exactly two unconditional subscription associations...\n'
@@ -238,7 +259,7 @@ group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperato
   --compiled-eligibility-template "${TEMP_DIR}/owner-eligibility-request.json"
 rbac_negative_template="${TEMP_DIR}/main-permanent-owner.json"
 jq '
-  .resources += [{
+  .resources.__testPermanentOwner = {
     "type": "Microsoft.Authorization/roleAssignments",
     "apiVersion": "2022-04-01",
     "name": "00000000-0000-0000-0000-000000000000",
@@ -246,7 +267,7 @@ jq '
       "principalId": "[parameters('\''governanceAdminsGroupObjectId'\'')]",
       "roleDefinitionId": "[subscriptionResourceId('\''Microsoft.Authorization/roleDefinitions'\'', '\''8e3af657-a8ff-443c-a75c-2fe8c4bcb635'\'')]"
     }
-  }]
+  }
 ' "${TEMP_DIR}/main.json" > "${rbac_negative_template}"
 if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
   --compiled-template "${rbac_negative_template}" \
@@ -260,13 +281,13 @@ if ! printf '%s' "${rbac_validation_output}" | grep -qF 'permanent Owner role as
 fi
 rbac_main_request_fixture="${TEMP_DIR}/main-one-shot-request.json"
 jq '
-  .resources += [{
+  .resources.__testOneShotRequest = {
     "type": "Microsoft.Authorization/roleEligibilityScheduleRequests",
     "apiVersion": "2020-10-01",
     "name": "[guid(subscription().id, '\''reused-request'\'')]",
     "condition": false,
     "properties": {}
-  }]
+  }
 ' "${TEMP_DIR}/main.json" > "${rbac_main_request_fixture}"
 if rbac_validation_output="$("${PROJECT_DIR}/scripts/validate-rbac-artifacts.sh" \
   --compiled-template "${rbac_main_request_fixture}" \
@@ -730,6 +751,56 @@ jq -e '
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) == ["public-management-ingress", "require-subnet-nsg"] and
   ($assignment.properties.parameters.nonComplianceMessages.value | all(.message | length > 0))
 ' "${TEMP_DIR}/main.json" >/dev/null
+private_access_and_route_guardrail_count="$(jq '
+  .resources as $resources |
+  ($resources | map(select(.name == "private-access-initiative")) | first) as $initiative |
+  ($resources | map(select(.name == "assign-private-access-workload")) | first) as $workload |
+  ($resources | map(select(.name == "assign-private-access-critical")) | first) as $critical |
+  ($resources | map(select(.name == "assign-firewall-routes-workload")) | first) as $routes |
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) == ["key-vault-private-link", "paas-public-network-access", "storage-private-link"] and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(select(.policyDefinitionReferenceId == "storage-private-link")) | first).definitionVersion == "2.*.*" and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(select(.policyDefinitionReferenceId == "key-vault-private-link")) | first).definitionVersion == "1.*.*" and
+  $initiative.properties.parameters.initiativeParameters.value.publicNetworkAccessEffect.defaultValue == "Audit" and
+  ($workload.scope | contains("workloadManagementGroupId")) and
+  ($workload.scope | contains("platformManagementGroupId") | not) and
+  $critical.condition == "[parameters(\u0027enableCriticalInfrastructure\u0027)]" and
+  ($critical.scope | contains("criticalInfrastructureManagementGroupId")) and
+  $routes.condition == "[parameters(\u0027enableFirewallRouteGuardrails\u0027)]" and
+  ($routes.scope | contains("workloadManagementGroupId")) and
+  $routes.properties.parameters.parameters.value.approvedFirewallResourceId.value == "[parameters(\u0027approvedFirewallResourceId\u0027)]" and
+  (.variables.validatedFirewallRouteInputs | contains("fail(")) and
+  (.variables.validatedFirewallRouteInputs | contains("approvedFirewallResourceId")) and
+  (.variables.validatedFirewallRouteInputs | contains("approvedRouteTableResourceIds")) and
+  (.variables.validatedFirewallRouteInputs | contains("approvedRouteTablePrefixes"))
+' "${TEMP_DIR}/main.json")"
+[[ "${private_access_and_route_guardrail_count}" == "true" ]] || {
+  printf 'ERROR: Private-access and approved-firewall-route guardrails must remain audit-first, input-gated, and workload/critical scoped.\n' >&2
+  exit 1
+}
+rg -q 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values' "${PROJECT_DIR}/main.bicep"
+rg -q 'approvedFirewallResourceId must be an Azure Firewall resource ID' "${PROJECT_DIR}/main.bicep"
+python3 - "${PROJECT_DIR}/tests/fixtures/firewall-route-input-validation-cases.json" <<'PYEOF'
+import json
+import ipaddress
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    cases = json.load(stream)
+
+for case in cases["ipv4Cases"]:
+    try:
+        valid = isinstance(ipaddress.ip_address(case["value"]), ipaddress.IPv4Address)
+    except ValueError:
+        valid = False
+    if valid != case["valid"]:
+        raise SystemExit(f"ERROR: IPv4 validation case failed: {case['value']}")
+
+for case in cases["serviceCategoryCases"]:
+    values = case["value"]
+    valid = bool(values) and all(value in {"Storage", "KeyVault"} for value in values) and len(values) == len(set(values))
+    if valid != case["valid"]:
+        raise SystemExit(f"ERROR: Private-access category validation case failed: {values}")
+PYEOF
 root_public_ip_assignment_count="$(jq '
   [.resources[]
     | select(.name == "assign-audit-public-ip")
@@ -753,7 +824,7 @@ with open(fixture_path, encoding="utf-8") as stream:
 
 library = next(
     resource
-    for resource in compiled["resources"]
+    for resource in compiled["resources"].values()
     if resource["name"].startswith("[format('policy-library-")
 )
 template = library["properties"]["template"]
@@ -847,6 +918,43 @@ if forms != {
     "destination": {"single", "plural"},
 }:
     raise SystemExit(f"ERROR: Network ingress fixtures do not cover all resource/property forms: {forms}")
+PYEOF
+
+python3 - "${TEMP_DIR}/main.json" "${PROJECT_DIR}/tests/fixtures/firewall-route-semantic-cases.json" <<'PYEOF'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    compiled = json.load(stream)
+with open(sys.argv[2], encoding="utf-8") as stream:
+    fixture = json.load(stream)
+
+library = next(resource for resource in compiled["resources"].values() if resource["name"].startswith("[format('policy-library-"))
+definition = next(
+    resource for resource in library["properties"]["template"]["resources"]
+    if resource["properties"]["displayName"] == "Demo - audit approved firewall route expectations"
+)
+policy_text = json.dumps(definition["properties"]["policyRule"]["if"])
+for expression in (
+    "approvedRouteTablePrefixes",
+    "current('approvedRouteTablePrefix')",
+    "nextHopType",
+    "VirtualAppliance",
+    "nextHopIpAddress",
+    "approvedFirewallPrivateIp",
+):
+    if expression not in policy_text:
+        raise SystemExit(f"ERROR: Compiled firewall route policy is missing: {expression}")
+
+for case in fixture["cases"]:
+    has_approved_route = any(
+        route["addressPrefix"] == fixture["approvedRouteTablePrefix"]
+        and route["nextHopType"] == "VirtualAppliance"
+        and route["nextHopIpAddress"] == fixture["approvedFirewallPrivateIp"]
+        for route in case["routes"]
+    )
+    if (not has_approved_route) != case["expectedNonCompliant"]:
+        raise SystemExit(f"ERROR: Firewall route semantic case failed: {case['name']}")
 PYEOF
 
 printf '9/24 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
