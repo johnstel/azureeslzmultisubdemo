@@ -352,6 +352,34 @@ order, monitoring, and rollback. Validate these artifacts locally with:
 .\scripts\validate-identity-artifacts.ps1
 ```
 
+## Service-principal and access-review governance
+
+Standing privileged permissions are reviewed with evidence, not removed by
+automation. `scripts/review-privileged-access.sh` and
+`scripts/review-privileged-access.ps1` produce an identical read-only
+inventory of Azure role assignments for an explicitly supplied tenant,
+subscriptions, and optional management groups. They highlight Owner, User
+Access Administrator, and other high-privilege roles, broad management-group
+or subscription scopes, and direct service-principal or managed-identity
+grants, and they count Owner principals per subscription. The scripts change
+nothing, never call Microsoft Graph, and never conclude that a grant is
+excessive; the criteria that decide what is surfaced live in
+`policy/access-review-criteria.json`.
+
+```bash
+./scripts/review-privileged-access.sh \
+  --tenant-id <tenant-guid> \
+  --subscription-id <subscription-guid>
+```
+
+Reports are written to the source-control-ignored `.access-reviews/`
+directory, contain no secrets or display names, and belong in the customer's
+evidence store. See
+[Service-principal and privileged access reviews](docs/ACCESS-REVIEWS.md) for
+the Entra access-review cadence, reviewer ownership, evidence retention, the
+remediation decision workflow, and how Defender CSPM CIEM complements the
+inventory when licensed.
+
 ## Cost rationale
 
 With `deployEvidenceResources=false`, the project creates only governance-plane
@@ -736,6 +764,7 @@ docs/
   FIRST-RUN-CHECKLIST.md
   ENTRA-CONDITIONAL-ACCESS-PIM.md
   AZURE-RBAC-PIM.md
+  ACCESS-REVIEWS.md
 identity/
   azure-rbac/
     owner-eligibility-request.bicep
@@ -779,6 +808,7 @@ scripts/
   teardown.ps1
   validate-identity-artifacts.ps1
   validate-rbac-artifacts.ps1
+  review-privileged-access.ps1
   owner-eligibility-request.sh
   preflight.sh
   what-if.sh
@@ -786,6 +816,7 @@ scripts/
   teardown.sh
   validate-identity-artifacts.sh
   validate-rbac-artifacts.sh
+  review-privileged-access.sh
 tests/
   test.ps1
   test.sh

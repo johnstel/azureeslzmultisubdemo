@@ -21,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/26 Validate repository versioning and branch guidance...\n'
+printf '1/27 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -32,7 +32,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/26 Build the complete tenant template and validate policy assignment shapes...\n'
+printf '2/27 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -115,7 +115,7 @@ jq -e '
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/26 Validate the ARM parameter template...\n'
+printf '3/27 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -205,14 +205,14 @@ powershell_create_line="$(rg -n -F 'Start-AzPolicyRemediation `' "${powershell_r
   && "${powershell_revalidation_line}" -lt "${powershell_create_line}" ]] \
   || { printf 'ERROR: PowerShell tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
 
-printf '4/26 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/27 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/26 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+printf '5/27 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
 find_prohibited_paid_declarations() {
   jq -r '
     def prohibited:
@@ -246,13 +246,13 @@ az bicep build \
   exit 1
 }
 
-printf '6/26 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/27 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/26 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+printf '7/27 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 4 ]] || {
   printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
@@ -718,7 +718,7 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/26 Confirm region policy and workload network guardrails are safe by default...\n'
+printf '8/27 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -961,7 +961,7 @@ for case in fixture["cases"]:
         raise SystemExit(f"ERROR: Firewall route semantic case failed: {case['name']}")
 PYEOF
 
-printf '9/26 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/27 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -994,7 +994,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/26 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...\n'
+printf '10/27 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...\n'
 rg -q "^param enableDefenderCspm bool = false$" "${PROJECT_DIR}/main.bicep"
 rg -q "^param enableDefenderForServers bool = false$" "${PROJECT_DIR}/main.bicep"
 rg -q "^param enableDefenderForStorage bool = false$" "${PROJECT_DIR}/main.bicep"
@@ -1221,7 +1221,7 @@ jq -e '
 rg -q '"REQ-DEF-09"' "${PROJECT_DIR}/policy/control-catalog.json"
 rg -q "Foundational CSPM" "${PROJECT_DIR}/README.md"
 
-printf '11/26 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '11/27 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -1237,7 +1237,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '12/26 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '12/27 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -1261,7 +1261,7 @@ landingzones_delete_line_ps1="$(rg -n '\$managementGroups \+= "\$prefix-landingz
   exit 1
 }
 
-printf '13/26 Confirm central monitoring defaults create no metered resources...\n'
+printf '13/27 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -1271,23 +1271,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "14/26 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "14/27 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '15/26 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '15/27 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '16/26 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '16/27 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '17/26 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '17/27 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -1310,7 +1310,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '18/26 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '18/27 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -1358,7 +1358,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '19/26 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '19/27 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
@@ -1429,19 +1429,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '20/26 Validate reusable initiative composition...\n'
+printf '20/27 Validate reusable initiative composition...\n'
 "${SCRIPT_DIR}/validate-initiative-composition.sh"
 
-printf '21/26 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '21/27 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '22/26 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '22/27 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '23/26 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '23/27 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '24/26 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '24/27 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
@@ -1873,7 +1873,7 @@ rm -f "${CASE_INSENSITIVE_IMG}"
 
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
-printf '25/26 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
+printf '25/27 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
 control_catalog="${PROJECT_DIR}/policy/control-catalog.json"
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
@@ -1976,7 +1976,7 @@ jq -e '
   exit 1
 }
 
-printf '26/26 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
+printf '26/27 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
 jq -e '
   .parameters.dataProtectionPolicyEffect.defaultValue == "Audit" and
   .parameters.dataProtectionPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and
@@ -2193,5 +2193,223 @@ jq -e '
   exit 1
 }
 jq -e '.parameters.dataProtectionPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
+
+printf '27/27 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
+access_review_script="${PROJECT_DIR}/scripts/review-privileged-access.sh"
+access_review_ps_script="${PROJECT_DIR}/scripts/review-privileged-access.ps1"
+access_review_criteria="${PROJECT_DIR}/policy/access-review-criteria.json"
+access_review_assignments="${PROJECT_DIR}/tests/fixtures/privileged-access-assignments.json"
+access_review_expected="${PROJECT_DIR}/tests/fixtures/privileged-access-expected-report.json"
+access_review_tenant='44444444-4444-4444-8444-444444444444'
+access_review_subscription='22222222-2222-4222-8222-222222222222'
+for access_review_file in "${access_review_script}" "${access_review_ps_script}" "${access_review_criteria}" \
+  "${access_review_assignments}" "${access_review_expected}"; do
+  [[ -f "${access_review_file}" ]] || {
+    printf 'ERROR: Missing privileged access review artifact: %s\n' "${access_review_file}" >&2
+    exit 1
+  }
+done
+if rg -n 'az (role assignment (create|delete|update)|ad (app|sp|group) (create|delete|update)|deployment|rest --method)' \
+  "${access_review_script}" "${access_review_ps_script}"; then
+  printf 'ERROR: The privileged access review scripts must stay read-only.\n' >&2
+  exit 1
+fi
+access_review_out="${TEMP_DIR}/access-review"
+"${access_review_script}" \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --management-group demo-root \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_out}" >/dev/null
+access_review_report="$(ls "${access_review_out}"/privileged-access-review-*.json)"
+[[ -f "${access_review_report}" ]] || {
+  printf 'ERROR: The privileged access review produced no JSON report.\n' >&2
+  exit 1
+}
+[[ -f "${access_review_report%.json}.md" ]] || {
+  printf 'ERROR: The privileged access review produced no Markdown report.\n' >&2
+  exit 1
+}
+jq -S 'del(.generatedOn)' "${access_review_report}" > "${TEMP_DIR}/access-review-actual.json"
+jq -S '.' "${access_review_expected}" > "${TEMP_DIR}/access-review-expected.json"
+diff -u "${TEMP_DIR}/access-review-expected.json" "${TEMP_DIR}/access-review-actual.json" || {
+  printf 'ERROR: The privileged access review classification changed unexpectedly.\n' >&2
+  exit 1
+}
+jq -e '
+  (.generatedOn | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+  and .mode == "offline-file"
+  and (.findings | length) > 0
+  and all(.findings[]; .reviewAction == "manual-review-required")
+  and ([.findings[] | select(.principalType == "ServicePrincipal" and .roleDefinitionName == "Owner")]
+    | all(.severity == "high" and (.reasons | index("direct-non-human-principal-assignment") != null)))
+  and (.. | strings | test("password|secret|clientSecret"; "i") | not)
+' "${access_review_report}" >/dev/null || {
+  printf 'ERROR: The privileged access review report shape or safety expectations are invalid.\n' >&2
+  exit 1
+}
+# The generated reports contain directory identifiers and must never be tracked.
+git -C "${PROJECT_DIR}" check-ignore -q "${PROJECT_DIR}/.access-reviews/privileged-access-review-example.json" || {
+  printf 'ERROR: Locally generated access-review reports must be ignored by source control.\n' >&2
+  exit 1
+}
+
+access_review_strict_criteria="${TEMP_DIR}/access-review-strict-criteria.json"
+jq '.maxOwnersPerSubscription = 1' "${access_review_criteria}" > "${access_review_strict_criteria}"
+access_review_strict_out="${TEMP_DIR}/access-review-strict"
+"${access_review_script}" \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --criteria-file "${access_review_strict_criteria}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_strict_out}" >/dev/null
+jq -e --arg subscription "${access_review_subscription}" '
+  .summary.subscriptionsExceedingOwnerThreshold == [$subscription]
+  and (.summary.subscriptionOwnerCounts[0] | .ownerPrincipalCount == 2 and .exceedsThreshold)
+  and .criteria.maxOwnersPerSubscription == 1
+' "$(ls "${access_review_strict_out}"/privileged-access-review-*.json)" >/dev/null || {
+  printf 'ERROR: The configurable Owner-count threshold was not honoured.\n' >&2
+  exit 1
+}
+
+expect_access_review_failure() {
+  local description="$1"
+  shift
+  local output
+  if output="$("${access_review_script}" "$@" 2>&1)"; then
+    printf 'ERROR: The privileged access review accepted %s.\n' "${description}" >&2
+    exit 1
+  fi
+  printf '%s' "${output}" | grep -q 'ERROR:' || {
+    printf 'ERROR: The privileged access review rejected %s without an explicit error.\n' "${description}" >&2
+    exit 1
+  }
+}
+
+access_review_negative_out="${TEMP_DIR}/access-review-negative"
+expect_access_review_failure 'a missing tenant context' \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+expect_access_review_failure 'a missing subscription context' \
+  --tenant-id "${access_review_tenant}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+expect_access_review_failure 'a non-canonical subscription GUID' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id 'not-a-guid' \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+expect_access_review_failure 'a duplicate subscription' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+access_review_bad_assignments="${TEMP_DIR}/access-review-bad-assignments.json"
+jq '.[0] |= del(.principalType)' "${access_review_assignments}" > "${access_review_bad_assignments}"
+expect_access_review_failure 'an assignment without a principal type' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_bad_assignments}" \
+  --output-dir "${access_review_negative_out}"
+access_review_bad_criteria="${TEMP_DIR}/access-review-bad-criteria.json"
+jq '.highPrivilegeRoleNames = []' "${access_review_criteria}" > "${access_review_bad_criteria}"
+expect_access_review_failure 'an empty high-privilege role list' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --criteria-file "${access_review_bad_criteria}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+
+access_review_mock_bin="${TEMP_DIR}/access-review-mockbin"
+mkdir -p "${access_review_mock_bin}"
+cat > "${access_review_mock_bin}/az" <<'MOCKACCESSREVIEWAZ'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${ACCESS_REVIEW_AZ_CALL_LOG}"
+if [[ "$1" == 'account' && "$2" == 'show' ]]; then
+  printf '%s\n' "${MOCK_SIGNED_IN_TENANT}"
+  exit 0
+fi
+if [[ "$1" == 'role' && "$2" == 'assignment' && "$3" == 'list' ]]; then
+  cat "${MOCK_ASSIGNMENTS_FILE}"
+  exit 0
+fi
+exit 1
+MOCKACCESSREVIEWAZ
+chmod +x "${access_review_mock_bin}/az"
+access_review_az_log="${TEMP_DIR}/access-review-az-calls.log"
+: > "${access_review_az_log}"
+access_review_live_out="${TEMP_DIR}/access-review-live"
+if ! PATH="${access_review_mock_bin}:${PATH}" \
+  ACCESS_REVIEW_AZ_CALL_LOG="${access_review_az_log}" \
+  MOCK_SIGNED_IN_TENANT="${access_review_tenant}" \
+  MOCK_ASSIGNMENTS_FILE="${access_review_assignments}" \
+  "${access_review_script}" \
+    --tenant-id "${access_review_tenant}" \
+    --subscription-id "${access_review_subscription}" \
+    --output-dir "${access_review_live_out}" >/dev/null; then
+  printf 'ERROR: The privileged access review failed against a read-only Azure CLI mock.\n' >&2
+  exit 1
+fi
+jq -e '.mode == "live-read-only" and .summary.assignmentsEvaluated == 8' \
+  "$(ls "${access_review_live_out}"/privileged-access-review-*.json)" >/dev/null || {
+  printf 'ERROR: The live read-only mode did not evaluate the collected assignments.\n' >&2
+  exit 1
+}
+[[ ! -e "${access_review_live_out}/.collected-assignments.json" ]] || {
+  printf 'ERROR: The privileged access review must not leave collected assignments behind.\n' >&2
+  exit 1
+}
+if ! grep -q '^account show --query tenantId --output tsv$' "${access_review_az_log}"; then
+  printf 'ERROR: The privileged access review must verify the signed-in tenant before reading assignments.\n' >&2
+  exit 1
+fi
+if grep -vq '^\(account show\|role assignment list\)' "${access_review_az_log}"; then
+  printf 'ERROR: The privileged access review invoked an Azure CLI command that is not read-only.\n' >&2
+  cat "${access_review_az_log}" >&2
+  exit 1
+fi
+: > "${access_review_az_log}"
+if PATH="${access_review_mock_bin}:${PATH}" \
+  ACCESS_REVIEW_AZ_CALL_LOG="${access_review_az_log}" \
+  MOCK_SIGNED_IN_TENANT='55555555-5555-4555-8555-555555555555' \
+  MOCK_ASSIGNMENTS_FILE="${access_review_assignments}" \
+  "${access_review_script}" \
+    --tenant-id "${access_review_tenant}" \
+    --subscription-id "${access_review_subscription}" \
+    --output-dir "${TEMP_DIR}/access-review-wrong-tenant" >/dev/null 2>&1; then
+  printf 'ERROR: The privileged access review accepted a signed-in tenant that does not match --tenant-id.\n' >&2
+  exit 1
+fi
+if grep -q 'role assignment list' "${access_review_az_log}"; then
+  printf 'ERROR: The privileged access review read assignments from a mismatched tenant.\n' >&2
+  exit 1
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+  printf '    Confirm the PowerShell review produces an identical report...\n'
+  access_review_ps_out="${TEMP_DIR}/access-review-pwsh"
+  pwsh -NoLogo -NoProfile -File "${access_review_ps_script}" \
+    -TenantId "${access_review_tenant}" \
+    -SubscriptionId "${access_review_subscription}" \
+    -ManagementGroupId demo-root \
+    -AssignmentsFile "${access_review_assignments}" \
+    -OutputDirectory "${access_review_ps_out}" >/dev/null
+  jq -S 'del(.generatedOn)' "$(ls "${access_review_ps_out}"/privileged-access-review-*.json)" \
+    > "${TEMP_DIR}/access-review-pwsh-actual.json"
+  diff -u "${TEMP_DIR}/access-review-expected.json" "${TEMP_DIR}/access-review-pwsh-actual.json" || {
+    printf 'ERROR: The PowerShell privileged access review report differs from the Bash report.\n' >&2
+    exit 1
+  }
+else
+  printf '    (No pwsh interpreter found on PATH; tests/test.ps1 covers the PowerShell review.)\n'
+fi
+
+rg -q 'reviewCadenceDays' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Defender CSPM CIEM' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Evidence retention' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Subscription Owner-count review' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Remediation decision workflow' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
 
 printf '\nAll local validation and safety tests passed.\n'

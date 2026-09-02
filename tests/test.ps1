@@ -87,7 +87,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/26 Validate repository versioning and branch guidance...'
+    Write-Host '1/27 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -105,7 +105,7 @@ try {
         }
     }
 
-    Write-Host '2/26 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/27 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -266,7 +266,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/26 Validate both parameter templates...'
+    Write-Host '3/27 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -407,7 +407,7 @@ try {
     if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
         $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
     }
-    Write-Host '4/26 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/27 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -417,7 +417,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/26 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    Write-Host '5/27 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
     if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
         Stop-Test 'A prohibited evidence resource type is declared.'
     }
@@ -431,14 +431,14 @@ try {
         Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/26 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/27 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/26 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/27 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -938,7 +938,7 @@ exit $LASTEXITCODE
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/26 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/27 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -1244,7 +1244,7 @@ exit $LASTEXITCODE
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '9/26 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/27 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -1284,7 +1284,7 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/26 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
+    Write-Host '10/27 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     if ($mainBicepText -notmatch '(?m)^param enableDefenderCspm bool = false$') {
         Stop-Test 'enableDefenderCspm parameter must default to false.'
@@ -1536,7 +1536,7 @@ exit $LASTEXITCODE
         Stop-Test 'README.md must document Foundational CSPM.'
     }
 
-    Write-Host '11/26 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '11/27 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -1564,7 +1564,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '12/26 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '12/27 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -1586,7 +1586,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '13/26 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '13/27 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -1607,7 +1607,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/26 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '14/27 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -1619,7 +1619,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '15/26 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '15/27 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -1627,7 +1627,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '16/26 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '16/27 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -1639,7 +1639,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '17/26 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '17/27 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -1656,7 +1656,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '18/26 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '18/27 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -1759,7 +1759,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/26 Parse every PowerShell lifecycle and test script...'
+    Write-Host '19/27 Parse every PowerShell lifecycle and test script...'
     & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
@@ -1778,13 +1778,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '20/26 Validate reusable initiative composition...'
+    Write-Host '20/27 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '21/26 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '21/27 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '22/26 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '22/27 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -1794,10 +1794,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '23/26 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '23/27 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '24/26 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '24/27 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'
@@ -2425,7 +2425,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 
-    Write-Host '25/26 Confirm security benchmark assignments trace to the control catalog and stay optional...'
+    Write-Host '25/27 Confirm security benchmark assignments trace to the control catalog and stay optional...'
     $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
     $armParameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $benchmarkAssignments = @(
@@ -2562,7 +2562,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '26/26 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
+    Write-Host '26/27 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
     if ($compiledJson.parameters.dataProtectionPolicyEffect.defaultValue -ne 'Audit' -or
         (Compare-Object @($compiledJson.parameters.dataProtectionPolicyEffect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
         Stop-Test 'Compiled dataProtectionPolicyEffect must allow Audit, Deny, and Disabled and default to Audit.'
@@ -2785,6 +2785,135 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         if ($dataProtectionResource.PSObject.Properties['type'] -and
             $dataProtectionResource.type -match '^Microsoft\.(ManagedIdentity|KeyVault|Storage|Network|OperationalInsights)/') {
             Stop-Test "The data-protection controls must not declare $($dataProtectionResource.type)."
+        }
+    }
+
+    Write-Host '27/27 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
+    $accessReviewScript = Join-Path $ProjectDir 'scripts/review-privileged-access.ps1'
+    $accessReviewCriteria = Join-Path $ProjectDir 'policy/access-review-criteria.json'
+    $accessReviewAssignments = Join-Path $ProjectDir 'tests/fixtures/privileged-access-assignments.json'
+    $accessReviewExpectedFile = Join-Path $ProjectDir 'tests/fixtures/privileged-access-expected-report.json'
+    $accessReviewTenant = '44444444-4444-4444-8444-444444444444'
+    $accessReviewSubscription = '22222222-2222-4222-8222-222222222222'
+    foreach ($accessReviewFile in @($accessReviewScript, $accessReviewCriteria, $accessReviewAssignments, $accessReviewExpectedFile)) {
+        if (-not (Test-Path -LiteralPath $accessReviewFile -PathType Leaf)) {
+            Stop-Test "Missing privileged access review artifact: $accessReviewFile"
+        }
+    }
+    $accessReviewScriptText = Get-Content -LiteralPath $accessReviewScript -Raw
+    if ($accessReviewScriptText -match 'az (role assignment (create|delete|update)|ad (app|sp|group) (create|delete|update)|deployment|rest --method)') {
+        Stop-Test 'The privileged access review script must stay read-only.'
+    }
+
+    $accessReviewOut = Join-Path $TempDir 'access-review'
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $accessReviewScript `
+        -TenantId $accessReviewTenant `
+        -SubscriptionId $accessReviewSubscription `
+        -ManagementGroupId 'demo-root' `
+        -AssignmentsFile $accessReviewAssignments `
+        -OutputDirectory $accessReviewOut | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test 'The privileged access review failed against the offline fixture.'
+    }
+    $accessReviewReportFile = @(Get-ChildItem -LiteralPath $accessReviewOut -Filter 'privileged-access-review-*.json')
+    if ($accessReviewReportFile.Count -ne 1) {
+        Stop-Test 'The privileged access review must write exactly one JSON report per run.'
+    }
+    $accessReviewMarkdown = [System.IO.Path]::ChangeExtension($accessReviewReportFile[0].FullName, '.md')
+    if (-not (Test-Path -LiteralPath $accessReviewMarkdown -PathType Leaf)) {
+        Stop-Test 'The privileged access review produced no Markdown report.'
+    }
+    $accessReviewReportText = Get-Content -LiteralPath $accessReviewReportFile[0].FullName -Raw
+    $accessReviewReport = $accessReviewReportText | ConvertFrom-Json -Depth 20
+    $accessReviewExpected = Get-Content -LiteralPath $accessReviewExpectedFile -Raw | ConvertFrom-Json -Depth 20
+    # ConvertFrom-Json coerces ISO-8601 strings to [datetime], so assert the
+    # stored UTC timestamp against the raw report text instead.
+    if ($accessReviewReportText -notmatch '"generatedOn": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"') {
+        Stop-Test 'The privileged access review report must record a UTC generation timestamp.'
+    }
+    $accessReviewReport.PSObject.Properties.Remove('generatedOn')
+    $accessReviewActualJson = $accessReviewReport | ConvertTo-Json -Depth 20 -Compress
+    $accessReviewExpectedJson = $accessReviewExpected | ConvertTo-Json -Depth 20 -Compress
+    if ($accessReviewActualJson -cne $accessReviewExpectedJson) {
+        Stop-Test "The privileged access review classification changed unexpectedly: $accessReviewActualJson"
+    }
+    if ($accessReviewReport.mode -ne 'offline-file' -or $accessReviewReport.findings.Count -lt 1) {
+        Stop-Test 'The offline privileged access review produced no findings.'
+    }
+    foreach ($accessReviewFinding in $accessReviewReport.findings) {
+        if ($accessReviewFinding.reviewAction -ne 'manual-review-required') {
+            Stop-Test 'Every privileged access finding must require a manual review decision.'
+        }
+        if ($accessReviewFinding.principalType -eq 'ServicePrincipal' -and $accessReviewFinding.roleDefinitionName -eq 'Owner' -and
+            ($accessReviewFinding.severity -ne 'high' -or $accessReviewFinding.reasons -notcontains 'direct-non-human-principal-assignment')) {
+            Stop-Test 'A direct service-principal Owner grant must be surfaced as a high-severity finding.'
+        }
+    }
+
+    $accessReviewStrictCriteria = Join-Path $TempDir 'access-review-strict-criteria.json'
+    $accessReviewCriteriaDocument = Get-Content -LiteralPath $accessReviewCriteria -Raw | ConvertFrom-Json -Depth 20
+    $accessReviewCriteriaDocument.maxOwnersPerSubscription = 1
+    $accessReviewCriteriaDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewStrictCriteria -Encoding utf8NoBOM
+    $accessReviewStrictOut = Join-Path $TempDir 'access-review-strict'
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $accessReviewScript `
+        -TenantId $accessReviewTenant `
+        -SubscriptionId $accessReviewSubscription `
+        -CriteriaFile $accessReviewStrictCriteria `
+        -AssignmentsFile $accessReviewAssignments `
+        -OutputDirectory $accessReviewStrictOut | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test 'The privileged access review failed with a stricter Owner threshold.'
+    }
+    $accessReviewStrictReport = Get-Content -LiteralPath (
+        @(Get-ChildItem -LiteralPath $accessReviewStrictOut -Filter 'privileged-access-review-*.json')[0].FullName) -Raw |
+        ConvertFrom-Json -Depth 20
+    if (@($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) -ne @($accessReviewSubscription) -or
+        $accessReviewStrictReport.criteria.maxOwnersPerSubscription -ne 1 -or
+        $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].ownerPrincipalCount -ne 2 -or
+        -not $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].exceedsThreshold) {
+        Stop-Test 'The configurable Owner-count threshold was not honoured.'
+    }
+
+    $accessReviewNegativeOut = Join-Path $TempDir 'access-review-negative'
+    $accessReviewBadAssignments = Join-Path $TempDir 'access-review-bad-assignments.json'
+    $accessReviewAssignmentsDocument = @(Get-Content -LiteralPath $accessReviewAssignments -Raw | ConvertFrom-Json -Depth 20)
+    $accessReviewAssignmentsDocument[0].PSObject.Properties.Remove('principalType')
+    $accessReviewAssignmentsDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewBadAssignments -Encoding utf8NoBOM
+    $accessReviewBadCriteria = Join-Path $TempDir 'access-review-bad-criteria.json'
+    $accessReviewCriteriaDocument = Get-Content -LiteralPath $accessReviewCriteria -Raw | ConvertFrom-Json -Depth 20
+    $accessReviewCriteriaDocument.highPrivilegeRoleNames = @()
+    $accessReviewCriteriaDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewBadCriteria -Encoding utf8NoBOM
+    $accessReviewNegativeCases = @(
+        @{ Description = 'a missing tenant context'; Arguments = @(
+            '-SubscriptionId', $accessReviewSubscription,
+            '-AssignmentsFile', $accessReviewAssignments) },
+        @{ Description = 'a non-canonical subscription GUID'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', 'not-a-guid',
+            '-AssignmentsFile', $accessReviewAssignments) },
+        @{ Description = 'a duplicate subscription'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', "$accessReviewSubscription,$accessReviewSubscription",
+            '-AssignmentsFile', $accessReviewAssignments) },
+        @{ Description = 'an assignment without a principal type'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', $accessReviewSubscription,
+            '-AssignmentsFile', $accessReviewBadAssignments) },
+        @{ Description = 'an empty high-privilege role list'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', $accessReviewSubscription,
+            '-CriteriaFile', $accessReviewBadCriteria,
+            '-AssignmentsFile', $accessReviewAssignments) }
+    )
+    foreach ($accessReviewCase in $accessReviewNegativeCases) {
+        $accessReviewArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $accessReviewScript) +
+            $accessReviewCase.Arguments + @('-OutputDirectory', $accessReviewNegativeOut)
+        & pwsh @accessReviewArguments 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Stop-Test "The privileged access review accepted $($accessReviewCase.Description)."
         }
     }
 
