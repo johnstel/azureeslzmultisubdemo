@@ -182,6 +182,9 @@ param deployRoleAssignments bool = false
 @description('Set true to create no-hourly-charge evidence resource groups, a VNet, and an NSG.')
 param deployEvidenceResources bool = false
 
+@description('Set true only after approving the tag-inheritance assignment, its managed identity, and its built-in-required remediation RBAC. This does not start remediation tasks.')
+param enableTagInheritance bool = false
+
 @description('Region for optional VNet/NSG evidence resources.')
 @allowed([
   'centralus'
@@ -300,6 +303,10 @@ var requireResourceGroupTagPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
   '96670d01-0a4d-4649-9c89-2d3abc0a5025'
 )
+var inheritResourceGroupTagPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  'ea3f2387-9b95-492a-a190-fcdc54f7b070'
+)
 var microsoftCloudSecurityBenchmarkPolicySetDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policySetDefinitions',
   '1f3afdf9-d0c9-4c3d-847f-89da613e70a8'
@@ -413,6 +420,89 @@ module resourceGroupTagsInitiative 'modules/policy-initiative.bicep' = {
         policyDefinitionId: requireResourceGroupTagPolicyDefinitionId
         definitionVersion: '1.*.*'
         policyDefinitionReferenceId: 'require-ssp-id'
+        parameters: {
+          tagName: {
+            value: 'SSP-ID'
+          }
+        }
+        groupNames: []
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module tagInheritanceInitiative 'modules/policy-initiative.bicep' = {
+  name: 'tag-inheritance-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-inherit-rg-tags'
+    initiativeDisplayName: 'Demo - inherit resource group tags'
+    initiativeDescription: 'Inherits the six customer governance tags from resource groups to taggable child resources when missing.'
+    initiativeCategory: 'Tags'
+    initiativeVersion: '2.0.0'
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-cost-center'
+        parameters: {
+          tagName: {
+            value: 'CostCenter'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-application-name'
+        parameters: {
+          tagName: {
+            value: 'ApplicationName'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-owner'
+        parameters: {
+          tagName: {
+            value: 'Owner'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-environment'
+        parameters: {
+          tagName: {
+            value: 'Environment'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-data-classification'
+        parameters: {
+          tagName: {
+            value: 'DataClassification'
+          }
+        }
+        groupNames: []
+      }
+      {
+        policyDefinitionId: inheritResourceGroupTagPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'inherit-ssp-id'
         parameters: {
           tagName: {
             value: 'SSP-ID'
@@ -1355,6 +1445,29 @@ module defenderAmaAuditLinuxAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
+module tagInheritanceAssignment 'modules/remediating-policy-assignment.bicep' = if (enableTagInheritance) {
+  name: 'assign-tag-inheritance'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-inherit-rg-tags'
+    displayName: 'Demo - inherit resource group tags'
+    description: 'Inherits missing customer governance tags from resource groups without replacing existing resource tag values. Existing resources require a deliberate remediation task.'
+    policyDefinitionId: tagInheritanceInitiative.outputs.policySetDefinitionId
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      contributorRoleDefinitionId
+    ]
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {}
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 module microsoftCloudSecurityBenchmarkAssignment 'modules/policy-assignment.bicep' = if (enableMicrosoftCloudSecurityBenchmark) {
   name: 'assign-mcsb-baseline'
   scope: managementGroup(demoRootManagementGroupId)
@@ -1531,3 +1644,9 @@ output defenderForStoragePolicyAssignmentId string = defenderForStorageAssignmen
 output defenderForStorageIdentityPrincipalId string = defenderForStorageAssignment.outputs.identityPrincipalId
 output defenderAmaAuditWindowsPolicyAssignmentId string = defenderAmaAuditWindowsAssignment.outputs.policyAssignmentId
 output defenderAmaAuditLinuxPolicyAssignmentId string = defenderAmaAuditLinuxAssignment.outputs.policyAssignmentId
+output tagInheritanceRemediation object = {
+  enabled: enableTagInheritance
+  policyAssignmentId: tagInheritanceAssignment.?outputs.?policyAssignmentId ?? ''
+  policyDefinitionReferenceIds: tagInheritanceInitiative.outputs.policyDefinitionReferenceIds
+  remediationStarted: false
+}

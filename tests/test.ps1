@@ -201,6 +201,69 @@ try {
             }
         }
     }
+    $inheritanceInitiative = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'tag-inheritance-initiative'
+    } | Select-Object -First 1
+    $inheritanceAssignment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-tag-inheritance'
+    } | Select-Object -First 1
+    if ($null -eq $inheritanceInitiative -or $null -eq $inheritanceAssignment) {
+        Stop-Test 'Tag-inheritance initiative or remediating assignment deployment is missing.'
+    }
+    $inheritanceReferences = @($inheritanceInitiative.properties.parameters.policyDefinitionReferences.value)
+    if ($inheritanceReferences.Count -ne 6 -or
+        (Compare-Object -ReferenceObject $requiredTags -DifferenceObject @($inheritanceReferences.parameters.tagName.value) -CaseSensitive)) {
+        Stop-Test 'Tag-inheritance initiative must contain the exact six case-sensitive tag names.'
+    }
+    foreach ($inheritanceReference in $inheritanceReferences) {
+        if ($inheritanceReference.policyDefinitionId -cne "[variables('inheritResourceGroupTagPolicyDefinitionId')]" -or
+            $inheritanceReference.definitionVersion -cne '1.*.*' -or
+            -not $inheritanceReference.policyDefinitionReferenceId.StartsWith('inherit-')) {
+            Stop-Test 'Every tag-inheritance control must use the pinned verified built-in and a stable reference ID.'
+        }
+    }
+    if (-not $inheritanceInitiative.scope.Contains('demoRootManagementGroupId') -or
+        -not $inheritanceAssignment.scope.Contains('landingZonesManagementGroupId') -or
+        $inheritanceAssignment.properties.parameters.location.value -cne "[parameters('deploymentLocation')]" -or
+        $inheritanceAssignment.properties.parameters.identity.value.type -cne 'SystemAssigned' -or
+        @($inheritanceAssignment.properties.parameters.verifiedRoleDefinitionIds.value).Count -ne 1 -or
+        $inheritanceAssignment.properties.parameters.verifiedRoleDefinitionIds.value[0] -cne "[variables('contributorRoleDefinitionId')]" -or
+        $inheritanceAssignment.properties.parameters.enforcementMode.value -cne "[parameters('denyPolicyEnforcementMode')]" -or
+        $inheritanceAssignment.condition -cne "[parameters('enableTagInheritance')]" -or
+        $compiledJson.parameters.enableTagInheritance.defaultValue -ne $false -or
+        $compiledJson.outputs.tagInheritanceRemediation.value.enabled -cne "[parameters('enableTagInheritance')]") {
+        Stop-Test 'Tag-inheritance scope, identity, location, role, or safe enforcement wiring is invalid.'
+    }
+    $remediationResources = @(Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.PolicyInsights/remediations'
+    })
+    if ($remediationResources.Count -ne 0 -or
+        $compiledJson.outputs.tagInheritanceRemediation.value.remediationStarted -ne $false) {
+        Stop-Test 'The safe template must expose remediation inputs without starting a remediation task.'
+    }
+    $catalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
+    $inheritanceControls = @($catalog.controls | Where-Object { $_.id -match '^REQ-TAG-(0[7-9]|1[0-2])$' })
+    if ($inheritanceControls.Count -ne 6) {
+        Stop-Test 'The control catalog must contain all six tag-inheritance controls.'
+    }
+    foreach ($inheritanceControl in $inheritanceControls) {
+        if ($inheritanceControl.mechanism.definitionId -cne 'ea3f2387-9b95-492a-a190-fcdc54f7b070' -or
+            $inheritanceControl.mechanism.verificationMethod -cne 'raw-json' -or
+            @($inheritanceControl.supportedEffects).Count -ne 1 -or
+            $inheritanceControl.supportedEffects[0] -cne 'Modify' -or
+            @($inheritanceControl.roleDefinitionIds).Count -ne 1 -or
+            $inheritanceControl.roleDefinitionIds[0] -cne 'b24988ac-6180-42a0-ab88-20f7382dd24c' -or
+            $inheritanceControl.remediationIdentityRequired -ne $true -or
+            -not $inheritanceControl.notes.Contains('only adds a missing tag') -or
+            -not $inheritanceControl.notes.Contains('never overwrites an existing tag value')) {
+            Stop-Test "Verified built-in Modify semantics are invalid for $($inheritanceControl.id)."
+        }
+    }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
     Write-Host '3/26 Validate both parameter templates...'
@@ -211,6 +274,9 @@ try {
     }
     if ($parameterTemplate.parameters.deployEvidenceResources.value -ne $false) {
         Stop-Test 'deployEvidenceResources must default to false.'
+    }
+    if ($parameterTemplate.parameters.enableTagInheritance.value -ne $false) {
+        Stop-Test 'enableTagInheritance must default to false.'
     }
     if ($parameterTemplate.parameters.denyPolicyEnforcementMode.value -ne 'DoNotEnforce') {
         Stop-Test 'denyPolicyEnforcementMode must default to DoNotEnforce.'
@@ -230,6 +296,93 @@ try {
     $compiledParameters = Get-Content -LiteralPath $compiledParametersPath -Raw | ConvertFrom-Json
     if ($compiledParameters.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
         Stop-Test 'networkIngressPolicyEffect must default to Audit in the Bicep parameter template.'
+    }
+    if ($compiledParameters.parameters.enableTagInheritance.value -ne $false) {
+        Stop-Test 'enableTagInheritance must default to false in the Bicep parameter template.'
+    }
+    foreach ($tagInheritanceEnabled in @($false, $true)) {
+        $tagParameterPath = Join-Path $TempDir "tag-inheritance-$($tagInheritanceEnabled.ToString().ToLowerInvariant()).bicepparam"
+        $tagParameterText = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/main.template.bicepparam') -Raw
+        $tagParameterText = $tagParameterText.Replace(
+            "using '../main.bicep'",
+            "using '../../main.bicep'"
+        )
+        $tagParameterText = [regex]::Replace(
+            $tagParameterText,
+            '(?m)^param enableTagInheritance = .*$',
+            "param enableTagInheritance = $($tagInheritanceEnabled.ToString().ToLowerInvariant())"
+        )
+        Set-Content -LiteralPath $tagParameterPath -Value $tagParameterText
+        $tagParameterJsonPath = "$tagParameterPath.json"
+        & az bicep build-params --file $tagParameterPath --outfile $tagParameterJsonPath
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Test "Tag-inheritance $tagInheritanceEnabled parameter shape failed to compile."
+        }
+        $tagParameterJson = Get-Content -LiteralPath $tagParameterJsonPath -Raw | ConvertFrom-Json
+        if ($tagParameterJson.parameters.enableTagInheritance.value -ne $tagInheritanceEnabled) {
+            Stop-Test "Tag-inheritance $tagInheritanceEnabled parameter shape did not compile as expected."
+        }
+    }
+
+    Write-Host '    Confirm tag remediation workflows remain preview-first and explicitly guarded...'
+    $bashTagRemediation = Join-Path $ProjectDir 'scripts/remediate-resource-tags.sh'
+    $powerShellTagRemediation = Join-Path $ProjectDir 'scripts/remediate-resource-tags.ps1'
+    & bash -n $bashTagRemediation
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Bash tag-remediation workflow has invalid syntax.' }
+    $parseErrors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile(
+        $powerShellTagRemediation,
+        [ref]$null,
+        [ref]$parseErrors
+    )
+    if ($parseErrors.Count -ne 0) { Stop-Test 'PowerShell tag-remediation workflow has invalid syntax.' }
+    $bashRemediationText = Get-Content -LiteralPath $bashTagRemediation -Raw
+    $powerShellRemediationText = Get-Content -LiteralPath $powerShellTagRemediation -Raw
+    foreach ($requiredText in @(
+        'ESLZ_TAG_REMEDIATION_CONFIRMATION',
+        'IFS= read -r typed_confirmation',
+        'validate_live_controls',
+        'az policy remediation create'
+    )) {
+        if (-not $bashRemediationText.Contains($requiredText)) {
+            Stop-Test "Bash tag-remediation workflow is missing $requiredText."
+        }
+    }
+    foreach ($requiredText in @(
+        'Start-AzPolicyRemediation',
+        '$typedConfirmation = Read-Host',
+        'Test-LiveControls'
+    )) {
+        if (-not $powerShellRemediationText.Contains($requiredText)) {
+            Stop-Test "PowerShell tag-remediation workflow is missing $requiredText."
+        }
+    }
+    $unsupportedRemediationCommand = [string]::Concat('New-AzPolicy', 'Remediation')
+    & rg -q -F $unsupportedRemediationCommand $ProjectDir
+    if ($LASTEXITCODE -eq 0) {
+        Stop-Test 'The unsupported PowerShell remediation command remains in the repository.'
+    }
+    if ($LASTEXITCODE -ne 1) { Stop-Test 'Unable to scan for unsupported PowerShell remediation commands.' }
+    $bashPreviewIndex = $bashRemediationText.IndexOf('if [[ "${MODE}" != ''--execute'' ]]', [System.StringComparison]::Ordinal)
+    $bashEnvironmentIndex = $bashRemediationText.LastIndexOf('ESLZ_TAG_REMEDIATION_CONFIRMATION', [System.StringComparison]::Ordinal)
+    $bashTypedIndex = $bashRemediationText.IndexOf('IFS= read -r typed_confirmation', [System.StringComparison]::Ordinal)
+    $bashRevalidationIndex = $bashRemediationText.LastIndexOf('validate_live_controls', [System.StringComparison]::Ordinal)
+    $bashCreateIndex = $bashRemediationText.IndexOf('az policy remediation create', [System.StringComparison]::Ordinal)
+    if ($bashPreviewIndex -lt 0 -or $bashPreviewIndex -gt $bashEnvironmentIndex -or
+        $bashEnvironmentIndex -gt $bashTypedIndex -or $bashTypedIndex -gt $bashRevalidationIndex -or
+        $bashRevalidationIndex -gt $bashCreateIndex) {
+        Stop-Test 'Bash tag remediation must preview, unlock, type-confirm, revalidate, then create.'
+    }
+    $powerShellPreviewIndex = $powerShellRemediationText.IndexOf('if (-not $Execute)', [System.StringComparison]::Ordinal)
+    $powerShellEnvironmentIndex = $powerShellRemediationText.LastIndexOf('ESLZ_TAG_REMEDIATION_CONFIRMATION', [System.StringComparison]::Ordinal)
+    $powerShellTypedIndex = $powerShellRemediationText.IndexOf('$typedConfirmation = Read-Host', [System.StringComparison]::Ordinal)
+    $powerShellRevalidationIndex = $powerShellRemediationText.LastIndexOf('Test-LiveControls', [System.StringComparison]::Ordinal)
+    $powerShellCreateIndex = $powerShellRemediationText.IndexOf('Start-AzPolicyRemediation `', [System.StringComparison]::Ordinal)
+    if ($powerShellPreviewIndex -lt 0 -or $powerShellPreviewIndex -gt $powerShellEnvironmentIndex -or
+        $powerShellEnvironmentIndex -gt $powerShellTypedIndex -or
+        $powerShellTypedIndex -gt $powerShellRevalidationIndex -or
+        $powerShellRevalidationIndex -gt $powerShellCreateIndex) {
+        Stop-Test 'PowerShell tag remediation must preview, unlock, type-confirm, revalidate, then create.'
     }
     if ($parameterTemplate.parameters.privateAccessPublicNetworkPolicyEffect.value -ne 'Audit' -or
         (Compare-Object @($parameterTemplate.parameters.privateAccessServiceCategories.value) @('Storage', 'KeyVault')) -or
