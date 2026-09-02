@@ -67,7 +67,9 @@ root:
 | Demo root | Microsoft cloud security benchmark (built-in initiative, enabled by default) | Assignment in `DoNotEnforce` |
 | Demo root | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
 | Demo root | NIST SP 800-53 Rev. 5 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
-| Landing Zones | Storage and Key Vault data-protection initiative: secure transfer, minimum TLS, public blob and network access, shared-key posture, Key Vault soft delete, deletion protection, RBAC authorization, firewall/public network access, diagnostics readiness, and service-specific customer-managed key audits | Audit assignment in `DoNotEnforce` |
+| Landing Zones | Storage and Key Vault data-protection initiative: secure transfer, minimum TLS, public blob and network access, shared-key posture, Key Vault soft delete, deletion protection, RBAC authorization, firewall/public network access, private-link and diagnostics readiness, and service-specific customer-managed key audits | Audit assignment in `DoNotEnforce` |
+| Demo root | Export subscription Activity Logs to the effective central Log Analytics workspace (built-in) | Assignment in `DoNotEnforce`, policy effect defaults `Disabled` |
+| Demo root | Export supported resource diagnostic logs to the effective central Log Analytics workspace (built-in initiative) | Assignment in `DoNotEnforce`, policy effect defaults `AuditIfNotExists` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -437,6 +439,30 @@ deletes it either. Teardown also parses `existingLogAnalyticsWorkspaceResourceId
 and skips deleting any resource group — including the generated
 `rg-<namePrefix>-connectivity` group — whose subscription and name match the
 supplied existing workspace, even if the names happen to collide.
+
+The demo root also assigns two remediation-capable built-ins for Activity Log
+and supported-resource diagnostics export. Both assignments use
+system-assigned identities and never start remediation tasks automatically.
+They consume the same effective workspace ID output used by central
+monitoring. If either assignment effect is enabled (`DeployIfNotExists` for
+Activity Logs or `AuditIfNotExists`/`DeployIfNotExists` for resource
+diagnostics) without a valid effective workspace ID in the exact form
+`/subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>`,
+template validation fails explicitly.
+
+Remediation RBAC grants for these logging assignments are separately opt-in.
+Set both `deployRoleAssignments=true` and
+`deployLoggingRemediationRoleAssignments=true` to allow role assignment
+creation. In audit/disabled modes, no logging remediation-role grants are
+created.
+
+`resourceDiagnosticsCategoryGroup` selects the built-in initiative profile:
+`audit` (default) or `allLogs`. Coverage is limited to the resource types
+included by the selected Microsoft-built initiative; unsupported resource types
+are intentionally not claimed as covered here. Extend unsupported types by
+adding and assigning explicit custom diagnostics policies or a custom initiative
+in this repository after verifying required aliases, categories, and
+least-privilege remediation roles.
 
 ### Microsoft Defender for Cloud governance markers
 

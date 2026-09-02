@@ -5,7 +5,14 @@ func stripHex(value string) string => replace(replace(replace(replace(replace(re
 func isGuid(value string) bool => length(value) == 36 ? substring(value, 8, 1) == '-' && substring(value, 13, 1) == '-' && substring(value, 18, 1) == '-' && substring(value, 23, 1) == '-' && length(replace(value, '-', '')) == 32 && empty(stripHex(replace(value, '-', ''))) : false
 func isIpv4(value string) bool => length(split(value, '.')) == 4 && value == trim(value) && !empty(value) && empty(filter(split(value, '.'), octet => empty(octet) || !empty(stripDigits(octet)) || int(octet) > 255))
 func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(first(split(value, '/'))) && !empty(last(split(value, '/'))) && empty(stripDigits(last(split(value, '/')))) && int(last(split(value, '/'))) >= 0 && int(last(split(value, '/'))) <= 32
+func hasCanonicalArmIdSegments(value string) bool => startsWith(value, '/') && !endsWith(value, '/') && value == trim(value) && length(filter(skip(split(value, '/'), 1), segment => empty(segment) || segment != trim(segment))) == 0
+func stripAlpha(value string) string => replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(value), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', ''), 'g', ''), 'h', ''), 'i', ''), 'j', ''), 'k', ''), 'l', ''), 'm', ''), 'n', ''), 'o', ''), 'p', ''), 'q', ''), 'r', ''), 's', ''), 't', ''), 'u', ''), 'v', ''), 'w', ''), 'x', ''), 'y', ''), 'z', '')
+func stripAlphaNumeric(value string) string => stripAlpha(stripDigits(value))
+func hasDisallowedResourceGroupAsciiChars(value string) bool => contains(value, ' ') || contains(value, '!') || contains(value, '"') || contains(value, '\u{27}') || contains(value, '#') || contains(value, '$') || contains(value, '%') || contains(value, '&') || contains(value, '*') || contains(value, '+') || contains(value, ',') || contains(value, '/') || contains(value, ':') || contains(value, ';') || contains(value, '<') || contains(value, '=') || contains(value, '>') || contains(value, '?') || contains(value, '@') || contains(value, '[') || contains(value, '\u{5C}') || contains(value, ']') || contains(value, '^') || contains(value, '`') || contains(value, '{') || contains(value, '|') || contains(value, '}') || contains(value, '~')
+func isResourceGroupName(value string) bool => !empty(value) && length(value) <= 90 && value == trim(value) && !endsWith(value, '.') && !hasDisallowedResourceGroupAsciiChars(value)
+func isLogAnalyticsWorkspaceName(value string) bool => length(value) >= 4 && length(value) <= 63 && value == trim(value) && !startsWith(value, '-') && !endsWith(value, '-') && empty(stripAlphaNumeric(replace(value, '-', '')))
 func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
+func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && hasCanonicalArmIdSegments(value) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceGroupName(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && isLogAnalyticsWorkspaceName(split(value, '/')[8])
 
 @description('Azure region used only to store tenant deployment metadata.')
 param deploymentLocation string = 'eastus'
@@ -258,6 +265,38 @@ param enableCisAzureFoundationsBenchmark bool = false
 @description('Set true to add the optional NIST SP 800-53 Rev. 5 overlay at the demo root. This initiative contains four fixed Guest Configuration DeployIfNotExists/Modify members, so the assignment needs a system-assigned identity with the Contributor role; assignment alone does not establish NIST compliance.')
 param enableNistSp80053Rev5 bool = false
 
+@description('Effect for the Activity Log export assignment. Keep Disabled until the effective workspace input and rollout are approved.')
+@allowed([
+  'DeployIfNotExists'
+  'Disabled'
+])
+param activityLogExportPolicyEffect string = 'Disabled'
+
+@description('Whether Activity Log categories are enabled when the Activity Log export assignment runs.')
+@allowed([
+  'True'
+  'False'
+])
+param activityLogExportLogsEnabled string = 'True'
+
+@description('Effect for supported-resource diagnostics. Keep AuditIfNotExists until remediation rollout is approved.')
+@allowed([
+  'DeployIfNotExists'
+  'AuditIfNotExists'
+  'Disabled'
+])
+param resourceDiagnosticsPolicyEffect string = 'AuditIfNotExists'
+
+@description('Supported-resource diagnostic category-group profile. audit is the safe default; allLogs is explicit opt-in.')
+@allowed([
+  'audit'
+  'allLogs'
+])
+param resourceDiagnosticsCategoryGroup string = 'audit'
+
+@description('Set true only when you intentionally want policy-assignment identities to receive remediation RBAC grants for logging exports. Requires deployRoleAssignments=true.')
+param deployLoggingRemediationRoleAssignments bool = false
+
 @description('Set true to opt in to Microsoft Defender CSPM (REQ-DEF-02), including CIEM findings. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role; see modules/defender-plan-assignment.bicep and docs/CONTROL-MATRIX.md for the fail-closed, no-standing-Owner remediation workflow required before the built-in policy can actually remediate anything.')
 param enableDefenderCspm bool = false
 
@@ -283,10 +322,8 @@ param enableDefenderForStorage bool = false
 @description('Only applies when enableDefenderForStorage is true. Explicit, separate opt-in for the Defender for Storage plan\'s on-upload malware-scanning extension -- an additional metered, per-GB feature distinct from the base plan\'s own cost. Defaults to false (disabled) even though the built-in\'s own verified default is true, so enabling the Storage plan alone never silently enables this additional metered feature; a customer must separately approve it here.')
 param enableDefenderStorageMalwareScanning bool = false
 
-@description('Only applies when enableDefenderStorage is true and enableDefenderStorageMalwareScanning is true. Monthly GB cap per storage account for the malware-scanning extension. Defaults to 10000, matching the built-in\'s own verified default; only meaningful once malware scanning is separately approved above.')
+@description('Only applies when enableDefenderForStorage is true and enableDefenderStorageMalwareScanning is true. Monthly GB cap per storage account for the malware-scanning extension. Defaults to 10000, matching the built-in\'s own verified default; only meaningful once malware scanning is separately approved above.')
 param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount int = 10000
-
-
 
 var demoRootManagementGroupId = namePrefix
 var platformManagementGroupId = '${namePrefix}-platform'
@@ -319,7 +356,40 @@ var nistSp80053Rev5PolicySetDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policySetDefinitions',
   '179d1daa-458f-4e47-8086-2a68d0d6c38f'
 )
+var activityLogExportPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '2465583e-4e78-4c15-b6be-a36cbc7c8b0f'
+)
+var resourceDiagnosticsAuditPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  'f5b29bc4-feca-4cc6-a58a-772dd5e290a5'
+)
+var resourceDiagnosticsAllLogsPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '0884adba-2312-4468-abeb-5422caed1038'
+)
+var resourceDiagnosticsPolicySetDefinitionId = resourceDiagnosticsCategoryGroup == 'allLogs'
+  ? resourceDiagnosticsAllLogsPolicySetDefinitionId
+  : resourceDiagnosticsAuditPolicySetDefinitionId
 var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
+var monitoringContributorRoleDefinitionId = '749f88d5-cbae-40b8-bcfc-e573ddc772fa'
+var logAnalyticsContributorRoleDefinitionId = '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
+var placeholderWorkspaceResourceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.OperationalInsights/workspaces/placeholder'
+var existingWorkspaceResourceIdParts = split(!empty(existingLogAnalyticsWorkspaceResourceId) ? existingLogAnalyticsWorkspaceResourceId : placeholderWorkspaceResourceId, '/')
+var effectiveMonitoringWorkspaceResourceId = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
+var loggingAssignmentsRequireWorkspace = activityLogExportPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'DeployIfNotExists' || resourceDiagnosticsPolicyEffect == 'AuditIfNotExists'
+var effectiveMonitoringWorkspaceIdIsValid = isWorkspaceResourceId(effectiveMonitoringWorkspaceResourceId)
+var loggingPoliciesRequireWorkspace = loggingAssignmentsRequireWorkspace && !effectiveMonitoringWorkspaceIdIsValid
+var validatedLoggingWorkspaceResourceId = loggingPoliciesRequireWorkspace
+  ? fail('Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID in the exact form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>. Set existingLogAnalyticsWorkspaceResourceId or deployCentralLogAnalytics=true before enabling these effects.')
+  : effectiveMonitoringWorkspaceResourceId
+var activityLogRemediationDeployRequested = activityLogExportPolicyEffect == 'DeployIfNotExists'
+var resourceDiagnosticsRemediationDeployRequested = resourceDiagnosticsPolicyEffect == 'DeployIfNotExists'
+var deployActivityLogRemediationRoleAssignments = deployRoleAssignments && deployLoggingRemediationRoleAssignments && activityLogRemediationDeployRequested
+var deployResourceDiagnosticsRemediationRoleAssignments = deployRoleAssignments && deployLoggingRemediationRoleAssignments && resourceDiagnosticsRemediationDeployRequested
+var loggingWorkspaceSubscriptionId = deployCentralLogAnalytics ? connectivitySubscriptionId : existingWorkspaceResourceIdParts[2]
+var loggingWorkspaceResourceGroupName = deployCentralLogAnalytics ? 'rg-${namePrefix}-monitoring' : existingWorkspaceResourceIdParts[4]
+var loggingWorkspaceName = deployCentralLogAnalytics ? 'log-${namePrefix}-central' : existingWorkspaceResourceIdParts[8]
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -1526,6 +1596,169 @@ module nistSp80053Rev5Assignment 'modules/remediating-policy-assignment.bicep' =
   ]
 }
 
+module activityLogExportAssignment 'modules/policy-assignment.bicep' = if (!activityLogRemediationDeployRequested) {
+  name: 'assign-activity-logs'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-activity-logs'
+    displayName: 'Demo - export Activity Logs to Log Analytics'
+    description: 'Configures subscription Activity Log diagnostic settings to stream to the effective central Log Analytics workspace.'
+    policyDefinitionId: activityLogExportPolicyDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: activityLogExportPolicyEffect
+      }
+      logsEnabled: {
+        value: activityLogExportLogsEnabled
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace.'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module activityLogExportRemediatingAssignment 'modules/remediating-policy-assignment.bicep' = if (activityLogRemediationDeployRequested) {
+  name: 'assign-activity-logs-remediating'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-activity-logs'
+    displayName: 'Demo - export Activity Logs to Log Analytics'
+    description: 'Configures subscription Activity Log diagnostic settings to stream to the effective central Log Analytics workspace.'
+    policyDefinitionId: activityLogExportPolicyDefinitionId
+    definitionVersion: '1.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      monitoringContributorRoleDefinitionId
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    deployRemediationRoleAssignments: deployActivityLogRemediationRoleAssignments
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: activityLogExportPolicyEffect
+      }
+      logsEnabled: {
+        value: activityLogExportLogsEnabled
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Activity Log export requires a valid effective Log Analytics workspace resource ID and the configured subscription diagnostic settings must stream to that workspace.'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module resourceDiagnosticsAssignment 'modules/policy-assignment.bicep' = if (!resourceDiagnosticsRemediationDeployRequested) {
+  name: 'assign-resource-diagnostics'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-resource-diags'
+    displayName: 'Demo - export supported resource diagnostics'
+    description: 'Assigns the built-in supported-resource diagnostics initiative to stream logs to the effective central Log Analytics workspace.'
+    policyDefinitionId: resourceDiagnosticsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: resourceDiagnosticsPolicyEffect
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types.'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module resourceDiagnosticsRemediatingAssignment 'modules/remediating-policy-assignment.bicep' = if (resourceDiagnosticsRemediationDeployRequested) {
+  name: 'assign-resource-diagnostics-remediating'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    assignmentName: 'demo-resource-diags'
+    displayName: 'Demo - export supported resource diagnostics'
+    description: 'Assigns the built-in supported-resource diagnostics initiative to stream logs to the effective central Log Analytics workspace.'
+    policyDefinitionId: resourceDiagnosticsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    deployRemediationRoleAssignments: deployResourceDiagnosticsRemediationRoleAssignments
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: resourceDiagnosticsPolicyEffect
+      }
+      logAnalytics: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Supported-resource diagnostics export requires a valid effective Log Analytics workspace resource ID and compliant diagnostic settings for supported resource types.'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module activityLogWorkspaceDestinationRbac 'modules/workspace-remediation-rbac.bicep' = if (deployActivityLogRemediationRoleAssignments) {
+  name: 'activity-log-workspace-destination-rbac'
+  scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
+  params: {
+    workspaceName: loggingWorkspaceName
+    principalId: activityLogExportRemediatingAssignment!.outputs.identityPrincipalId
+    roleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+  }
+}
+
+module resourceDiagnosticsWorkspaceDestinationRbac 'modules/workspace-remediation-rbac.bicep' = if (deployResourceDiagnosticsRemediationRoleAssignments) {
+  name: 'resource-diagnostics-workspace-destination-rbac'
+  scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
+  params: {
+    workspaceName: loggingWorkspaceName
+    principalId: resourceDiagnosticsRemediatingAssignment!.outputs.identityPrincipalId
+    roleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+  }
+}
+
 module managementGroupRbac 'modules/management-group-rbac.bicep' = if (deployRoleAssignments) {
   name: 'management-group-rbac'
   scope: managementGroup(demoRootManagementGroupId)
@@ -1636,6 +1869,26 @@ output deploymentRegion string = deploymentLocation
 output centralMonitoringEffectiveWorkspaceId string = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
 output centralMonitoringConflictingInputs bool = centralMonitoring.outputs.conflictingMonitoringInputs
 output centralMonitoringSentinelEnabled bool = centralMonitoring.outputs.sentinelEnabled
+output loggingAssignments object = {
+  activityLogExport: {
+    policyAssignmentId: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.policyAssignmentId : activityLogExportAssignment!.outputs.policyAssignmentId
+    identityPrincipalId: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.identityPrincipalId : ''
+    roleAssignmentIds: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.roleAssignmentIds : []
+    remediationRoleAssignmentIds: activityLogRemediationDeployRequested ? activityLogExportRemediatingAssignment!.outputs.roleAssignmentIds : []
+    workspaceDestinationRoleAssignmentIds: deployActivityLogRemediationRoleAssignments ? activityLogWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
+    effect: activityLogExportPolicyEffect
+  }
+  resourceDiagnostics: {
+    policyAssignmentId: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.policyAssignmentId : resourceDiagnosticsAssignment!.outputs.policyAssignmentId
+    identityPrincipalId: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.identityPrincipalId : ''
+    roleAssignmentIds: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.roleAssignmentIds : []
+    remediationRoleAssignmentIds: resourceDiagnosticsRemediationDeployRequested ? resourceDiagnosticsRemediatingAssignment!.outputs.roleAssignmentIds : []
+    workspaceDestinationRoleAssignmentIds: deployResourceDiagnosticsRemediationRoleAssignments ? resourceDiagnosticsWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
+    effect: resourceDiagnosticsPolicyEffect
+    categoryGroup: resourceDiagnosticsCategoryGroup
+    policySetDefinitionId: resourceDiagnosticsPolicySetDefinitionId
+  }
+}
 output defenderCspmPolicyAssignmentId string = defenderCspmAssignment.outputs.policyAssignmentId
 output defenderCspmIdentityPrincipalId string = defenderCspmAssignment.outputs.identityPrincipalId
 output defenderForServersPolicyAssignmentId string = defenderForServersAssignment.outputs.policyAssignmentId
