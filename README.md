@@ -66,6 +66,7 @@ root:
 | Demo root | Microsoft cloud security benchmark (built-in initiative, enabled by default) | Assignment in `DoNotEnforce` |
 | Demo root | CIS Microsoft Azure Foundations Benchmark v2.0.0 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
 | Demo root | NIST SP 800-53 Rev. 5 (built-in initiative, opt-in) | Assignment in `DoNotEnforce` |
+| Landing Zones | Storage and Key Vault data-protection initiative: secure transfer, minimum TLS, public blob and network access, shared-key posture, Key Vault soft delete, deletion protection, RBAC authorization, firewall/public network access, private-link and diagnostics readiness, and service-specific customer-managed key audits | Audit assignment in `DoNotEnforce` |
 
 The allowed-location policy uses `Indexed` mode, ignores the location-agnostic
 `global` value, and excludes the B2C directory resource type, following the
@@ -98,6 +99,55 @@ public-IP audit remains the only public-IP resource control.
 For rollout phasing, prefer resource selectors or `DoNotEnforce` assignment
 mode. Use an exemption only when a specific deployed scope needs a reviewed,
 ticketed exception with a mandatory owner and expiry.
+
+### Storage, Key Vault, and customer-managed keys
+
+The Landing Zones data-protection initiative composes verified built-in
+definitions for storage secure transfer, minimum TLS version, public blob
+access, network access, shared-key authorization, and for Key Vault soft
+delete, deletion (purge) protection, RBAC authorization, firewall/public
+network access, and resource-log readiness. Private-link readiness for both
+services is owned by the private-access initiative described below
+(REQ-NET-04 and REQ-NET-05), so it is not repeated here. `dataProtectionPolicyEffect` defaults to `Audit`; controls whose
+built-in supports only `Audit`/`Disabled` or `AuditIfNotExists`/`Disabled`
+follow that choice without ever being escalated to `Deny`. Purge protection is
+only ever audited or required, never disabled: it is bound to a dedicated
+`purgeProtectionEffect` that allows `Audit` or `Deny` only, so selecting
+`Disabled` for `dataProtectionPolicyEffect` still leaves that control auditing.
+
+Each built-in member is pinned to the exact major version recorded in
+`policy/control-catalog.json` (for example `2.*.*`) through the reusable
+`definitionVersion` support in `modules/policy-initiative.bicep`, so a future
+major revision of a built-in never changes the assignment's behaviour without
+review. The in-repository custom member is intentionally unpinned, because
+`definitionVersion` applies only to built-in definitions.
+
+The public-access and diagnostics controls audit configuration and readiness
+only. They do not deploy a private endpoint, private DNS zone, virtual
+network, or diagnostic setting, so a compliant result must not be reported as
+delivered private connectivity or delivered logging.
+
+Customer-managed key (CMK) coverage is service-specific and audit-first, not a
+blanket deny across every Azure service. The verified storage CMK built-in only
+confirms that encryption uses a Key Vault key source, so the in-repository
+`${namePrefix}-audit-storage-cmk-approved-key` definition adds the approved
+inventory check driven by the `approvedCustomerManagedKeyVaultUris` and
+`approvedCustomerManagedKeyNames` parameters. Both default to empty, which
+reports nothing. Before enabling CMK, the customer owns these dependencies:
+
+- **Identity:** a managed identity granted `get`, `wrapKey`, and `unwrapKey` on
+  the key. This repository never grants key access or changes data-plane
+  permissions.
+- **Key rotation:** a documented rotation process and the re-wrap behavior of
+  each service that consumes the key.
+- **Availability:** a deleted, disabled, expired, or purged key makes encrypted
+  data unreadable, so key lifecycle must be monitored.
+- **Recovery:** Key Vault soft delete and purge protection must stay enabled;
+  purge protection must never be disabled once enabled.
+- **Private network:** when vault public network access is restricted, the
+  consuming service needs approved private connectivity that the customer
+  deploys and operates.
+
 ### Private access and firewall-route guardrails
 
 The private-access initiative audits Storage and Key Vault public network
@@ -182,7 +232,8 @@ to a supplied dedicated demo-root management group. It combines the verified
 built-in allowed-locations definition with the in-repository public-IP audit
 definition, passes audit-first initiative parameters through to the built-in,
 and creates no assignment or metered resource. The example is not called by
-`main.bicep`; domain initiatives remain explicit future work driven by the
+`main.bicep`; the deployed domain initiatives (workload network ingress and
+Landing Zones data protection) are composed directly in `main.bicep` from the
 authoritative [`policy/control-catalog.json`](policy/control-catalog.json).
 
 ### Reusable governed policy exemptions
@@ -465,6 +516,7 @@ For a first review, retain:
 
 ```json
 "denyPolicyEnforcementMode": { "value": "DoNotEnforce" },
+"dataProtectionPolicyEffect": { "value": "Audit" },
 "deployRoleAssignments": { "value": false },
 "deployEvidenceResources": { "value": false }
 ```

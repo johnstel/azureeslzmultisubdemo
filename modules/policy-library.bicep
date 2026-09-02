@@ -684,6 +684,95 @@ resource expensiveResources 'Microsoft.Authorization/policyDefinitions@2025-03-0
   }
 }
 
+resource storageCmkApprovedKey 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
+  name: '${namePrefix}-audit-storage-cmk-approved-key'
+  properties: {
+    displayName: 'Demo - audit storage customer-managed keys against approved Key Vaults and keys'
+    description: 'Audits storage accounts encrypted with a customer-managed key whose Key Vault URI or key name is outside the customer-approved lists. Each list is only evaluated when it is non-empty, so the safe default reports nothing and no key, vault, or identity is created.'
+    mode: 'Indexed'
+    metadata: {
+      category: 'Storage'
+      version: '1.0.0'
+    }
+    parameters: {
+      effect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Effect'
+          description: 'Audit is the safe default. Deny requires an approved key inventory, a reviewed assignment, and an enforcement-mode change.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      approvedKeyVaultUris: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Approved Key Vault URIs'
+          description: 'Customer-approved Key Vault URIs (the vault URI shown on the Key Vault overview, including the trailing slash) that may hold storage encryption keys. Leave empty to skip the vault check.'
+        }
+        defaultValue: []
+      }
+      approvedKeyNames: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Approved key names'
+          description: 'Customer-approved encryption key names. Leave empty to skip the key-name check.'
+        }
+        defaultValue: []
+      }
+    }
+    policyRule: {
+      if: {
+        allOf: [
+          {
+            field: 'type'
+            equals: 'Microsoft.Storage/storageAccounts'
+          }
+          {
+            field: 'Microsoft.Storage/storageAccounts/encryption.keySource'
+            equals: 'Microsoft.Keyvault'
+          }
+          {
+            anyOf: [
+              {
+                allOf: [
+                  {
+                    value: '[length(parameters(\'approvedKeyVaultUris\'))]'
+                    greater: 0
+                  }
+                  {
+                    field: 'Microsoft.Storage/storageAccounts/encryption.keyvaultproperties.keyvaulturi'
+                    notIn: '[parameters(\'approvedKeyVaultUris\')]'
+                  }
+                ]
+              }
+              {
+                allOf: [
+                  {
+                    value: '[length(parameters(\'approvedKeyNames\'))]'
+                    greater: 0
+                  }
+                  {
+                    field: 'Microsoft.Storage/storageAccounts/encryption.keyvaultproperties.keyname'
+                    notIn: '[parameters(\'approvedKeyNames\')]'
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+      then: {
+        effect: '[parameters(\'effect\')]'
+      }
+    }
+  }
+}
+
 resource platformTags 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   name: '${namePrefix}-audit-platform-tags'
   properties: {
@@ -722,4 +811,5 @@ output requireSubnetNsgPolicyDefinitionId string = requireSubnetNsg.id
 output privateAccessPublicNetworkPolicyDefinitionId string = privateAccessPublicNetwork.id
 output approvedFirewallRoutesPolicyDefinitionId string = approvedFirewallRoutes.id
 output expensiveResourcesPolicyDefinitionId string = expensiveResources.id
+output storageCmkApprovedKeyPolicyDefinitionId string = storageCmkApprovedKey.id
 output platformTagsPolicyDefinitionId string = platformTags.id

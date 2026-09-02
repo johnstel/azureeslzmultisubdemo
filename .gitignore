@@ -3,3 +3,5 @@ parameters/demo.parameters.json
 work/
 .test-artifacts/
 .DS_Store
+*.orig
+*.rej
