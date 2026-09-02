@@ -1709,7 +1709,7 @@ jq -e --slurpfile catalog "${control_catalog}" '
   $references["vault-immutability"].definitionVersion == pinned_version("REQ-BKP-06") and
   $references["vault-soft-delete"].definitionVersion == pinned_version("REQ-BKP-08") and
   $references["vault-multi-user-authorization"].definitionVersion == pinned_version("REQ-BKP-09") and
-  ($references["vault-soft-delete"].parameters | keys | sort) == ["checkAlwaysOnSoftDeleteOnly", "effect"] and
+  ($references["vault-soft-delete"].parameters | keys) == ["checkAlwaysOnSoftDeleteOnly", "effect"] and
   ($references["vault-soft-delete"].parameters.effect.value
     | contains("vaultSoftDeleteEffect")) and
   ($references["vault-multi-user-authorization"].parameters | keys) == ["effect"] and
