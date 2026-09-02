@@ -87,6 +87,9 @@ param enforcementMode 'Default' | 'DoNotEnforce' = 'DoNotEnforce'
 @sys.description('Values for parameters declared by the policy or initiative definition.')
 param parameters object = {}
 
+@sys.description('Set true to create remediation RBAC role assignments for the policy-assignment identity.')
+param deployRemediationRoleAssignments bool = true
+
 @sys.description('Open-ended policy assignment metadata.')
 param metadata object = {
   category: 'Demo Landing Zone'
@@ -291,7 +294,7 @@ resource assignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = {
   }
 }
 
-module remediationRbac './remediating-policy-rbac.bicep' = {
+module remediationRbac './remediating-policy-rbac.bicep' = if (deployRemediationRoleAssignments) {
   name: 'remediation-rbac-${uniqueString(assignment.id)}'
   params: {
     principalId: validatedIdentityPrincipalId
@@ -302,4 +305,4 @@ module remediationRbac './remediating-policy-rbac.bicep' = {
 output policyAssignmentId string = assignment.id
 output identityPrincipalId string = validatedIdentityPrincipalId
 output identityResourceId string = identity.type == 'UserAssigned' ? validatedUserAssignedIdentityResourceId : assignment.id
-output roleAssignmentIds string[] = remediationRbac.outputs.roleAssignmentIds
+output roleAssignmentIds string[] = deployRemediationRoleAssignments ? remediationRbac!.outputs.roleAssignmentIds : []
