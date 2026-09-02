@@ -195,6 +195,21 @@
     "enableNistSp80053Rev5": {
       "value": false
     },
+    "activityLogExportPolicyEffect": {
+      "value": "Disabled"
+    },
+    "activityLogExportLogsEnabled": {
+      "value": "True"
+    },
+    "resourceDiagnosticsPolicyEffect": {
+      "value": "AuditIfNotExists"
+    },
+    "resourceDiagnosticsCategoryGroup": {
+      "value": "audit"
+    },
+    "deployLoggingRemediationRoleAssignments": {
+      "value": false
+    },
     "vmBackupCoveragePolicyEffect": {
       "value": "AuditIfNotExists"
     },
