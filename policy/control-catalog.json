@@ -24,7 +24,7 @@
     "MCSB (REQ-BASE-01) and CIS (REQ-BASE-02) were checked for remediation-capable (DeployIfNotExists/Modify) policies using a reproducible per-member effect-mapping method (validating that each member's effect-named parameter references an existing top-level initiative parameter). CIS's 2 fixed/unmapped members (of 108 total) were both individually fetched and confirmed Audit-effect, so CIS's `remediationIdentityRequired: false` is fully evidence-backed. MCSB's 56 fixed/unmapped members (of 226 total) were each individually resolved to their source filename in the public Azure/azure-policy repository and every one follows the Azure Policy naming convention for a fixed, non-remediating effect (`_Audit`, `_Deny`, `_AuditDeny`, or `_AINE`/AuditIfNotExists) with none using the DeployIfNotExists/Modify remediation-policy naming convention -- an exhaustive 56-of-56 verification, so MCSB's `remediationIdentityRequired: false` is also fully evidence-backed. NIST SP 800-53 Rev. 5 (REQ-BASE-03) has 616 fixed/unmapped members (of 694 total) using opaque GUID reference IDs that cannot be corroborated by naming convention; this session independently resolved all 616 by shallow-cloning the public Azure/azure-policy repository and building a GUID-to-effect index from each member's own fixed effect (or its parameter's default when the effect itself is parameterized with no initiative-level override), yielding an exact, independently-verified breakdown of 481 Manual, 97 AuditIfNotExists, 34 Audit, 2 Modify, and 2 DeployIfNotExists. The 4 Modify/DeployIfNotExists members (the Guest Configuration prerequisite policies) each require only the Contributor role (`b24988ac-6180-42a0-ab88-20f7382dd24c`), independently confirmed from their own definition JSON -- so unlike MCSB/CIS, REQ-BASE-03's `enforcementPhase` is `deployifnotexists-opt-in` (not `audit-only`) and its `supportedEffects` includes `AuditIfNotExists`/`DeployIfNotExists`/`Modify`/`Manual` to reflect these fixed members, since assigning the initiative at all unavoidably enables the remediation-capable ones. A separate, newer \"NIST SP 800-53 R5.1.1\" initiative also exists (GUID `60205a79-6280-4e20-a147-e2011e09dc78`) for the updated revision. See each record's `notes` field for the full verification method and its limits.",
     "REQ-DEF-01 (\"Configure Microsoft Defender for Cloud plans\") is an all-or-nothing initiative: it exposes no assignment-time parameters, so assigning it enables all 12 member Defender plans immediately with no per-plan opt-out. It is **not safe** for this repository's audit-first/no-cost demo default profile and is documented for completeness only. Each plan must instead be independently enabled via its own verified, individually assignable policy definition (REQ-DEF-02 through REQ-DEF-04), which does expose its own `effect` parameter (`DeployIfNotExists`/`Disabled`) that can be explicitly overridden at assignment time. REQ-DEF-01's `roleDefinitionIds` remains a complete verified union (Owner + Security Admin) across all 12 members (`rolesVaryByMember: true`) for reference only.",
     "REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).",
-    "REQ-DEF-06 is a no-cost audit signal from the free Foundational CSPM tier. It does not deploy a vulnerability scanner or enable any paid Defender plan.",
+    "REQ-DEF-06 is a no-cost audit signal from the free, configurable Foundational CSPM tier. It does not deploy a vulnerability scanner or enable any paid Defender plan.",
     "REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship."
   ],
   "controls": [
@@ -884,7 +884,7 @@
         "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Security%20Center/ASC_NetworkSecurityGroupsOnInternalVirtualMachines_Audit.json",
         "verificationMethod": "raw-json",
         "category": "Security Center",
-        "notes": "Populated by the free, default-on Foundational CSPM tier (confirmed via Microsoft Learn); does not require the paid Defender CSPM plan (REQ-DEF-02) or the unsafe all-plans REQ-DEF-01 initiative."
+        "notes": "Populated by the free, configurable Foundational CSPM tier (confirmed via Microsoft Learn); does not require the paid Defender CSPM plan (REQ-DEF-02) or the unsafe all-plans REQ-DEF-01 initiative."
       },
       "supportedEffects": [
         "AuditIfNotExists",
@@ -1663,7 +1663,9 @@
         "Disabled"
       ],
       "requiredParameters": [
-        "effect"
+        "effect",
+        "isOnUploadMalwareScanningEnabled",
+        "capGBPerMonthPerStorageAccount"
       ],
       "roleDefinitionIds": [
         "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
@@ -1672,7 +1674,7 @@
       "dependencies": [],
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Defender for Cloud plan status; paid plan, disabled by default, independent explicit opt-in (enableDefenderForStorage).",
-      "notes": "This built-in definition's own \"effect\" parameter defaults to DeployIfNotExists (verified in the raw source JSON); this repository's audit-first/no-cost demo profile requires the assignment to explicitly override \"effect\" to \"Disabled\" unless enableDefenderForStorage=true (issue #20). Its only verified remediation role is Owner, so modules/defender-plan-assignment.bicep never grants that role even when opted in (see REQ-DEF-02's note for the fail-closed identity design). This record has no dependency on REQ-DEF-01 (the unsafe all-plans initiative); it is independently and individually assignable. The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
+      "notes": "This built-in definition's own \"effect\" parameter defaults to DeployIfNotExists (verified in the raw source JSON); this repository's audit-first/no-cost demo profile requires the assignment to explicitly override \"effect\" to \"Disabled\" unless enableDefenderForStorage=true (issue #20). Its only verified remediation role is Owner, so modules/defender-plan-assignment.bicep never grants that role even when opted in (see REQ-DEF-02's note for the fail-closed identity design). This record has no dependency on REQ-DEF-01 (the unsafe all-plans initiative); it is independently and individually assignable. The built-in's own verified default for isOnUploadMalwareScanningEnabled is true (an additional metered, per-GB extension distinct from the base plan's own cost); this repository's main.bicep instead wires it to its own separate enableDefenderStorageMalwareScanning opt-in, defaulted to false, so enabling the base Storage plan never silently enables malware scanning too -- a customer must separately approve it via enableDefenderStorageMalwareScanning and its companion defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount cap parameter. The built-in DINE policy's then.details.roleDefinitionIds array (Owner) is reproduced verbatim above."
     },
     {
       "id": "REQ-DEF-05",
@@ -1727,13 +1729,13 @@
         "AuditIfNotExists",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": ["effect"],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
-      "evidenceSource": "Compiled ARM template + policy compliance state; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier (always on), not by a paid Defender plan.",
-      "notes": "Deliberately independent of REQ-DEF-02..04 (paid Defender plans): this policy only audits Microsoft.Security/assessments for a vulnerability-assessment finding \u2014 it neither deploys a scanner nor requires a paid plan to be assigned, so it stays no-cost-safe and does not duplicate the paid-plan controls (issue #20). Defaults AuditIfNotExists, which is already safe, so no explicit effect override is required by requiredParameters."
+      "evidenceSource": "Compiled ARM template + policy compliance state; assessment findings are populated by Microsoft Defender for Cloud's free, configurable Foundational CSPM tier, not by a paid Defender plan.",
+      "notes": "Deliberately independent of REQ-DEF-02..04 (paid Defender plans): this policy only audits Microsoft.Security/assessments for a vulnerability-assessment finding \u2014 it neither deploys a scanner nor requires a paid plan to be assigned, so it stays no-cost-safe and does not duplicate the paid-plan controls (issue #20). main.bicep explicitly passes effect: AuditIfNotExists rather than silently inheriting the built-in's own default, matching the pattern used for every other Defender control in this catalog."
     },
     {
       "id": "REQ-DEF-07",
@@ -1757,13 +1759,13 @@
         "AuditIfNotExists",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": ["effect"],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state; no-cost audit signal, independent of any paid Defender plan.",
-      "notes": "GA (non-preview), audit-only, no managed identity, no role. Confirms REQ-DEF-05's replacement claim with a real, verified, disabled-safe-by-default control: this is the actual current auto-provisioning governance mechanism this repository assigns, as distinct from the full AMA auto-provisioning initiative (924bfe3a-762f-40e7-86dd-5c8b95eb09e6), which this repository deliberately does not assign because one of its required members has no stable release (preview-only) and it needs a customer-supplied Data Collection Rule (see REQ-DEF-05's notes). Defaults AuditIfNotExists, which is already safe, so no explicit effect override is required by requiredParameters."
+      "notes": "GA (non-preview), audit-only, no managed identity, no role. Confirms REQ-DEF-05's replacement claim with a real, verified, disabled-safe-by-default control: this is the actual current auto-provisioning governance mechanism this repository assigns, as distinct from the full AMA auto-provisioning initiative (924bfe3a-762f-40e7-86dd-5c8b95eb09e6), which this repository deliberately does not assign because one of its required members has no stable release (preview-only) and it needs a customer-supplied Data Collection Rule (see REQ-DEF-05's notes). main.bicep explicitly passes effect: AuditIfNotExists rather than silently inheriting the built-in's own default."
     },
     {
       "id": "REQ-DEF-08",
@@ -1787,13 +1789,13 @@
         "AuditIfNotExists",
         "Disabled"
       ],
-      "requiredParameters": [],
+      "requiredParameters": ["effect"],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state; no-cost audit signal, independent of any paid Defender plan.",
-      "notes": "GA (non-preview), audit-only, no managed identity, no role. See REQ-DEF-07's notes; this is the Linux counterpart, verified independently against the same upstream repository."
+      "notes": "GA (non-preview), audit-only, no managed identity, no role. See REQ-DEF-07's notes; this is the Linux counterpart, verified independently against the same upstream repository. main.bicep explicitly passes effect: AuditIfNotExists rather than silently inheriting the built-in's own default."
     },
     {
       "id": "REQ-DEF-09",
@@ -1809,7 +1811,7 @@
         "sourceUrl": "https://learn.microsoft.com/en-us/azure/defender-for-cloud/foundational-cspm-opt-in",
         "verifiedOn": "2026-09-01",
         "verificationMethod": "ms-learn-page",
-        "notes": "Confirmed via Microsoft Learn: Foundational CSPM is the free tier of the same Microsoft.Security/pricings 'CloudPosture' resource that the paid Defender CSPM plan (REQ-DEF-02, pricingTier Standard) uses -- it is a subscription-scoped ARM/API setting (pricingTier Free), not an Azure Policy definition/initiative, so it is intentionally out of scope for this repository's Azure Policy assignment modules. On every existing Azure subscription today it is automatically enabled at no cost; starting October 27, 2026, Microsoft changes this so that newly created Azure subscriptions no longer get it automatically -- customers must explicitly opt in per new subscription (existing subscriptions keep whatever state they already have and are unaffected). This repository deliberately does not deploy a Microsoft.Security/pricings resource for any subscription (doing so would modify a live subscription's security settings, which issue #20's agent safety constraints and this repository's out-of-scope list both prohibit); this record exists purely to give the catalog and docs an explicit, independent, accurately-described line item for Foundational CSPM and to flag the October 27, 2026 transition for customers managing their own subscriptions outside this template."
+        "notes": "Confirmed via Microsoft Learn: Foundational CSPM is the free tier of the same Microsoft.Security/pricings 'CloudPosture' resource that the paid Defender CSPM plan (REQ-DEF-02, pricingTier Standard) uses -- it is a subscription-scoped, configurable ARM/API setting (pricingTier Free), not an Azure Policy definition/initiative, so it is intentionally out of scope for this repository's Azure Policy assignment modules. Today, an existing Azure subscription retains whatever enabled/disabled Foundational CSPM state it already has and a subscription owner can change that state via this setting at any time; starting October 27, 2026, Microsoft stops automatically enabling it only for newly created Azure subscriptions, so a customer creating a new subscription after that date must explicitly opt in (existing subscriptions are unaffected by the transition itself). This repository deliberately does not deploy a Microsoft.Security/pricings resource for any subscription (doing so would modify a live subscription's security settings, which issue #20's agent safety constraints and this repository's out-of-scope list both prohibit); this record exists purely to give the catalog and docs an explicit, independent, accurately-described line item for Foundational CSPM and to flag the October 27, 2026 transition for customers managing their own subscriptions outside this template."
       },
       "supportedEffects": [
         "not-applicable-subscription-pricing-setting"
@@ -1819,8 +1821,8 @@
       "remediationIdentityRequired": false,
       "dependencies": [],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Not deployed by this template (out of scope: modifying a live subscription's Microsoft.Security/pricings resource); recorded here so the catalog documents Foundational CSPM as a distinct, no-cost, configurable capability rather than conflating it with the paid Defender CSPM plan, and so customers are pointed at the October 27, 2026 opt-in transition for new subscriptions.",
-      "notes": "This record deliberately has no policyDefinition/policySetDefinition (definitionId is null) because Foundational CSPM is configured via the Microsoft.Security/pricings 'CloudPosture' resource's Free pricing tier -- a native subscription-scoped ARM/API setting, not an Azure Policy assignment -- which this repository intentionally never deploys (out of scope: modifying a live subscription). supportedEffects lists a single non-policy placeholder value because no Azure Policy effect ever applies to this control. It is the free capability that populates REQ-DEF-06 (vulnerability-assessment audit), REQ-DEF-07/08 (AMA audit), and the network/compute security recommendations referenced in REQ-NET-01/03's notes, none of which require REQ-DEF-02 (paid Defender CSPM/CIEM) or REQ-DEF-01 (the unsafe all-plans initiative) to be assigned. Opting in to REQ-DEF-02 adds Defender CSPM's paid intelligent cloud security graph and CIEM (Entra Permissions Management) features on top of this baseline; it does not create Foundational CSPM. Starting October 27, 2026, Microsoft no longer auto-enables Foundational CSPM on newly created Azure subscriptions -- customers must explicitly opt in per new subscription outside this template (existing subscriptions are unaffected); see mechanism.sourceUrl."
+      "evidenceSource": "Not deployed by this template (out of scope: modifying a live subscription's Microsoft.Security/pricings resource); recorded here so the catalog documents Foundational CSPM as a distinct, no-cost, configurable capability -- whose enabled/disabled state on any existing subscription is whatever a customer has separately configured -- rather than conflating it with the paid Defender CSPM plan, and so customers are pointed at the October 27, 2026 opt-in transition for newly created subscriptions.",
+      "notes": "This record deliberately has no policyDefinition/policySetDefinition (definitionId is null) because Foundational CSPM is configured via the Microsoft.Security/pricings 'CloudPosture' resource's Free pricing tier -- a native subscription-scoped, configurable ARM/API setting, not an Azure Policy assignment -- which this repository intentionally never deploys (out of scope: modifying a live subscription). supportedEffects lists a single non-policy placeholder value because no Azure Policy effect ever applies to this control. It is the free capability that populates REQ-DEF-06 (vulnerability-assessment audit), REQ-DEF-07/08 (AMA audit), and the network/compute security recommendations referenced in REQ-NET-01/03's notes, none of which require REQ-DEF-02 (paid Defender CSPM/CIEM) or REQ-DEF-01 (the unsafe all-plans initiative) to be assigned. Opting in to REQ-DEF-02 adds Defender CSPM's paid intelligent cloud security graph and CIEM (Entra Permissions Management) features on top of this baseline; it does not create Foundational CSPM. An existing subscription simply keeps whatever enabled/disabled Foundational CSPM state it already has, configurable at any time; starting October 27, 2026, Microsoft stops auto-enabling Foundational CSPM only for newly created Azure subscriptions, so a customer creating a new subscription after that date must explicitly opt in outside this template; see mechanism.sourceUrl."
     },
     {
       "id": "REQ-BKP-01",
@@ -2158,7 +2160,7 @@
     },
     {
       "topic": "Management-port and NSG audits",
-      "note": "REQ-NET-01 and REQ-NET-03 are populated by the free, default-on Foundational CSPM tier of Microsoft Defender for Cloud (confirmed via Microsoft Learn's compute security recommendations), not the paid Defender CSPM plan (REQ-DEF-02) or the unsafe, all-or-nothing REQ-DEF-01 initiative; they have no assignment-time dependency on either. They rely purely on the built-in policy's own Defender for Cloud security-assessment integration."
+      "note": "REQ-NET-01 and REQ-NET-03 are populated by the free, configurable Foundational CSPM tier of Microsoft Defender for Cloud (confirmed via Microsoft Learn's compute security recommendations), not the paid Defender CSPM plan (REQ-DEF-02) or the unsafe, all-or-nothing REQ-DEF-01 initiative; they have no assignment-time dependency on either. They rely purely on the built-in policy's own Defender for Cloud security-assessment integration."
     },
     {
       "topic": "Tag requirement vs. tag inheritance",
@@ -2166,7 +2168,7 @@
     },
     {
       "topic": "Vulnerability assessment audit independence",
-      "note": "REQ-DEF-06 audits Microsoft.Security/assessments directly and does not depend on, or duplicate, any paid Defender plan (REQ-DEF-02..04) or the unsafe, all-or-nothing REQ-DEF-01 initiative; assessment findings are populated by Microsoft Defender for Cloud's free Foundational CSPM tier, so this control stays no-cost-safe and independently opt-in per issue #20."
+      "note": "REQ-DEF-06 audits Microsoft.Security/assessments directly and does not depend on, or duplicate, any paid Defender plan (REQ-DEF-02..04) or the unsafe, all-or-nothing REQ-DEF-01 initiative; assessment findings are populated by Microsoft Defender for Cloud's free, configurable Foundational CSPM tier, so this control stays no-cost-safe and independently opt-in per issue #20."
     },
     {
       "topic": "Recovery Services vault diagnostics",

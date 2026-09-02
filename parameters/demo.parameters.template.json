@@ -165,6 +165,12 @@
     "enableDefenderForStorage": {
       "value": false
     },
+    "enableDefenderStorageMalwareScanning": {
+      "value": false
+    },
+    "defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount": {
+      "value": 10000
+    },
     "enableMicrosoftCloudSecurityBenchmark": {
       "value": true
     },

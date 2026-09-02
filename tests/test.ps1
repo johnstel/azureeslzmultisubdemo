@@ -1229,8 +1229,23 @@ exit $LASTEXITCODE
     }
     if ($storageDeployment.properties.parameters.plan.value -ne 'storage' -or
         $storageDeployment.properties.parameters.enablePlan.value -ne "[parameters('enableDefenderForStorage')]" -or
+        $storageDeployment.properties.parameters.storageOnUploadMalwareScanningEnabled.value -ne "[parameters('enableDefenderStorageMalwareScanning')]" -or
+        $storageDeployment.properties.parameters.storageCapGBPerMonthPerStorageAccount.value -ne "[parameters('defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount')]" -or
         $storageDeployment.scope -notmatch 'landingZonesManagementGroupId') {
-        Stop-Test 'assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage.'
+        Stop-Test 'assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage/enableDefenderStorageMalwareScanning/defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount.'
+    }
+    if ($mainBicepText -notmatch "(?m)^param enableDefenderStorageMalwareScanning bool = false$") {
+        Stop-Test 'enableDefenderStorageMalwareScanning parameter must default to false so enabling the base Storage plan never silently enables the metered malware-scanning extension.'
+    }
+    if ($mainBicepText -notmatch "(?m)^param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount int = 10000$") {
+        Stop-Test 'defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount parameter must default to 10000.'
+    }
+    if ($compiledJson.parameters.enableDefenderStorageMalwareScanning.defaultValue -ne $false) {
+        Stop-Test 'The compiled template must default enableDefenderStorageMalwareScanning to false.'
+    }
+    $demoParametersTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
+    if ($demoParametersTemplate.parameters.enableDefenderStorageMalwareScanning.value -ne $false) {
+        Stop-Test 'parameters/demo.parameters.template.json must default enableDefenderStorageMalwareScanning to false.'
     }
     # The module itself must map each verified plan to its own distinct
     # definitionId/definitionVersion/parameter-object entry ("switch"), not a
@@ -1286,8 +1301,13 @@ exit $LASTEXITCODE
             Stop-Test "$($deploymentEntry.Name) does not compile the expected identity/effect/policyDefinitionId/definitionVersion wiring on its nested assignment resource."
         }
     }
-    if (-not $serversDeployment.properties.template.variables.PSObject.Properties['validatedServersAgentlessVmScanningEnabled']) {
-        Stop-Test 'assign-defender-servers must compile the P1/agentless-scanning validation guard (validatedServersAgentlessVmScanningEnabled).'
+    $expectedValidatedServersAgentlessVmScanningEnabledExpr = "[if(and(and(equals(parameters('plan'), 'servers'), equals(parameters('serversSubPlan'), 'P1')), parameters('serversAgentlessVmScanningEnabled')), fail('serversAgentlessVmScanningEnabled must be false when serversSubPlan is P1; agentless VM scanning is only supported on the Servers P2 sub-plan.'), parameters('serversAgentlessVmScanningEnabled'))]"
+    if ($serversDeployment.properties.template.variables.validatedServersAgentlessVmScanningEnabled -ne $expectedValidatedServersAgentlessVmScanningEnabledExpr) {
+        Stop-Test 'assign-defender-servers must compile the exact P1/agentless-scanning fail() rejection expression (validatedServersAgentlessVmScanningEnabled).'
+    }
+    $expectedServersIsAgentlessVmScanningEnabledExpr = "[if(variables('validatedServersAgentlessVmScanningEnabled'), 'true', 'false')]"
+    if ($serversDeployment.properties.template.variables.planParameters.servers.isAgentlessVmScanningEnabled.value -ne $expectedServersIsAgentlessVmScanningEnabledExpr) {
+        Stop-Test 'assign-defender-servers must wire isAgentlessVmScanningEnabled through the validated variable rather than the raw parameter.'
     }
     $amaAuditDeployments = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -1314,6 +1334,9 @@ exit $LASTEXITCODE
         if ($deployment.properties.template.resources.assignment.PSObject.Properties['identity']) {
             Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must never create a managed identity."
         }
+        if ($deployment.properties.parameters.parameters.value.effect.value -ne 'AuditIfNotExists') {
+            Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must explicitly pass effect: AuditIfNotExists rather than silently inheriting the built-in's own default."
+        }
         if ($deployment.scope -notmatch 'landingZonesManagementGroupId') {
             Stop-Test "Azure Monitor Agent audit assignment '$($deployment.name)' must be scoped to the Landing Zones management group."
         }
@@ -1331,9 +1354,10 @@ exit $LASTEXITCODE
     }
     if ($vulnAssessmentDeployment.properties.parameters.policyDefinitionId.value -ne "[variables('vulnerabilityAssessmentAuditPolicyDefinitionId')]" -or
         $vulnAssessmentDeployment.properties.parameters.definitionVersion.value -ne '3.*.*' -or
+        $vulnAssessmentDeployment.properties.parameters.parameters.value.effect.value -ne 'AuditIfNotExists' -or
         $vulnAssessmentDeployment.properties.template.resources.assignment.PSObject.Properties['identity'] -or
         $vulnAssessmentDeployment.scope -notmatch 'landingZonesManagementGroupId') {
-        Stop-Test 'assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, and must never attach an identity.'
+        Stop-Test 'assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, explicitly set effect: AuditIfNotExists, and must never attach an identity.'
     }
     if ($compiledJson.variables.vulnerabilityAssessmentAuditPolicyDefinitionId -ne "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '501541f7-f7e7-4cd6-868c-4190fdad3ac9')]") {
         Stop-Test 'vulnerabilityAssessmentAuditPolicyDefinitionId must resolve to its own verified built-in GUID.'

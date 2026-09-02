@@ -255,6 +255,12 @@ param defenderForServersAgentlessVmScanningEnabled bool = true
 @description('Set true to opt in to Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Paid Defender plan with its own licensing cost. Defaults to false: effect stays Disabled and no managed identity is created. Setting true creates a SystemAssigned identity but this template never grants it a role.')
 param enableDefenderForStorage bool = false
 
+@description('Only applies when enableDefenderForStorage is true. Explicit, separate opt-in for the Defender for Storage plan\'s on-upload malware-scanning extension -- an additional metered, per-GB feature distinct from the base plan\'s own cost. Defaults to false (disabled) even though the built-in\'s own verified default is true, so enabling the Storage plan alone never silently enables this additional metered feature; a customer must separately approve it here.')
+param enableDefenderStorageMalwareScanning bool = false
+
+@description('Only applies when enableDefenderStorage is true and enableDefenderStorageMalwareScanning is true. Monthly GB cap per storage account for the malware-scanning extension. Defaults to 10000, matching the built-in\'s own verified default; only meaningful once malware scanning is separately approved above.')
+param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount int = 10000
+
 
 
 var demoRootManagementGroupId = namePrefix
@@ -846,9 +852,11 @@ module defenderForStorageAssignment 'modules/defender-plan-assignment.bicep' = {
   params: {
     assignmentName: 'demo-defender-storage'
     displayName: 'Demo - Microsoft Defender for Storage (opt-in, paid)'
-    description: 'Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Defaults Disabled with no managed identity; enableDefenderForStorage opts in. This template never grants the resulting identity any role -- remediation requires a separate, customer-run, time-bounded authorization outside this template.'
+    description: 'Microsoft Defender for Storage (REQ-DEF-04) on the Landing Zones branch. Defaults Disabled with no managed identity; enableDefenderForStorage opts in. Never grants the resulting identity any role -- remediation requires a separate, time-bounded authorization outside this template. On-upload malware scanning, an additional metered extension, requires its own separate enableDefenderStorageMalwareScanning opt-in (default false).'
     plan: 'storage'
     enablePlan: enableDefenderForStorage
+    storageOnUploadMalwareScanningEnabled: enableDefenderStorageMalwareScanning
+    storageCapGBPerMonthPerStorageAccount: defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount
     location: deploymentLocation
   }
   dependsOn: [
@@ -862,11 +870,15 @@ module vulnerabilityAssessmentAuditAssignment 'modules/policy-assignment.bicep' 
   params: {
     assignmentName: 'demo-audit-vuln-assess'
     displayName: 'Demo - audit VM vulnerability assessment'
-    description: 'Audits that virtual machines have a supported vulnerability assessment solution enabled (REQ-DEF-06), independent of any paid Defender plan. No-cost audit signal populated by the free, default-on Foundational CSPM tier.'
+    description: 'Audits that virtual machines have a supported vulnerability assessment solution enabled (REQ-DEF-06), independent of any paid Defender plan. No-cost audit signal populated by the free, configurable Foundational CSPM tier.'
     policyDefinitionId: vulnerabilityAssessmentAuditPolicyDefinitionId
     definitionVersion: '3.*.*'
     enforcementMode: 'Default'
-    parameters: {}
+    parameters: {
+      effect: {
+        value: 'AuditIfNotExists'
+      }
+    }
   }
   dependsOn: [
     hierarchy
@@ -883,7 +895,11 @@ module defenderAmaAuditWindowsAssignment 'modules/policy-assignment.bicep' = {
     policyDefinitionId: windowsAmaAuditPolicyDefinitionId
     definitionVersion: '3.*.*'
     enforcementMode: 'Default'
-    parameters: {}
+    parameters: {
+      effect: {
+        value: 'AuditIfNotExists'
+      }
+    }
   }
   dependsOn: [
     hierarchy
@@ -900,7 +916,11 @@ module defenderAmaAuditLinuxAssignment 'modules/policy-assignment.bicep' = {
     policyDefinitionId: linuxAmaAuditPolicyDefinitionId
     definitionVersion: '3.*.*'
     enforcementMode: 'Default'
-    parameters: {}
+    parameters: {
+      effect: {
+        value: 'AuditIfNotExists'
+      }
+    }
   }
   dependsOn: [
     hierarchy

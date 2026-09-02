@@ -970,9 +970,25 @@ printf '%s' "${servers_deployment}" | jq -e '
 printf '%s' "${storage_deployment}" | jq -e '
   .properties.parameters.plan.value == "storage" and
   .properties.parameters.enablePlan.value == "[parameters(\u0027enableDefenderForStorage\u0027)]" and
+  .properties.parameters.storageOnUploadMalwareScanningEnabled.value == "[parameters(\u0027enableDefenderStorageMalwareScanning\u0027)]" and
+  .properties.parameters.storageCapGBPerMonthPerStorageAccount.value == "[parameters(\u0027defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount\u0027)]" and
   (.scope | contains("landingZonesManagementGroupId"))
 ' >/dev/null || {
-  printf 'ERROR: assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage.\n' >&2
+  printf 'ERROR: assign-defender-storage must be scoped to the Landing Zones management group and wired to enableDefenderForStorage/enableDefenderStorageMalwareScanning/defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount.\n' >&2
+  exit 1
+}
+rg -q "^param enableDefenderStorageMalwareScanning bool = false$" "${PROJECT_DIR}/main.bicep"
+rg -q "^param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount int = 10000$" "${PROJECT_DIR}/main.bicep"
+jq -e '
+  .parameters.enableDefenderStorageMalwareScanning.defaultValue == false
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: enableDefenderStorageMalwareScanning must default to false so enabling the base Storage plan never silently enables the metered malware-scanning extension.\n' >&2
+  exit 1
+}
+jq -e '
+  .parameters.enableDefenderStorageMalwareScanning.value == false
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
+  printf 'ERROR: parameters/demo.parameters.template.json must default enableDefenderStorageMalwareScanning to false.\n' >&2
   exit 1
 }
 # The module itself must map each verified plan to its own distinct
@@ -1023,9 +1039,10 @@ for defender_deployment_var in cspm_deployment servers_deployment storage_deploy
   }
 done
 printf '%s' "${servers_deployment}" | jq -e '
-  .properties.template.variables | has("validatedServersAgentlessVmScanningEnabled")
+  .properties.template.variables.validatedServersAgentlessVmScanningEnabled == "[if(and(and(equals(parameters(\u0027plan\u0027), \u0027servers\u0027), equals(parameters(\u0027serversSubPlan\u0027), \u0027P1\u0027)), parameters(\u0027serversAgentlessVmScanningEnabled\u0027)), fail(\u0027serversAgentlessVmScanningEnabled must be false when serversSubPlan is P1; agentless VM scanning is only supported on the Servers P2 sub-plan.\u0027), parameters(\u0027serversAgentlessVmScanningEnabled\u0027))]" and
+  .properties.template.variables.planParameters.servers.isAgentlessVmScanningEnabled.value == "[if(variables(\u0027validatedServersAgentlessVmScanningEnabled\u0027), \u0027true\u0027, \u0027false\u0027)]"
 ' >/dev/null || {
-  printf 'ERROR: assign-defender-servers must compile the P1/agentless-scanning validation guard (validatedServersAgentlessVmScanningEnabled).\n' >&2
+  printf 'ERROR: assign-defender-servers must compile the exact P1/agentless-scanning fail() rejection expression, and isAgentlessVmScanningEnabled must be wired through the validated variable rather than the raw parameter.\n' >&2
   exit 1
 }
 ! rg -q "475aae12-b88a-4572-8b36-9b712b2b3a17" "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" || {
@@ -1064,6 +1081,10 @@ printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .scope | contains("land
   printf 'ERROR: Both AMA audit assignments must be scoped to the Landing Zones management group.\n' >&2
   exit 1
 }
+printf '%s' "${ama_audit_assignments}" | jq -e 'all(.[]; .properties.parameters.parameters.value.effect.value == "AuditIfNotExists")' >/dev/null || {
+  printf 'ERROR: Both AMA audit assignments must explicitly pass effect: AuditIfNotExists rather than silently inheriting the built-in'"'"'s own default.\n' >&2
+  exit 1
+}
 # The free vulnerability-assessment audit assignment must independently pin
 # its own verified GUID/version/scope and must never attach an identity
 # (it has no paid-plan dependency and performs no remediation).
@@ -1077,10 +1098,11 @@ vuln_assessment_deployment="$(jq -c '
 printf '%s' "${vuln_assessment_deployment}" | jq -e '
   .properties.parameters.policyDefinitionId.value == "[variables(\u0027vulnerabilityAssessmentAuditPolicyDefinitionId\u0027)]" and
   .properties.parameters.definitionVersion.value == "3.*.*" and
+  .properties.parameters.parameters.value.effect.value == "AuditIfNotExists" and
   .properties.template.resources.assignment.identity == null and
   (.scope | contains("landingZonesManagementGroupId"))
 ' >/dev/null || {
-  printf 'ERROR: assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, and must never attach an identity.\n' >&2
+  printf 'ERROR: assign-vuln-assessment-audit must be scoped to the Landing Zones management group, wired to its own vulnerabilityAssessmentAuditPolicyDefinitionId variable, pinned to definitionVersion 3.*.*, explicitly set effect: AuditIfNotExists, and must never attach an identity.\n' >&2
   exit 1
 }
 jq -e '

@@ -392,11 +392,12 @@ as its own catalog entry distinct from the paid Defender CSPM plan
 `Microsoft.Security/pricings` `CloudPosture` resource's Free pricing tier at
 subscription scope, not an Azure Policy assignment, so this template
 intentionally never deploys it (out of scope: modifying a live
-subscription). Foundational CSPM is present today regardless of whether
-REQ-DEF-02 is ever opted in, but starting October 27, 2026 Microsoft stops
-auto-enabling it on newly created Azure subscriptions — customers must
-explicitly opt in per new subscription outside this template (existing
-subscriptions are unaffected). See REQ-DEF-09's notes in
+subscription). Foundational CSPM's enabled/disabled state on an existing
+subscription is whatever a customer has separately configured — it is not
+tied to whether REQ-DEF-02 is ever opted in — but starting October 27, 2026
+Microsoft stops auto-enabling it only for newly created Azure subscriptions;
+customers must explicitly opt in per new subscription outside this template
+(existing subscriptions are unaffected). See REQ-DEF-09's notes in
 `policy/control-catalog.json` for the verified source.
 
 ## Required permissions
