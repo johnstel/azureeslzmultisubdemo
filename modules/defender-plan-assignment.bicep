@@ -195,6 +195,14 @@ var validatedServersAgentlessVmScanningEnabled = plan == 'servers' && serversSub
   ? fail('serversAgentlessVmScanningEnabled must be false when serversSubPlan is P1; agentless VM scanning is only supported on the Servers P2 sub-plan.')
   : serversAgentlessVmScanningEnabled
 
+// The built-in only supports -1 (unlimited) or a cap of at least 10 GB per
+// storage account per month; values from 0 through 9 (and anything below
+// -1) are not a valid configuration for the malware-scanning extension, so
+// this fails deployment explicitly rather than forwarding an invalid cap.
+var validatedStorageCapGBPerMonthPerStorageAccount = storageCapGBPerMonthPerStorageAccount == -1 || storageCapGBPerMonthPerStorageAccount >= 10
+  ? storageCapGBPerMonthPerStorageAccount
+  : fail('storageCapGBPerMonthPerStorageAccount must be -1 (unlimited) or at least 10 GB per storage account per month.')
+
 var selectedPlan = planDefinitions[plan]
 var policyDefinitionId = tenantResourceId('Microsoft.Authorization/policyDefinitions', selectedPlan.definitionId)
 
@@ -239,7 +247,7 @@ var planParameters = {
       value: storageOnUploadMalwareScanningEnabled ? 'true' : 'false'
     }
     capGBPerMonthPerStorageAccount: {
-      value: storageCapGBPerMonthPerStorageAccount
+      value: validatedStorageCapGBPerMonthPerStorageAccount
     }
     isSensitiveDataDiscoveryEnabled: {
       value: storageSensitiveDataDiscoveryEnabled ? 'true' : 'false'

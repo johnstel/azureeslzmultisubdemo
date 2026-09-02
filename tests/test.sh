@@ -1045,6 +1045,17 @@ printf '%s' "${servers_deployment}" | jq -e '
   printf 'ERROR: assign-defender-servers must compile the exact P1/agentless-scanning fail() rejection expression, and isAgentlessVmScanningEnabled must be wired through the validated variable rather than the raw parameter.\n' >&2
   exit 1
 }
+# The built-in's own parameter metadata documents capGBPerMonthPerStorageAccount
+# as "an integer, 10GB or higher" or "-1 for unlimited scanning"; values from
+# 0 through 9 (or anything below -1) must be rejected explicitly rather than
+# forwarded unchanged.
+printf '%s' "${storage_deployment}" | jq -e '
+  .properties.template.variables.validatedStorageCapGBPerMonthPerStorageAccount == "[if(or(equals(parameters(\u0027storageCapGBPerMonthPerStorageAccount\u0027), -1), greaterOrEquals(parameters(\u0027storageCapGBPerMonthPerStorageAccount\u0027), 10)), parameters(\u0027storageCapGBPerMonthPerStorageAccount\u0027), fail(\u0027storageCapGBPerMonthPerStorageAccount must be -1 (unlimited) or at least 10 GB per storage account per month.\u0027))]" and
+  .properties.template.variables.planParameters.storage.capGBPerMonthPerStorageAccount.value == "[variables(\u0027validatedStorageCapGBPerMonthPerStorageAccount\u0027)]"
+' >/dev/null || {
+  printf 'ERROR: assign-defender-storage must compile the exact -1-or->=10 fail() rejection expression for storageCapGBPerMonthPerStorageAccount, and capGBPerMonthPerStorageAccount must be wired through the validated variable rather than the raw parameter.\n' >&2
+  exit 1
+}
 ! rg -q "475aae12-b88a-4572-8b36-9b712b2b3a17" "${PROJECT_DIR}/main.bicep" "${PROJECT_DIR}/modules/defender-plan-assignment.bicep" || {
   printf 'ERROR: The deprecated Log Analytics (MMA) auto-provisioning policy definition must never be referenced.\n' >&2
   exit 1

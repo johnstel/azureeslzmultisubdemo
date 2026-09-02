@@ -1309,6 +1309,18 @@ exit $LASTEXITCODE
     if ($serversDeployment.properties.template.variables.planParameters.servers.isAgentlessVmScanningEnabled.value -ne $expectedServersIsAgentlessVmScanningEnabledExpr) {
         Stop-Test 'assign-defender-servers must wire isAgentlessVmScanningEnabled through the validated variable rather than the raw parameter.'
     }
+    # The built-in's own parameter metadata documents capGBPerMonthPerStorageAccount
+    # as "an integer, 10GB or higher" or "-1 for unlimited scanning"; values from
+    # 0 through 9 (or anything below -1) must be rejected explicitly rather than
+    # forwarded unchanged.
+    $expectedValidatedStorageCapExpr = "[if(or(equals(parameters('storageCapGBPerMonthPerStorageAccount'), -1), greaterOrEquals(parameters('storageCapGBPerMonthPerStorageAccount'), 10)), parameters('storageCapGBPerMonthPerStorageAccount'), fail('storageCapGBPerMonthPerStorageAccount must be -1 (unlimited) or at least 10 GB per storage account per month.'))]"
+    if ($storageDeployment.properties.template.variables.validatedStorageCapGBPerMonthPerStorageAccount -ne $expectedValidatedStorageCapExpr) {
+        Stop-Test 'assign-defender-storage must compile the exact -1-or->=10 fail() rejection expression for storageCapGBPerMonthPerStorageAccount.'
+    }
+    $expectedStorageCapParameterExpr = "[variables('validatedStorageCapGBPerMonthPerStorageAccount')]"
+    if ($storageDeployment.properties.template.variables.planParameters.storage.capGBPerMonthPerStorageAccount.value -ne $expectedStorageCapParameterExpr) {
+        Stop-Test 'assign-defender-storage must wire capGBPerMonthPerStorageAccount through the validated variable rather than the raw parameter.'
+    }
     $amaAuditDeployments = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Resources/deployments' -and
