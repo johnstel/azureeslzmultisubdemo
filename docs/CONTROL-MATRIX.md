@@ -5,7 +5,7 @@ This document is the human-readable companion to the machine-readable [`policy/c
 - **Catalog version:** `1.2.0`
 - **Generated on:** `2026-09-01`
 - **Source issue:** https://github.com/johnstel/azureeslzmultisubdemo/issues/3
-- **Total control records:** 64
+- **Total control records:** 67
 
 ## Scope and safety
 
