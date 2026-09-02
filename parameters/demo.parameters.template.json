@@ -210,6 +210,9 @@
     "vaultDiagnosticsEffect": {
       "value": "AuditIfNotExists"
     },
+    "grantVaultDiagnosticsWorkspaceAccess": {
+      "value": false
+    },
     "deployRecoveryServicesVault": {
       "value": false
     },

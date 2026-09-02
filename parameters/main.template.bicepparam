@@ -98,6 +98,7 @@ param vmBackupConfigurationEffect = 'AuditIfNotExists'
 param vmBackupInclusionTagName = ''
 param enableVaultDiagnostics = false
 param vaultDiagnosticsEffect = 'AuditIfNotExists'
+param grantVaultDiagnosticsWorkspaceAccess = false
 param deployRecoveryServicesVault = false
 param recoveryServicesVaultLocation = 'eastus2'
 param vaultImmutabilityState = 'Unlocked'

@@ -66,8 +66,10 @@ function Find-ProhibitedPaidDeclarations {
             $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel', 'customer-owned-backup-vault')) {
             return $results
         }
+        $existingProperty = $Node.PSObject.Properties['existing']
+        $isExistingReference = ($null -ne $existingProperty -and $existingProperty.Value -eq $true)
         $prohibitedPattern = '^Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|RecoveryServices/vaults|Storage/storageAccounts)$'
-        if ($typeProperty -and $apiVersionProperty -and $typeProperty.Value -match $prohibitedPattern) {
+        if (-not $isExistingReference -and $typeProperty -and $apiVersionProperty -and $typeProperty.Value -match $prohibitedPattern) {
             $results += $typeProperty.Value
         }
         foreach ($property in $Node.PSObject.Properties) {
@@ -2163,6 +2165,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         enableVaultDiagnostics             = $false
         deployRecoveryServicesVault        = $false
         allowCrossSubscriptionBackupVaults = $false
+        grantVaultDiagnosticsWorkspaceAccess = $false
         backupRetentionStandardId          = ''
         vmBackupInclusionTagName           = ''
         vmBackupCoveragePolicyEffect       = 'AuditIfNotExists'
@@ -2297,6 +2300,23 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         ([string]$vaultDiagnosticsAssignment.properties.parameters.parameters.value.logAnalytics.value) -notmatch 'centralMonitoring') {
         Stop-Test 'Vault diagnostics must stay opt-in, vault-scoped, and bound to the central workspace.'
     }
+    $workspaceRbacDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'vault-diagnostics-workspace-rbac'
+    } | Select-Object -First 1
+    $workspaceRoleAssignments = @(
+        $workspaceRbacDeployment.properties.template.resources.PSObject.Properties.Value |
+        Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and $_.properties.principalType -eq 'ServicePrincipal' }
+    )
+    if (-not $workspaceRbacDeployment -or
+        $workspaceRbacDeployment.condition -ne "[variables('vaultDiagnosticsWorkspaceAccessActive')]" -or
+        $workspaceRbacDeployment.subscriptionId -ne "[variables('vaultDiagnosticsWorkspaceIdParts')[2]]" -or
+        $workspaceRbacDeployment.resourceGroup -ne "[variables('vaultDiagnosticsWorkspaceIdParts')[4]]" -or
+        (Compare-Object @($workspaceRbacDeployment.properties.parameters.roleDefinitionIds.value) `
+            @("[variables('logAnalyticsContributorRoleDefinitionId')]") -SyncWindow 0) -or
+        $workspaceRoleAssignments.Count -ne 1) {
+        Stop-Test 'The gated workspace role assignment must stay opt-in and grant only the verified diagnostics role at the workspace scope.'
+    }
     $customerOwnedVault = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['name'] -and $node.name -eq 'customer-owned-backup-vault'
@@ -2327,8 +2347,15 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         $compiledJson.outputs.backupRemediation.value.remediationTasksStarted -ne $false -or
         $compiledJson.outputs.backupRemediation.value.vmBackupEnforcementMode -ne "[parameters('denyPolicyEnforcementMode')]" -or
         ([string]$compiledJson.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite) -notmatch 'DeployIfNotExists' -or
-        ([string]$compiledJson.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite) -notmatch 'Default') {
-        Stop-Test 'Backup governance must never start remediation tasks and must report automatic DeployIfNotExists protection.'
+        ([string]$compiledJson.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite) -notmatch 'Default' -or
+        $compiledJson.outputs.backupRemediation.value.vaultDiagnosticsEnforcementMode -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'vaultDiagnosticsEffect' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'DeployIfNotExists' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'Default' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsPrincipalId) -notmatch 'identityPrincipalId' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceAccessGranted) -notmatch 'vaultDiagnosticsWorkspaceAccessActive' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceRoleAssignmentIds) -notmatch 'roleAssignmentIds') {
+        Stop-Test 'Backup governance must never start remediation tasks and must report automatic DeployIfNotExists protection and diagnostics cost impact.'
     }
     foreach ($backupValidationMessage in @(
         'enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs',
@@ -2338,7 +2365,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         'deployRecoveryServicesVault requires a documented backupRetentionStandardId',
         'Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription',
         'must use case-insensitively unique workload and region pairs',
-        'must not share an inclusion tag value')) {
+        'must not share an inclusion tag value',
+        'must map to exactly one region',
+        'grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true',
+        'grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID')) {
         if (-not $mainBicepText.Contains($backupValidationMessage)) {
             Stop-Test "Backup input validation is missing: $backupValidationMessage"
         }
@@ -2347,62 +2377,50 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($controlCatalogText.Contains('no dedicated Azure Policy built-in')) {
         Stop-Test 'The catalog still claims that vault soft delete has no dedicated Azure Policy built-in.'
     }
-    $backupPlacementFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/backup-vault-placement-cases.json') -Raw | ConvertFrom-Json
-    $approvedVaultRegions = @($backupPlacementFixture.approvedVaultRegions | ForEach-Object { $_.ToLowerInvariant() })
-    $governedSubscriptionIds = @($backupPlacementFixture.governedSubscriptionIds | ForEach-Object { $_.ToLowerInvariant() })
-    $forbiddenNameCharacters = [char[]]'<>%&\?#+:"|*; '
-    function Test-BackupNameSegment {
-        param([string]$Value)
-        return -not [string]::IsNullOrEmpty($Value) -and $Value -eq $Value.Trim() -and
-            ($Value.IndexOfAny($forbiddenNameCharacters) -lt 0)
+    $backupGuardFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/backup-vault-placement-cases.json') -Raw | ConvertFrom-Json
+    $compiledCopyExpressions = @{}
+    foreach ($copyVariable in @($compiledJson.variables.copy)) {
+        $compiledCopyExpressions[$copyVariable.name] = $copyVariable.input
     }
-    foreach ($placementCase in $backupPlacementFixture.placementCases) {
-        $vaultResourceId = [string]$placementCase.vaultResourceId
-        $backupPolicyResourceId = [string]$placementCase.backupPolicyResourceId
-        $vaultSegments = @($vaultResourceId -split '/')
-        $policySegments = @($backupPolicyResourceId -split '/')
-        [guid]$parsedSubscriptionId = [guid]::Empty
-        $vaultIsValid = $vaultResourceId -eq $vaultResourceId.Trim() -and
-            $vaultSegments.Count -eq 9 -and
-            $vaultSegments[0] -eq '' -and
-            $vaultSegments[1].ToLowerInvariant() -eq 'subscriptions' -and
-            [guid]::TryParseExact($vaultSegments[2], 'D', [ref]$parsedSubscriptionId) -and
-            $vaultSegments[3].ToLowerInvariant() -eq 'resourcegroups' -and
-            (Test-BackupNameSegment -Value $vaultSegments[4]) -and
-            $vaultSegments[5].ToLowerInvariant() -eq 'providers' -and
-            $vaultSegments[6].ToLowerInvariant() -eq 'microsoft.recoveryservices' -and
-            $vaultSegments[7].ToLowerInvariant() -eq 'vaults' -and
-            (Test-BackupNameSegment -Value $vaultSegments[8])
-        $policyIsChildOfVault = $vaultIsValid -and
-            $backupPolicyResourceId -eq $backupPolicyResourceId.Trim() -and
-            $policySegments.Count -eq 11 -and
-            $backupPolicyResourceId.ToLowerInvariant().StartsWith($vaultResourceId.ToLowerInvariant() + '/backuppolicies/') -and
-            $policySegments[9].ToLowerInvariant() -eq 'backuppolicies' -and
-            (Test-BackupNameSegment -Value $policySegments[10])
-        $placementIsValid = $approvedVaultRegions -contains ([string]$placementCase.region).ToLowerInvariant() -and
-            $vaultIsValid -and $policyIsChildOfVault -and
-            ($placementCase.allowCrossSubscriptionBackupVaults -or
-                $governedSubscriptionIds -contains $vaultSegments[2].ToLowerInvariant())
-        if ($placementIsValid -ne $placementCase.valid) {
-            Stop-Test "Approved vault placement case failed: $($placementCase.name)"
+    foreach ($guardExpression in $backupGuardFixture.compiledGuardExpressions.PSObject.Properties) {
+        if ($compiledJson.variables.($guardExpression.Name) -ne $guardExpression.Value) {
+            Stop-Test "Compiled guard variable $($guardExpression.Name) no longer matches the bound fixture expression."
         }
     }
-    foreach ($mappingCase in $backupPlacementFixture.mappingCases) {
-        $mappingEntries = @($mappingCase.entries)
-        $mappingKeys = @($mappingEntries | ForEach-Object {
-            "$($_.workload.Trim().ToLowerInvariant())|$($_.region.Trim().ToLowerInvariant())"
-        })
-        $targetKeys = @($mappingEntries | ForEach-Object {
-            $entryRegion = $_.region.Trim().ToLowerInvariant()
-            foreach ($inclusionTagValue in @($_.inclusionTagValues)) {
-                "$entryRegion|$($inclusionTagValue.Trim().ToLowerInvariant())"
+    foreach ($guardCopyExpression in $backupGuardFixture.compiledGuardCopyExpressions.PSObject.Properties) {
+        if ($compiledCopyExpressions[$guardCopyExpression.Name] -ne $guardCopyExpression.Value) {
+            Stop-Test "Compiled guard copy variable $($guardCopyExpression.Name) no longer matches the bound fixture expression."
+        }
+    }
+    foreach ($guardFunction in $backupGuardFixture.compiledGuardFunctions.PSObject.Properties) {
+        if ($compiledJson.functions[0].members.($guardFunction.Name).output.value -ne $guardFunction.Value) {
+            Stop-Test "Compiled guard function $($guardFunction.Name) no longer matches the bound fixture expression."
+        }
+    }
+    $backupGuardCases = @($backupGuardFixture.guardCases)
+    if ($backupGuardCases.Count -lt 20 -or
+        @($backupGuardCases | ForEach-Object { $_.guardVariable } | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -lt 4) {
+        Stop-Test 'The backup guard fixture must keep covering every dependency guard with negative cases.'
+    }
+    foreach ($backupGuardCase in $backupGuardCases) {
+        $boundGuard = [string]$backupGuardFixture.compiledGuardExpressions.($backupGuardCase.guardVariable)
+        if ([string]::IsNullOrEmpty($boundGuard) -or -not $boundGuard.Contains([string]$backupGuardCase.rejectionMessage)) {
+            Stop-Test "Backup guard case is no longer bound to a compiled rejection: $($backupGuardCase.name)"
+        }
+        foreach ($requiredExpression in @($backupGuardCase.requiredExpressions)) {
+            if (-not $boundGuard.Contains([string]$requiredExpression)) {
+                Stop-Test "Backup guard case lost its compiled sub-expression $requiredExpression : $($backupGuardCase.name)"
             }
+        }
+    }
+    foreach ($acceptedCase in @($backupGuardFixture.acceptedCases)) {
+        $acceptedVaultIds = @($acceptedCase.entries | ForEach-Object { $_.vaultResourceId.ToLowerInvariant() })
+        $acceptedVaultRegionPairs = @($acceptedCase.entries | ForEach-Object {
+            "$($_.vaultResourceId.ToLowerInvariant())|$($_.region.ToLowerInvariant())"
         })
-        $mappingIsValid = (@($mappingEntries | Where-Object { @($_.inclusionTagValues).Count -eq 0 }).Count -eq 0) -and
-            (@($mappingKeys | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -eq $mappingKeys.Count) -and
-            (@($targetKeys | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -eq $targetKeys.Count)
-        if ($mappingIsValid -ne $mappingCase.valid) {
-            Stop-Test "Approved vault mapping case failed: $($mappingCase.name)"
+        if (@($acceptedVaultIds | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -ne
+            @($acceptedVaultRegionPairs | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count) {
+            Stop-Test "Accepted backup case reuses one single-region vault across regions: $($acceptedCase.name)"
         }
     }
     $backupVaultTemplate = Join-Path $TempDir 'backup-vault.json'
@@ -2431,8 +2449,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test 'The optional vault module must declare exactly one vault and never protect live items.'
     }
     $backupParametersPath = Join-Path $TempDir 'backup-existing-vault.bicepparam'
-    $approvedVaultResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload'
-    $approvedBackupVaultLiteral = "param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '$approvedVaultResourceId', backupPolicyResourceId: '$approvedVaultResourceId/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}, {workload: 'corp', region: 'centralus', vaultResourceId: '$approvedVaultResourceId', backupPolicyResourceId: '$approvedVaultResourceId/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}]"
+    $approvedVaultPrefix = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults'
+    $approvedVaultEastUs2 = "$approvedVaultPrefix/rsv-workload-eastus2"
+    $approvedVaultCentralUs = "$approvedVaultPrefix/rsv-workload-centralus"
+    $approvedBackupVaultLiteral = "param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '$approvedVaultEastUs2', backupPolicyResourceId: '$approvedVaultEastUs2/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}, {workload: 'corp', region: 'centralus', vaultResourceId: '$approvedVaultCentralUs', backupPolicyResourceId: '$approvedVaultCentralUs/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}]"
     $backupParametersText = $benchmarkParameterTemplateText `
         -replace "(?m)^using '\.\./main\.bicep'$", "using '../../main.bicep'" `
         -replace '(?m)^param approvedVaultRegions = .*$', "param approvedVaultRegions = ['eastus2', 'centralus']" `
@@ -2448,11 +2468,14 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($backupParametersJson.parameters.enableVmBackupRemediation.value -ne $true -or
         $backupParametersJson.parameters.deployRecoveryServicesVault.value -ne $false -or
         $backupParametersJson.parameters.allowCrossSubscriptionBackupVaults.value -ne $false -or
+        $backupParametersJson.parameters.grantVaultDiagnosticsWorkspaceAccess.value -ne $false -or
         $compiledApprovedVaults.Count -ne 2 -or
         (Compare-Object @($compiledApprovedVaults | ForEach-Object { $_.region } | Microsoft.PowerShell.Utility\Sort-Object) `
             @('centralus', 'eastus2') -SyncWindow 0) -or
+        @($compiledApprovedVaults | ForEach-Object { $_.vaultResourceId } |
+            Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -ne 2 -or
         @($compiledApprovedVaults | Where-Object {
-            -not ([string]$_.backupPolicyResourceId).StartsWith($approvedVaultResourceId)
+            -not ([string]$_.backupPolicyResourceId).StartsWith("$($_.vaultResourceId)/backupPolicies/")
         }).Count -ne 0) {
         Stop-Test 'The approved existing-vault integration path did not compile to the expected parameter values.'
     }

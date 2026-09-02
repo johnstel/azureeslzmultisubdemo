@@ -264,6 +264,8 @@ var crossSubscriptionApprovedBackupVaults = filter(approvedBackupVaults, approve
 var approvedBackupVaultKeys = [for approvedVault in approvedBackupVaults: '${toLower(trim(approvedVault.workload))}|${toLower(trim(approvedVault.region))}']
 var approvedBackupVaultTargetKeyGroups = [for approvedVault in approvedBackupVaults: map(approvedVault.inclusionTagValues, inclusionTagValue => '${toLower(trim(approvedVault.region))}|${toLower(trim(inclusionTagValue))}')]
 var approvedBackupVaultTargetKeys = flatten(approvedBackupVaultTargetKeyGroups)
+var approvedBackupVaultResourceIds = [for approvedVault in approvedBackupVaults: toLower(trim(approvedVault.vaultResourceId))]
+var approvedBackupVaultResourceIdRegionKeys = [for approvedVault in approvedBackupVaults: '${toLower(trim(approvedVault.vaultResourceId))}|${toLower(trim(approvedVault.region))}']
 var validatedApprovedBackupVaults = !empty(invalidApprovedVaultRegions) || length(normalizedApprovedVaultRegions) != length(union(normalizedApprovedVaultRegions, []))
   ? fail('approvedVaultRegions must contain non-empty, non-global, case-insensitively unique Azure regions.')
   : !empty(invalidApprovedBackupVaults)
@@ -274,7 +276,9 @@ var validatedApprovedBackupVaults = !empty(invalidApprovedVaultRegions) || lengt
         ? fail('approvedBackupVaults must use case-insensitively unique workload and region pairs; a workload may appear once per region and a region may host several workloads.')
         : length(approvedBackupVaultTargetKeys) != length(union(approvedBackupVaultTargetKeys, []))
           ? fail('approvedBackupVaults entries in the same region must not share an inclusion tag value, because the backup built-in targets virtual machines by location and inclusion tag value only.')
-          : approvedBackupVaults
+          : length(union(approvedBackupVaultResourceIdRegionKeys, [])) != length(union(approvedBackupVaultResourceIds, []))
+            ? fail('Each approvedBackupVaults vault resource ID must map to exactly one region, because a Recovery Services vault is a single-region resource and the backup built-in protects only virtual machines colocated with the vault; use a separate vault per region.')
+            : approvedBackupVaults
 var vmBackupRemediationInputsValid = !empty(validatedApprovedBackupVaults) && !empty(trim(vmBackupInclusionTagName)) && !empty(trim(backupRetentionStandardId))
 var validatedVmBackupRemediation = enableVmBackupRemediation && !vmBackupRemediationInputsValid
   ? fail('enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs, a non-empty vmBackupInclusionTagName, and a documented backupRetentionStandardId.')
@@ -283,6 +287,21 @@ var vaultDiagnosticsWorkspaceConfigured = deployCentralLogAnalytics || !empty(tr
 var validatedVaultDiagnostics = enableVaultDiagnostics && !vaultDiagnosticsWorkspaceConfigured
   ? fail('enableVaultDiagnostics requires deployCentralLogAnalytics to be true or a non-empty existingLogAnalyticsWorkspaceResourceId.')
   : true
+// The vault diagnostics assignment identity receives Log Analytics Contributor at the assigned
+// landing zones scope, which does not cover the effective workspace when that workspace lives in
+// the sibling connectivity subscription or in a customer-supplied subscription. The workspace
+// resource ID is therefore recomputed from parameters only (module outputs cannot be used as a
+// deployment scope) so an explicitly gated, least-privilege role assignment can be created at the
+// workspace itself.
+var centralLogAnalyticsWorkspaceResourceId = '/subscriptions/${connectivitySubscriptionId}/resourceGroups/rg-${namePrefix}-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-${namePrefix}-central'
+var vaultDiagnosticsWorkspaceResourceId = deployCentralLogAnalytics ? centralLogAnalyticsWorkspaceResourceId : trim(existingLogAnalyticsWorkspaceResourceId)
+var vaultDiagnosticsWorkspaceIdParts = split(empty(vaultDiagnosticsWorkspaceResourceId) ? '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.OperationalInsights/workspaces/placeholder' : vaultDiagnosticsWorkspaceResourceId, '/')
+var vaultDiagnosticsWorkspaceIdValid = length(vaultDiagnosticsWorkspaceIdParts) == 9 && empty(vaultDiagnosticsWorkspaceIdParts[0]) && isGuid(vaultDiagnosticsWorkspaceIdParts[2]) && toLower(vaultDiagnosticsWorkspaceIdParts[3]) == 'resourcegroups' && isResourceNameSegment(vaultDiagnosticsWorkspaceIdParts[4]) && toLower(vaultDiagnosticsWorkspaceIdParts[6]) == 'microsoft.operationalinsights' && toLower(vaultDiagnosticsWorkspaceIdParts[7]) == 'workspaces' && isResourceNameSegment(vaultDiagnosticsWorkspaceIdParts[8])
+var validatedVaultDiagnosticsWorkspaceAccess = grantVaultDiagnosticsWorkspaceAccess && !enableVaultDiagnostics
+  ? fail('grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true, because the role assignment binds the diagnostics assignment identity that only exists when vault diagnostics are assigned.')
+  : grantVaultDiagnosticsWorkspaceAccess && !vaultDiagnosticsWorkspaceIdValid
+    ? fail('grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID, so supply existingLogAnalyticsWorkspaceResourceId or set deployCentralLogAnalytics to true.')
+    : true
 var validatedRecoveryServicesVaultCreation = deployRecoveryServicesVault && !empty(approvedBackupVaults)
   ? fail('deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied; approved existing vault and backup policy IDs are the preferred integration path.')
   : deployRecoveryServicesVault && (empty(normalizedApprovedVaultRegions) || !contains(normalizedApprovedVaultRegions, toLower(trim(recoveryServicesVaultLocation))))
@@ -389,6 +408,9 @@ param enableVaultDiagnostics bool = false
   'Disabled'
 ])
 param vaultDiagnosticsEffect string = 'AuditIfNotExists'
+
+@description('Set true to grant the vault diagnostics assignment identity Log Analytics Contributor at the effective central Log Analytics workspace scope. The landing zones grant does not cover a workspace in the connectivity or a customer subscription, so a DeployIfNotExists remediation would fail without it. Off by default so no role assignment is created.')
+param grantVaultDiagnosticsWorkspaceAccess bool = false
 
 @description('Set true only to create a metered, customer-owned Recovery Services vault and backup policy in the workload subscription. Leave false (default) and integrate an approved existing vault instead.')
 param deployRecoveryServicesVault bool = false
@@ -1443,6 +1465,18 @@ module vaultDiagnosticsAssignment 'modules/remediating-policy-assignment.bicep' 
   ]
 }
 
+module vaultDiagnosticsWorkspaceRbac 'modules/workspace-diagnostics-rbac.bicep' = if (vaultDiagnosticsWorkspaceAccessActive) {
+  name: 'vault-diagnostics-workspace-rbac'
+  scope: resourceGroup(vaultDiagnosticsWorkspaceIdParts[2], vaultDiagnosticsWorkspaceIdParts[4])
+  params: {
+    principalId: vaultDiagnosticsActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
+    roleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    workspaceName: vaultDiagnosticsWorkspaceIdParts[8]
+  }
+}
+
 module customerOwnedBackupVault 'modules/backup-vault.bicep' = if (customerOwnedVaultActive) {
   name: 'customer-owned-backup-vault'
   scope: subscription(workloadSubscriptionId)
@@ -1563,6 +1597,7 @@ module centralMonitoring 'modules/central-monitoring.bicep' = {
 var vmBackupRemediationActive = enableVmBackupRemediation && validatedVmBackupRemediation
 var vaultDiagnosticsActive = enableVaultDiagnostics && validatedVaultDiagnostics
 var customerOwnedVaultActive = deployRecoveryServicesVault && validatedRecoveryServicesVaultCreation
+var vaultDiagnosticsWorkspaceAccessActive = grantVaultDiagnosticsWorkspaceAccess && vaultDiagnosticsActive && validatedVaultDiagnosticsWorkspaceAccess
 
 output hierarchy object = {
   demoRoot: demoRootManagementGroupId
@@ -1617,7 +1652,7 @@ output backupWorkloadToVaultMapping array = [
   }
 ]
 
-@description('Remediating assignment identities and role assignments available for a manually started remediation. This template never starts a remediation task, but a DeployIfNotExists effect under enforcementMode Default also protects matching virtual machines automatically on create or update.')
+@description('Remediating assignment identities and role assignments available for a manually started remediation. This template never starts a remediation task, but a DeployIfNotExists effect under enforcementMode Default also protects matching virtual machines automatically on create or update, and creates vault diagnostic settings automatically on vault create or update.')
 output backupRemediation object = {
   remediationTasksStarted: false
   vmBackupEnforcementMode: denyPolicyEnforcementMode
@@ -1632,6 +1667,14 @@ output backupRemediation object = {
   vaultDiagnosticsRoleDefinitionIds: [
     logAnalyticsContributorRoleDefinitionId
   ]
+  vaultDiagnosticsEnforcementMode: denyPolicyEnforcementMode
+  vaultDiagnosticsAutomaticSettingsOnResourceWrite: vaultDiagnosticsActive && vaultDiagnosticsEffect == 'DeployIfNotExists' && denyPolicyEnforcementMode == 'Default'
+  vaultDiagnosticsPrincipalId: vaultDiagnosticsActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
+  vaultDiagnosticsWorkspaceResourceId: vaultDiagnosticsActive ? vaultDiagnosticsWorkspaceResourceId : ''
+  vaultDiagnosticsWorkspaceAccessGranted: vaultDiagnosticsWorkspaceAccessActive
+  vaultDiagnosticsWorkspaceRoleAssignmentIds: vaultDiagnosticsWorkspaceAccessActive
+    ? vaultDiagnosticsWorkspaceRbac!.outputs.roleAssignmentIds
+    : []
   remediationLocation: deploymentLocation
 }
 

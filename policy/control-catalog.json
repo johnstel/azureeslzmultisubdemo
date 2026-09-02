@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "catalogVersion": "1.2.0",
+  "catalogVersion": "1.2.1",
   "generatedOn": "2026-09-02",
   "purpose": "Authoritative v2 mapping from each customer requirement to its implementation mechanism (Azure Policy built-in/custom definition or initiative, Entra/PIM artifact, Defender CSPM/CIEM feature, shared-service architecture pattern, or manual evidence process) before v2 policy code is expanded. Sourced from public Microsoft Learn and the Azure/azure-policy GitHub repository; no tenant credentials were used.",
   "sourceIssue": "https://github.com/johnstel/azureeslzmultisubdemo/issues/3",
@@ -1822,10 +1822,9 @@
         "n/a"
       ],
       "requiredParameters": [
-        "recoveryServicesVaultResourceId",
-        "backupRetentionStandardId",
+        "approvedBackupVaults",
         "approvedVaultRegions",
-        "workloadToVaultMapping"
+        "backupRetentionStandardId"
       ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
@@ -1833,8 +1832,8 @@
         "REQ-BKP-02"
       ],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Documented vault/backup-policy resource IDs, approved region list, and workload-to-vault mapping supplied by the customer and consumed as REQ-BKP-02's assignment parameters; no default value or placeholder is invented here.",
-      "notes": "REQ-BKP-02's built-in enforces vault/policy selection at assignment time via vaultLocation and backupPolicyId, but does not itself document which vault(s), region(s), or retention standard are customer-approved, nor which workloads map to which vault; those decisions are architecture inputs owned by the customer and tracked explicitly here per issue #19's 'existing vault/policy IDs are the preferred integration path' guidance. No single Azure Policy built-in enforces retention-standard or region/workload-placement correctness, so this record is classified shared-service-architecture rather than azure-policy."
+      "evidenceSource": "Documented vault/backup-policy resource IDs, approved region list, and workload-to-vault mapping supplied by the customer through the approvedBackupVaults, approvedVaultRegions, and backupRetentionStandardId template parameters and consumed as REQ-BKP-02's assignment parameters; no default value or placeholder is invented here.",
+      "notes": "REQ-BKP-02's built-in enforces vault/policy selection at assignment time via vaultLocation and backupPolicyId, but does not itself document which vault(s), region(s), or retention standard are customer-approved, nor which workloads map to which vault; those decisions are architecture inputs owned by the customer and tracked explicitly here per issue #19's 'existing vault/policy IDs are the preferred integration path' guidance. The template interface for this record is the approvedBackupVaults array (workload, region, vaultResourceId, backupPolicyResourceId, inclusionTagValues), the approvedVaultRegions allow-list, and backupRetentionStandardId; each vault resource ID must map to exactly one region because a Recovery Services vault is single-region. No single Azure Policy built-in enforces retention-standard or region/workload-placement correctness, so this record is classified shared-service-architecture rather than azure-policy."
     },
     {
       "id": "REQ-BKP-04",

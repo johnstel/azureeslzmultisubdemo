@@ -157,7 +157,11 @@ workloads. The built-in that configures backup targets virtual machines by
 **location plus inclusion tag value only** — the `workload` field is
 documentation that names the assignment, not a policy condition — so two
 records in the same region must not share an inclusion tag value, or their
-assignments would compete for the same virtual machines.
+assignments would compete for the same virtual machines. A Recovery Services
+vault is a single-region resource and the built-in protects only virtual
+machines colocated with the vault, so each `vaultResourceId` must map to
+exactly one region: covering several regions requires a separate vault per
+region.
 
 The built-in places its remediation deployment in the subscription and
 resource group parsed from the supplied `backupPolicyId`, so a vault in a
@@ -194,6 +198,27 @@ resource-diagnostics initiative restricted to
 `microsoft.recoveryservices/vaults`, sending vault logs to the effective
 central monitoring workspace. It requires `deployCentralLogAnalytics=true` or
 an `existingLogAnalyticsWorkspaceResourceId`.
+
+Diagnostics behave like any other `DeployIfNotExists` control: with
+`vaultDiagnosticsEffect = 'DeployIfNotExists'` and
+`denyPolicyEnforcementMode = 'Default'`, diagnostic settings are created
+**automatically** on vault create or update, without any remediation task, and
+every stream then billed for Log Analytics ingestion and retention. The safe
+default keeps `AuditIfNotExists` and `DoNotEnforce`, so nothing is deployed and
+no ingestion cost is incurred until both are changed deliberately. The
+`backupRemediation` output reports `vaultDiagnosticsEnforcementMode` and
+`vaultDiagnosticsAutomaticSettingsOnResourceWrite` next to
+`vaultDiagnosticsPrincipalId` and `vaultDiagnosticsWorkspaceResourceId`.
+
+The diagnostics assignment identity is granted Log Analytics Contributor at the
+assigned Landing Zones scope, which does **not** cover a workspace in the
+connectivity subscription or in a customer subscription, so a
+`DeployIfNotExists` deployment would fail there.
+`grantVaultDiagnosticsWorkspaceAccess` (default `false`) creates the missing
+least-privilege role assignment — only Log Analytics Contributor, only on the
+effective workspace resource — and requires `enableVaultDiagnostics=true` plus a
+canonical effective workspace resource ID. The resulting role assignment IDs are
+returned in `backupRemediation.vaultDiagnosticsWorkspaceRoleAssignmentIds`.
 
 `deployRecoveryServicesVault` (default `false`) is the only switch that creates
 a **metered, customer-owned** vault and backup policy, in a
@@ -453,10 +478,15 @@ The person or service principal running the deployment must have:
    subscription when `allowCrossSubscriptionBackupVaults=true`, since the
    built-in deploys the protected item into that subscription and this
    template only grants roles inside the assignment scope;
-7. write access to the destination Log Analytics workspace (or its
-   subscription) for the diagnostics remediation identity when
-   `existingLogAnalyticsWorkspaceResourceId` points outside the governed
-   hierarchy;
+7. Owner or Role Based Access Control Administrator on the resource group that
+   holds the effective Log Analytics workspace when
+   `grantVaultDiagnosticsWorkspaceAccess=true`, so the deployment can grant the
+   diagnostics identity Log Analytics Contributor on that workspace; the
+   workspace resource group is in the connectivity subscription when
+   `deployCentralLogAnalytics=true`, or in whichever subscription
+   `existingLogAnalyticsWorkspaceResourceId` points to. Without that grant, a
+   `DeployIfNotExists` diagnostics remediation fails outside the assignment
+   scope;
 8. Contributor on the workload subscription when
    `deployRecoveryServicesVault=true`, because the optional vault, its
    resource group, and its backup policy are created at subscription scope.

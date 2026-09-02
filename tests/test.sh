@@ -128,6 +128,8 @@ find_prohibited_paid_declarations() {
         | if $resource.type? == "Microsoft.Resources/deployments"
             and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel", "customer-owned-backup-vault"))
           then empty
+          elif ($resource.existing? == true)
+          then (.[] | declarations)
           elif (($resource.type? | type) == "string") and $resource.apiVersion? and ($resource.type | prohibited)
           then $resource.type
           else .[] | declarations
@@ -1669,12 +1671,14 @@ jq -e --slurpfile catalog "${control_catalog}" '
   first(.. | objects | select(.copy?.name? == "vmBackupConfigurationAssignments")) as $vmBackup |
   deployment("assign-vault-diagnostics") as $diagnostics |
   deployment("customer-owned-backup-vault") as $vault |
+  deployment("vault-diagnostics-workspace-rbac") as $workspaceRbac |
   ($initiative.properties.parameters.policyDefinitionReferences.value
     | map({key: .policyDefinitionReferenceId, value: .}) | from_entries) as $references |
   .parameters.enableVmBackupRemediation.defaultValue == false and
   .parameters.enableVaultDiagnostics.defaultValue == false and
   .parameters.deployRecoveryServicesVault.defaultValue == false and
   .parameters.allowCrossSubscriptionBackupVaults.defaultValue == false and
+  .parameters.grantVaultDiagnosticsWorkspaceAccess.defaultValue == false and
   .parameters.approvedBackupVaults.defaultValue == [] and
   .parameters.approvedVaultRegions.defaultValue == [] and
   .parameters.backupRetentionStandardId.defaultValue == "" and
@@ -1753,6 +1757,16 @@ jq -e --slurpfile catalog "${control_catalog}" '
     ["microsoft.recoveryservices/vaults"] and
   ($diagnostics.properties.parameters.parameters.value.logAnalytics.value | contains("centralMonitoring")) and
   .variables.logAnalyticsContributorRoleDefinitionId == (control("REQ-BKP-07").roleDefinitionIds | first) and
+  $workspaceRbac.condition == "[variables(\u0027vaultDiagnosticsWorkspaceAccessActive\u0027)]" and
+  $workspaceRbac.subscriptionId ==
+    "[variables(\u0027vaultDiagnosticsWorkspaceIdParts\u0027)[2]]" and
+  $workspaceRbac.resourceGroup ==
+    "[variables(\u0027vaultDiagnosticsWorkspaceIdParts\u0027)[4]]" and
+  $workspaceRbac.properties.parameters.roleDefinitionIds.value ==
+    ["[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  ([$workspaceRbac.properties.template.resources[]
+    | select(.type? == "Microsoft.Authorization/roleAssignments")
+    | select(.properties.principalType == "ServicePrincipal")] | length) == 1 and
   $vault.condition == "[variables(\u0027customerOwnedVaultActive\u0027)]" and
   $vault.subscriptionId == "[parameters(\u0027workloadSubscriptionId\u0027)]" and
   (.variables.validatedApprovedBackupVaults | contains("fail(")) and
@@ -1774,7 +1788,16 @@ jq -e --slurpfile catalog "${control_catalog}" '
   (.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite
     | contains("DeployIfNotExists") and contains("Default")) and
   .outputs.backupGovernance.value.crossSubscriptionVaultsApproved ==
-    "[parameters(\u0027allowCrossSubscriptionBackupVaults\u0027)]"
+    "[parameters(\u0027allowCrossSubscriptionBackupVaults\u0027)]" and
+  .outputs.backupRemediation.value.vaultDiagnosticsEnforcementMode ==
+    "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  (.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite
+    | contains("vaultDiagnosticsEffect") and contains("DeployIfNotExists") and contains("Default")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsPrincipalId | contains("identityPrincipalId")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceAccessGranted
+    | contains("vaultDiagnosticsWorkspaceAccessActive")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceRoleAssignmentIds
+    | contains("roleAssignmentIds"))
 ' "${TEMP_DIR}/main.json" >/dev/null || {
   printf 'ERROR: Backup coverage and vault posture controls do not match the verified control catalog or safe defaults.\n' >&2
   exit 1
@@ -1787,7 +1810,10 @@ for backup_validation_message in \
   'deployRecoveryServicesVault requires a documented backupRetentionStandardId' \
   'Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription' \
   'must use case-insensitively unique workload and region pairs' \
-  'must not share an inclusion tag value'; do
+  'must not share an inclusion tag value' \
+  'must map to exactly one region' \
+  'grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true' \
+  'grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID'; do
   rg -q "${backup_validation_message}" "${PROJECT_DIR}/main.bicep" || {
     printf 'ERROR: Backup input validation is missing: %s\n' "${backup_validation_message}" >&2
     exit 1
@@ -1797,93 +1823,31 @@ rg -q 'no dedicated Azure Policy built-in' "${PROJECT_DIR}/policy/control-catalo
   printf 'ERROR: The catalog still claims that vault soft delete has no dedicated Azure Policy built-in.\n' >&2
   exit 1
 }
-printf '    Confirm approved vault placement and mapping rules reject unusable backup inputs...\n'
-python3 - "${PROJECT_DIR}/tests/fixtures/backup-vault-placement-cases.json" <<'PYEOF'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    fixture = json.load(stream)
-
-approved_regions = {region.lower() for region in fixture["approvedVaultRegions"]}
-governed_subscriptions = {subscription.lower() for subscription in fixture["governedSubscriptionIds"]}
-forbidden_characters = set("<>%&\\?#+:\"|*; ")
-
-
-def is_guid(value):
-    parts = value.split("-")
-    return (
-        len(value) == 36
-        and [len(part) for part in parts] == [8, 4, 4, 4, 12]
-        and all(character in "0123456789abcdefABCDEF" for character in value.replace("-", ""))
-    )
-
-
-def is_name_segment(value):
-    return value != "" and value == value.strip() and not (set(value) & forbidden_characters)
-
-
-def is_vault_id(value):
-    parts = value.split("/")
-    return (
-        value == value.strip()
-        and len(parts) == 9
-        and parts[0] == ""
-        and parts[1].lower() == "subscriptions"
-        and is_guid(parts[2])
-        and parts[3].lower() == "resourcegroups"
-        and is_name_segment(parts[4])
-        and parts[5].lower() == "providers"
-        and parts[6].lower() == "microsoft.recoveryservices"
-        and parts[7].lower() == "vaults"
-        and is_name_segment(parts[8])
-    )
-
-
-def is_policy_of_vault(policy_id, vault_id):
-    parts = policy_id.split("/")
-    return (
-        policy_id == policy_id.strip()
-        and len(parts) == 11
-        and is_vault_id(vault_id)
-        and policy_id.lower().startswith(f"{vault_id.lower()}/backuppolicies/")
-        and parts[9].lower() == "backuppolicies"
-        and is_name_segment(parts[10])
-    )
-
-
-for case in fixture["placementCases"]:
-    vault_id = case["vaultResourceId"]
-    valid = (
-        case["region"].lower() in approved_regions
-        and is_vault_id(vault_id)
-        and is_policy_of_vault(case["backupPolicyResourceId"], vault_id)
-        and (
-            case["allowCrossSubscriptionBackupVaults"]
-            or vault_id.split("/")[2].lower() in governed_subscriptions
-        )
-    )
-    if valid != case["valid"]:
-        raise SystemExit(f"ERROR: Approved vault placement case failed: {case['name']}")
-
-for case in fixture["mappingCases"]:
-    entries = case["entries"]
-    mapping_keys = [
-        f"{entry['workload'].strip().lower()}|{entry['region'].strip().lower()}" for entry in entries
-    ]
-    target_keys = [
-        f"{entry['region'].strip().lower()}|{tag.strip().lower()}"
-        for entry in entries
-        for tag in entry["inclusionTagValues"]
-    ]
-    valid = (
-        all(entry["inclusionTagValues"] for entry in entries)
-        and len(mapping_keys) == len(set(mapping_keys))
-        and len(target_keys) == len(set(target_keys))
-    )
-    if valid != case["valid"]:
-        raise SystemExit(f"ERROR: Approved vault mapping case failed: {case['name']}")
-PYEOF
+printf '    Confirm the backup negative fixtures stay bound to the exact compiled guard expressions...\n'
+jq -e --slurpfile fixture "${PROJECT_DIR}/tests/fixtures/backup-vault-placement-cases.json" '
+  . as $template |
+  $fixture[0] as $fx |
+  (($template.variables.copy // []) | map({key: .name, value: .input}) | from_entries) as $copies |
+  ($fx.compiledGuardExpressions | to_entries | all(.value == $template.variables[.key])) and
+  ($fx.compiledGuardCopyExpressions | to_entries | all(.value == $copies[.key])) and
+  ($fx.compiledGuardFunctions | to_entries
+    | all(.value == $template.functions[0].members[.key].output.value)) and
+  ($fx.guardCases | length) >= 20 and
+  all($fx.guardCases[];
+    . as $case
+    | $fx.compiledGuardExpressions[$case.guardVariable] as $guard
+    | ($guard != null)
+      and ($guard | contains($case.rejectionMessage))
+      and all($case.requiredExpressions[]; . as $needle | $guard | contains($needle))) and
+  (($fx.guardCases | map(.guardVariable) | unique | length) >= 4) and
+  ($fx.acceptedCases | length) >= 2 and
+  all($fx.acceptedCases[];
+    (.entries | map({id: (.vaultResourceId | ascii_downcase), region: (.region | ascii_downcase)})) as $pairs
+    | ($pairs | map(.id) | unique | length) == ($pairs | unique | length))
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The backup guard fixtures no longer match the exact compiled guard expressions in main.bicep.\n' >&2
+  exit 1
+}
 printf '    Confirm the optional customer-owned vault path stays metered, tagged, and off by default...\n'
 az bicep build \
   --file "${PROJECT_DIR}/modules/backup-vault.bicep" \
@@ -1910,25 +1874,33 @@ jq -e '
   exit 1
 }
 printf '    Confirm the approved existing-vault integration path compiles...\n'
-backup_vault_id='/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload'
+backup_vault_prefix='/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults'
+backup_vault_eastus2="${backup_vault_prefix}/rsv-workload-eastus2"
+backup_vault_centralus="${backup_vault_prefix}/rsv-workload-centralus"
 backup_params="${TEMP_DIR}/backup-existing-vault.bicepparam"
 sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
   -e "s|^param approvedVaultRegions = .*\$|param approvedVaultRegions = ['eastus2', 'centralus']|" \
   -e "s|^param backupRetentionStandardId = .*\$|param backupRetentionStandardId = 'RETENTION-STD-001'|" \
   -e "s|^param vmBackupInclusionTagName = .*\$|param vmBackupInclusionTagName = 'BackupPolicy'|" \
   -e "s|^param enableVmBackupRemediation = .*\$|param enableVmBackupRemediation = true|" \
-  -e "s|^param approvedBackupVaults = .*\$|param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '${backup_vault_id}', backupPolicyResourceId: '${backup_vault_id}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}, {workload: 'corp', region: 'centralus', vaultResourceId: '${backup_vault_id}', backupPolicyResourceId: '${backup_vault_id}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}]|" \
+  -e "s|^param approvedBackupVaults = .*\$|param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '${backup_vault_eastus2}', backupPolicyResourceId: '${backup_vault_eastus2}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}, {workload: 'corp', region: 'centralus', vaultResourceId: '${backup_vault_centralus}', backupPolicyResourceId: '${backup_vault_centralus}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}]|" \
   "${PROJECT_DIR}/parameters/main.template.bicepparam" > "${backup_params}"
 az bicep build-params --file "${backup_params}" --outfile "${backup_params}.json" >/dev/null
-jq -e --arg vaultId "${backup_vault_id}" '
+jq -e --arg vaultPrefix "${backup_vault_prefix}" '
   .parameters.enableVmBackupRemediation.value == true and
   .parameters.deployRecoveryServicesVault.value == false and
   .parameters.allowCrossSubscriptionBackupVaults.value == false and
+  .parameters.grantVaultDiagnosticsWorkspaceAccess.value == false and
   .parameters.approvedVaultRegions.value == ["eastus2", "centralus"] and
   (.parameters.approvedBackupVaults.value | length) == 2 and
   (.parameters.approvedBackupVaults.value | map(.workload) | unique) == ["corp"] and
   (.parameters.approvedBackupVaults.value | map(.region) | sort) == ["centralus", "eastus2"] and
-  (.parameters.approvedBackupVaults.value | all(.backupPolicyResourceId | startswith($vaultId)))
+  (.parameters.approvedBackupVaults.value | map(.vaultResourceId) | unique | length) == 2 and
+  (.parameters.approvedBackupVaults.value
+    | all(.backupPolicyResourceId | startswith($vaultPrefix + "/"))) and
+  (.parameters.approvedBackupVaults.value
+    | all((.vaultResourceId + "/backupPolicies/") as $vaultPath
+      | .backupPolicyResourceId | startswith($vaultPath)))
 ' "${backup_params}.json" >/dev/null || {
   printf 'ERROR: The approved existing-vault integration path did not compile to the expected parameter values.\n' >&2
   exit 1

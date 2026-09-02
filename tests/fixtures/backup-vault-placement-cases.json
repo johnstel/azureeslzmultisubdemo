@@ -1,157 +1,391 @@
 {
-  "approvedVaultRegions": [
-    "eastus2",
-    "centralus"
-  ],
-  "governedSubscriptionIds": [
-    "11111111-1111-1111-1111-111111111111",
-    "22222222-2222-2222-2222-222222222222"
-  ],
-  "placementCases": [
+  "description": "Negative and positive backup-input cases bound to the exact compiled guard expressions in the compiled main template. The suites assert compiled equality first, so weakening or removing a Bicep guard fails them; each case then names the guard, its exact rejection message, and the compiled sub-expressions that must remain present, instead of reimplementing the validation independently.",
+  "compiledGuardExpressions": {
+    "invalidApprovedVaultRegions": "[filter(variables('normalizedApprovedVaultRegions'), lambda('approvedVaultRegion', or(empty(lambdaVariables('approvedVaultRegion')), equals(lambdaVariables('approvedVaultRegion'), 'global'))))]",
+    "invalidApprovedBackupVaults": "[filter(parameters('approvedBackupVaults'), lambda('approvedVault', or(or(or(or(or(empty(trim(lambdaVariables('approvedVault').workload)), not(contains(variables('normalizedApprovedVaultRegions'), toLower(trim(lambdaVariables('approvedVault').region))))), not(__bicep.isRecoveryServicesVaultId(lambdaVariables('approvedVault').vaultResourceId))), not(__bicep.isBackupPolicyIdOfVault(lambdaVariables('approvedVault').backupPolicyResourceId, lambdaVariables('approvedVault').vaultResourceId))), empty(lambdaVariables('approvedVault').inclusionTagValues)), not(empty(filter(lambdaVariables('approvedVault').inclusionTagValues, lambda('inclusionTagValue', empty(trim(lambdaVariables('inclusionTagValue'))))))))))]",
+    "crossSubscriptionApprovedBackupVaults": "[filter(parameters('approvedBackupVaults'), lambda('approvedVault', and(__bicep.isRecoveryServicesVaultId(lambdaVariables('approvedVault').vaultResourceId), not(contains(variables('backupEligibleSubscriptionIds'), toLower(split(lambdaVariables('approvedVault').vaultResourceId, '/')[2]))))))]",
+    "approvedBackupVaultTargetKeys": "[flatten(variables('approvedBackupVaultTargetKeyGroups'))]",
+    "validatedApprovedBackupVaults": "[if(or(not(empty(variables('invalidApprovedVaultRegions'))), not(equals(length(variables('normalizedApprovedVaultRegions')), length(union(variables('normalizedApprovedVaultRegions'), createArray()))))), fail('approvedVaultRegions must contain non-empty, non-global, case-insensitively unique Azure regions.'), if(not(empty(variables('invalidApprovedBackupVaults'))), fail('Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.'), if(and(not(parameters('allowCrossSubscriptionBackupVaults')), not(empty(variables('crossSubscriptionApprovedBackupVaults')))), fail('approvedBackupVaults entries reference a Recovery Services vault outside the workload and critical-infrastructure subscriptions. Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription and grant the assignment identity Backup Contributor there.'), if(not(equals(length(variables('approvedBackupVaultKeys')), length(union(variables('approvedBackupVaultKeys'), createArray())))), fail('approvedBackupVaults must use case-insensitively unique workload and region pairs; a workload may appear once per region and a region may host several workloads.'), if(not(equals(length(variables('approvedBackupVaultTargetKeys')), length(union(variables('approvedBackupVaultTargetKeys'), createArray())))), fail('approvedBackupVaults entries in the same region must not share an inclusion tag value, because the backup built-in targets virtual machines by location and inclusion tag value only.'), if(not(equals(length(union(variables('approvedBackupVaultResourceIdRegionKeys'), createArray())), length(union(variables('approvedBackupVaultResourceIds'), createArray())))), fail('Each approvedBackupVaults vault resource ID must map to exactly one region, because a Recovery Services vault is a single-region resource and the backup built-in protects only virtual machines colocated with the vault; use a separate vault per region.'), parameters('approvedBackupVaults')))))))]",
+    "vmBackupRemediationInputsValid": "[and(and(not(empty(variables('validatedApprovedBackupVaults'))), not(empty(trim(parameters('vmBackupInclusionTagName'))))), not(empty(trim(parameters('backupRetentionStandardId')))))]",
+    "validatedVmBackupRemediation": "[if(and(parameters('enableVmBackupRemediation'), not(variables('vmBackupRemediationInputsValid'))), fail('enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs, a non-empty vmBackupInclusionTagName, and a documented backupRetentionStandardId.'), true())]",
+    "vaultDiagnosticsWorkspaceConfigured": "[or(parameters('deployCentralLogAnalytics'), not(empty(trim(parameters('existingLogAnalyticsWorkspaceResourceId')))))]",
+    "validatedVaultDiagnostics": "[if(and(parameters('enableVaultDiagnostics'), not(variables('vaultDiagnosticsWorkspaceConfigured'))), fail('enableVaultDiagnostics requires deployCentralLogAnalytics to be true or a non-empty existingLogAnalyticsWorkspaceResourceId.'), true())]",
+    "vaultDiagnosticsWorkspaceIdValid": "[and(and(and(and(and(and(and(equals(length(variables('vaultDiagnosticsWorkspaceIdParts')), 9), empty(variables('vaultDiagnosticsWorkspaceIdParts')[0])), __bicep.isGuid(variables('vaultDiagnosticsWorkspaceIdParts')[2])), equals(toLower(variables('vaultDiagnosticsWorkspaceIdParts')[3]), 'resourcegroups')), __bicep.isResourceNameSegment(variables('vaultDiagnosticsWorkspaceIdParts')[4])), equals(toLower(variables('vaultDiagnosticsWorkspaceIdParts')[6]), 'microsoft.operationalinsights')), equals(toLower(variables('vaultDiagnosticsWorkspaceIdParts')[7]), 'workspaces')), __bicep.isResourceNameSegment(variables('vaultDiagnosticsWorkspaceIdParts')[8]))]",
+    "validatedVaultDiagnosticsWorkspaceAccess": "[if(and(parameters('grantVaultDiagnosticsWorkspaceAccess'), not(parameters('enableVaultDiagnostics'))), fail('grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true, because the role assignment binds the diagnostics assignment identity that only exists when vault diagnostics are assigned.'), if(and(parameters('grantVaultDiagnosticsWorkspaceAccess'), not(variables('vaultDiagnosticsWorkspaceIdValid'))), fail('grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID, so supply existingLogAnalyticsWorkspaceResourceId or set deployCentralLogAnalytics to true.'), true()))]",
+    "validatedRecoveryServicesVaultCreation": "[if(and(parameters('deployRecoveryServicesVault'), not(empty(parameters('approvedBackupVaults')))), fail('deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied; approved existing vault and backup policy IDs are the preferred integration path.'), if(and(parameters('deployRecoveryServicesVault'), or(empty(variables('normalizedApprovedVaultRegions')), not(contains(variables('normalizedApprovedVaultRegions'), toLower(trim(parameters('recoveryServicesVaultLocation'))))))), fail('recoveryServicesVaultLocation must be one of approvedVaultRegions when a customer-owned vault is created, and approvedVaultRegions must not be empty, so no metered vault is created in an unapproved region.'), if(and(parameters('deployRecoveryServicesVault'), empty(trim(parameters('backupRetentionStandardId')))), fail('deployRecoveryServicesVault requires a documented backupRetentionStandardId so the metered customer-owned vault records an approved retention standard instead of an undocumented default.'), true())))]",
+    "vmBackupRemediationActive": "[and(parameters('enableVmBackupRemediation'), variables('validatedVmBackupRemediation'))]",
+    "vaultDiagnosticsActive": "[and(parameters('enableVaultDiagnostics'), variables('validatedVaultDiagnostics'))]",
+    "vaultDiagnosticsWorkspaceAccessActive": "[and(and(parameters('grantVaultDiagnosticsWorkspaceAccess'), variables('vaultDiagnosticsActive')), variables('validatedVaultDiagnosticsWorkspaceAccess'))]",
+    "customerOwnedVaultActive": "[and(parameters('deployRecoveryServicesVault'), variables('validatedRecoveryServicesVaultCreation'))]"
+  },
+  "compiledGuardCopyExpressions": {
+    "normalizedApprovedVaultRegions": "[toLower(trim(parameters('approvedVaultRegions')[copyIndex('normalizedApprovedVaultRegions')]))]",
+    "backupEligibleSubscriptionIds": "[toLower(trim(concat(createArray(parameters('workloadSubscriptionId')), if(parameters('enableCriticalInfrastructure'), parameters('criticalInfrastructureSubscriptionIds'), createArray()))[copyIndex('backupEligibleSubscriptionIds')]))]",
+    "approvedBackupVaultKeys": "[format('{0}|{1}', toLower(trim(parameters('approvedBackupVaults')[copyIndex('approvedBackupVaultKeys')].workload)), toLower(trim(parameters('approvedBackupVaults')[copyIndex('approvedBackupVaultKeys')].region)))]",
+    "approvedBackupVaultTargetKeyGroups": "[map(parameters('approvedBackupVaults')[copyIndex('approvedBackupVaultTargetKeyGroups')].inclusionTagValues, lambda('inclusionTagValue', format('{0}|{1}', toLower(trim(parameters('approvedBackupVaults')[copyIndex('approvedBackupVaultTargetKeyGroups')].region)), toLower(trim(lambdaVariables('inclusionTagValue'))))))]",
+    "approvedBackupVaultResourceIds": "[toLower(trim(parameters('approvedBackupVaults')[copyIndex('approvedBackupVaultResourceIds')].vaultResourceId))]",
+    "approvedBackupVaultResourceIdRegionKeys": "[format('{0}|{1}', toLower(trim(parameters('approvedBackupVaults')[copyIndex('approvedBackupVaultResourceIdRegionKeys')].vaultResourceId)), toLower(trim(parameters('approvedBackupVaults')[copyIndex('approvedBackupVaultResourceIdRegionKeys')].region)))]"
+  },
+  "compiledGuardFunctions": {
+    "isResourceNameSegment": "[and(and(not(empty(parameters('value'))), equals(parameters('value'), trim(parameters('value')))), empty(filter(createArray('<', '>', '%', '&', '\\', '?', '#', '+', ':', '\"', '|', '*', ';', ' '), lambda('forbiddenCharacter', contains(parameters('value'), lambdaVariables('forbiddenCharacter'))))))]",
+    "isRecoveryServicesVaultId": "[and(and(and(and(and(and(and(and(and(and(equals(parameters('value'), trim(parameters('value'))), equals(length(split(parameters('value'), '/')), 9)), empty(split(parameters('value'), '/')[0])), equals(toLower(split(parameters('value'), '/')[1]), 'subscriptions')), __bicep.isGuid(split(parameters('value'), '/')[2])), equals(toLower(split(parameters('value'), '/')[3]), 'resourcegroups')), __bicep.isResourceNameSegment(split(parameters('value'), '/')[4])), equals(toLower(split(parameters('value'), '/')[5]), 'providers')), equals(toLower(split(parameters('value'), '/')[6]), 'microsoft.recoveryservices')), equals(toLower(split(parameters('value'), '/')[7]), 'vaults')), __bicep.isResourceNameSegment(split(parameters('value'), '/')[8]))]",
+    "isBackupPolicyIdOfVault": "[and(and(and(and(and(equals(parameters('value'), trim(parameters('value'))), equals(length(split(parameters('value'), '/')), 11)), __bicep.isRecoveryServicesVaultId(parameters('vaultResourceId'))), startsWith(toLower(parameters('value')), format('{0}/backuppolicies/', toLower(parameters('vaultResourceId'))))), equals(toLower(split(parameters('value'), '/')[9]), 'backuppolicies')), __bicep.isResourceNameSegment(split(parameters('value'), '/')[10]))]"
+  },
+  "guardCases": [
     {
-      "name": "approved vault and policy in a governed subscription",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": true
-    },
-    {
-      "name": "case-insensitive parent match is still the same vault",
-      "region": "centralus",
-      "vaultResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-critical",
-      "backupPolicyResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourcegroups/rg-backup/providers/microsoft.recoveryservices/vaults/rsv-critical/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": true
-    },
-    {
-      "name": "central backup subscription rejected without explicit approval",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-central",
-      "backupPolicyResourceId": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-central/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
-    },
-    {
-      "name": "central backup subscription accepted after explicit approval",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-central",
-      "backupPolicyResourceId": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-central/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": true,
-      "valid": true
+      "name": "empty or duplicated approved vault region",
+      "input": {
+        "approvedVaultRegions": [
+          "eastus2",
+          "EastUS2"
+        ]
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "approvedVaultRegions must contain non-empty, non-global, case-insensitively unique Azure regions.",
+      "requiredExpressions": [
+        "variables('invalidApprovedVaultRegions')",
+        "union(variables('normalizedApprovedVaultRegions')"
+      ]
     },
     {
       "name": "region outside the approved vault regions",
-      "region": "westus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
+      "input": {
+        "region": "westus2",
+        "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily"
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
     },
     {
       "name": "backup policy belonging to a different vault",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-other/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
-    },
-    {
-      "name": "storage account resource ID supplied instead of a vault",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.Storage/storageAccounts/stbackup",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.Storage/storageAccounts/stbackup/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
-    },
-    {
-      "name": "vault resource ID supplied instead of a backup policy",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-other/backupPolicies/vm-daily"
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
     },
     {
       "name": "relative resource ID without a leading slash",
-      "region": "eastus2",
-      "vaultResourceId": "subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/extra",
-      "backupPolicyResourceId": "subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/extra/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "backupPolicyResourceId": "subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily"
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
     },
     {
       "name": "non-GUID subscription segment",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/not-a-subscription-guid/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "backupPolicyResourceId": "/subscriptions/not-a-subscription-guid/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "/subscriptions/not-a-subscription-guid/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "backupPolicyResourceId": "/subscriptions/not-a-subscription-guid/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily"
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
     },
     {
       "name": "percent-encoded vault name",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv%2Dworkload",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv%2Dworkload/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv%2Dworkload",
+        "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv%2Dworkload/backupPolicies/vm-daily"
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
     },
     {
-      "name": "forbidden characters in the backup policy name",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
+      "name": "space in the backup policy name",
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm daily"
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
     },
     {
       "name": "empty resource group segment",
-      "region": "eastus2",
-      "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups//providers/Microsoft.RecoveryServices/vaults/rsv-workload",
-      "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups//providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily",
-      "allowCrossSubscriptionBackupVaults": false,
-      "valid": false
-    }
-  ],
-  "mappingCases": [
-    {
-      "name": "one workload in two approved regions",
-      "entries": [
-        { "workload": "corp", "region": "eastus2", "inclusionTagValues": ["daily"] },
-        { "workload": "corp", "region": "centralus", "inclusionTagValues": ["daily"] }
-      ],
-      "valid": true
-    },
-    {
-      "name": "two workloads in one approved region with distinct tag values",
-      "entries": [
-        { "workload": "corp", "region": "eastus2", "inclusionTagValues": ["corp-daily"] },
-        { "workload": "scada", "region": "eastus2", "inclusionTagValues": ["scada-daily"] }
-      ],
-      "valid": true
-    },
-    {
-      "name": "duplicate workload and region pair",
-      "entries": [
-        { "workload": "corp", "region": "eastus2", "inclusionTagValues": ["daily"] },
-        { "workload": "CORP", "region": "EastUS2", "inclusionTagValues": ["weekly"] }
-      ],
-      "valid": false
-    },
-    {
-      "name": "overlapping inclusion tag values in the same region",
-      "entries": [
-        { "workload": "corp", "region": "eastus2", "inclusionTagValues": ["daily", "shared"] },
-        { "workload": "scada", "region": "eastus2", "inclusionTagValues": ["Shared"] }
-      ],
-      "valid": false
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups//providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups//providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily"
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
     },
     {
       "name": "entry without any inclusion tag value",
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily",
+        "inclusionTagValues": []
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.",
+      "requiredExpressions": [
+        "variables('invalidApprovedBackupVaults')"
+      ]
+    },
+    {
+      "name": "vault in an ungoverned central backup subscription",
+      "input": {
+        "region": "eastus2",
+        "vaultResourceId": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+        "allowCrossSubscriptionBackupVaults": false
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription",
+      "requiredExpressions": [
+        "variables('crossSubscriptionApprovedBackupVaults')",
+        "parameters('allowCrossSubscriptionBackupVaults')"
+      ]
+    },
+    {
+      "name": "same workload and region listed twice",
+      "input": {
+        "entries": [
+          {
+            "workload": "corp",
+            "region": "eastus2"
+          },
+          {
+            "workload": "CORP",
+            "region": "EastUS2"
+          }
+        ]
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "approvedBackupVaults must use case-insensitively unique workload and region pairs",
+      "requiredExpressions": [
+        "variables('approvedBackupVaultKeys')"
+      ]
+    },
+    {
+      "name": "two workloads sharing an inclusion tag value in one region",
+      "input": {
+        "entries": [
+          {
+            "workload": "corp",
+            "region": "eastus2",
+            "inclusionTagValues": [
+              "daily",
+              "shared"
+            ]
+          },
+          {
+            "workload": "scada",
+            "region": "eastus2",
+            "inclusionTagValues": [
+              "Shared"
+            ]
+          }
+        ]
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "approvedBackupVaults entries in the same region must not share an inclusion tag value",
+      "requiredExpressions": [
+        "variables('approvedBackupVaultTargetKeys')"
+      ]
+    },
+    {
+      "name": "one vault resource ID mapped to two regions",
+      "input": {
+        "entries": [
+          {
+            "workload": "corp",
+            "region": "eastus2",
+            "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload"
+          },
+          {
+            "workload": "corp",
+            "region": "centralus",
+            "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload"
+          }
+        ]
+      },
+      "guardVariable": "validatedApprovedBackupVaults",
+      "rejectionMessage": "Each approvedBackupVaults vault resource ID must map to exactly one region",
+      "requiredExpressions": [
+        "variables('approvedBackupVaultResourceIdRegionKeys')",
+        "variables('approvedBackupVaultResourceIds')"
+      ]
+    },
+    {
+      "name": "virtual machine backup remediation without vault, tag, or retention inputs",
+      "input": {
+        "enableVmBackupRemediation": true,
+        "approvedBackupVaults": [],
+        "vmBackupInclusionTagName": "",
+        "backupRetentionStandardId": ""
+      },
+      "guardVariable": "validatedVmBackupRemediation",
+      "rejectionMessage": "enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs",
+      "requiredExpressions": [
+        "variables('vmBackupRemediationInputsValid')",
+        "parameters('enableVmBackupRemediation')"
+      ]
+    },
+    {
+      "name": "vault diagnostics without any effective workspace",
+      "input": {
+        "enableVaultDiagnostics": true,
+        "deployCentralLogAnalytics": false,
+        "existingLogAnalyticsWorkspaceResourceId": ""
+      },
+      "guardVariable": "validatedVaultDiagnostics",
+      "rejectionMessage": "enableVaultDiagnostics requires deployCentralLogAnalytics to be true",
+      "requiredExpressions": [
+        "variables('vaultDiagnosticsWorkspaceConfigured')",
+        "parameters('enableVaultDiagnostics')"
+      ]
+    },
+    {
+      "name": "workspace role assignment requested without the diagnostics assignment",
+      "input": {
+        "grantVaultDiagnosticsWorkspaceAccess": true,
+        "enableVaultDiagnostics": false
+      },
+      "guardVariable": "validatedVaultDiagnosticsWorkspaceAccess",
+      "rejectionMessage": "grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true",
+      "requiredExpressions": [
+        "parameters('grantVaultDiagnosticsWorkspaceAccess')",
+        "parameters('enableVaultDiagnostics')"
+      ]
+    },
+    {
+      "name": "workspace role assignment requested without a canonical workspace ID",
+      "input": {
+        "grantVaultDiagnosticsWorkspaceAccess": true,
+        "enableVaultDiagnostics": true,
+        "existingLogAnalyticsWorkspaceResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitoring/providers/Microsoft.OperationalInsights/workspaces"
+      },
+      "guardVariable": "validatedVaultDiagnosticsWorkspaceAccess",
+      "rejectionMessage": "grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID",
+      "requiredExpressions": [
+        "variables('vaultDiagnosticsWorkspaceIdValid')"
+      ]
+    },
+    {
+      "name": "optional vault creation alongside approved existing vaults",
+      "input": {
+        "deployRecoveryServicesVault": true,
+        "approvedBackupVaults": [
+          {
+            "workload": "corp",
+            "region": "eastus2"
+          }
+        ]
+      },
+      "guardVariable": "validatedRecoveryServicesVaultCreation",
+      "rejectionMessage": "deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied",
+      "requiredExpressions": [
+        "parameters('deployRecoveryServicesVault')",
+        "parameters('approvedBackupVaults')"
+      ]
+    },
+    {
+      "name": "optional vault creation in an unapproved region",
+      "input": {
+        "deployRecoveryServicesVault": true,
+        "approvedVaultRegions": [],
+        "recoveryServicesVaultLocation": "eastus2"
+      },
+      "guardVariable": "validatedRecoveryServicesVaultCreation",
+      "rejectionMessage": "recoveryServicesVaultLocation must be one of approvedVaultRegions",
+      "requiredExpressions": [
+        "variables('normalizedApprovedVaultRegions')",
+        "parameters('recoveryServicesVaultLocation')"
+      ]
+    },
+    {
+      "name": "optional vault creation without a documented retention standard",
+      "input": {
+        "deployRecoveryServicesVault": true,
+        "approvedVaultRegions": [
+          "eastus2"
+        ],
+        "recoveryServicesVaultLocation": "eastus2",
+        "backupRetentionStandardId": ""
+      },
+      "guardVariable": "validatedRecoveryServicesVaultCreation",
+      "rejectionMessage": "deployRecoveryServicesVault requires a documented backupRetentionStandardId",
+      "requiredExpressions": [
+        "parameters('backupRetentionStandardId')"
+      ]
+    }
+  ],
+  "acceptedCases": [
+    {
+      "name": "one workload in two regions using a separate vault per region",
       "entries": [
-        { "workload": "corp", "region": "eastus2", "inclusionTagValues": [] }
-      ],
-      "valid": false
+        {
+          "workload": "corp",
+          "region": "eastus2",
+          "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload-eastus2",
+          "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload-eastus2/backupPolicies/vm-daily",
+          "inclusionTagValues": [
+            "corp-daily"
+          ]
+        },
+        {
+          "workload": "corp",
+          "region": "centralus",
+          "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload-centralus",
+          "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload-centralus/backupPolicies/vm-daily",
+          "inclusionTagValues": [
+            "corp-daily"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two workloads in one region with distinct inclusion tag values",
+      "entries": [
+        {
+          "workload": "corp",
+          "region": "eastus2",
+          "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+          "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-daily",
+          "inclusionTagValues": [
+            "corp-daily"
+          ]
+        },
+        {
+          "workload": "scada",
+          "region": "eastus2",
+          "vaultResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload",
+          "backupPolicyResourceId": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults/rsv-workload/backupPolicies/vm-weekly",
+          "inclusionTagValues": [
+            "scada-daily"
+          ]
+        }
+      ]
     }
   ]
 }

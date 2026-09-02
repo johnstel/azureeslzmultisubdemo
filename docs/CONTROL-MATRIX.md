@@ -2,7 +2,7 @@
 
 This document is the human-readable companion to the machine-readable [`policy/control-catalog.json`](../policy/control-catalog.json). It maps every customer requirement identified for v2.0 to its implementation mechanism, before any new policy code is written. Regenerate this document whenever the JSON catalog changes so the two stay consistent.
 
-- **Catalog version:** `1.2.0`
+- **Catalog version:** `1.2.1`
 - **Generated on:** `2026-09-02`
 - **Source issue:** https://github.com/johnstel/azureeslzmultisubdemo/issues/3
 - **Total control records:** 63
@@ -142,7 +142,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | REQ-BKP-08 | Audit that soft delete is enabled on Recovery Services vaults so deleted backup data stays recoverable (issue #19 vault protection). | landingzones | azure-policy | Soft delete must be enabled for Recovery Services Vaults. (built-in: Yes) | `31b8092a-36b8-434b-9af7-5ec844364148` | 1.0.1 | Audit, Disabled | audit-only |
 | REQ-BKP-09 | Audit that multi-user authorization (MUA) is enabled on Recovery Services vaults so privileged backup operations require a Resource Guard approval (issue #19 vault protection). | landingzones | azure-policy | Multi-User Authorization (MUA) must be enabled for Recovery Services Vaults. (built-in: Yes) | `c7031eab-0fc0-4cd9-acd0-4497bd66d91a` | 1.0.1 | Audit, Disabled | audit-only |
 
-**Required customer backup inputs:** `recoveryServicesVaultResourceId`, `backupRetentionStandardId`, `approvedVaultRegions`, `workloadToVaultMapping`, explicit `effect` values for REQ-BKP-04 through REQ-BKP-06 and REQ-BKP-08 through REQ-BKP-09, `enableDoubleEncryption`, `checkLockedImmutabilityOnly`, `checkAlwaysOnSoftDeleteOnly`, and `logAnalytics`. Defaults create and configure nothing; REQ-BKP-07 remediation remains explicit opt-in.
+**Required customer backup inputs:** `approvedBackupVaults` (workload, region, vaultResourceId, backupPolicyResourceId, inclusionTagValues), `approvedVaultRegions`, `backupRetentionStandardId`, explicit `effect` values for REQ-BKP-04 through REQ-BKP-06 and REQ-BKP-08 through REQ-BKP-09, `enableDoubleEncryption`, `checkLockedImmutabilityOnly`, `checkAlwaysOnSoftDeleteOnly`, and `logAnalytics`. Defaults create and configure nothing; REQ-BKP-07 remediation remains explicit opt-in.
 
 ## NERC CIP
 
