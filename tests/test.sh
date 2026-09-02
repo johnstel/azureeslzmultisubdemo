@@ -2365,9 +2365,10 @@ if ! grep -q '^account show --query tenantId --output tsv$' "${access_review_az_
   printf 'ERROR: The privileged access review must verify the signed-in tenant before reading assignments.\n' >&2
   exit 1
 fi
-if grep -vq '^\(account show\|role assignment list\)' "${access_review_az_log}"; then
+access_review_unexpected_calls="$(grep -Ev '^(account show|role assignment list) ' "${access_review_az_log}" || true)"
+if [[ -n "${access_review_unexpected_calls//[[:space:]]/}" ]]; then
   printf 'ERROR: The privileged access review invoked an Azure CLI command that is not read-only.\n' >&2
-  cat "${access_review_az_log}" >&2
+  printf '%s\n' "${access_review_unexpected_calls}" >&2
   exit 1
 fi
 : > "${access_review_az_log}"

@@ -271,13 +271,10 @@ if (-not $allCriteriaValid) {
     Stop-Review "Criteria file is not a valid access-review criteria document: $CriteriaFile"
 }
 
-$projectDir = Split-Path -Parent $PSScriptRoot
-if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    Stop-Review '-OutputDirectory must name a directory.'
 }
-else {
-    $OutputDirectory = [System.IO.Path]::GetFullPath((Join-Path $projectDir '.access-reviews'))
-}
+$OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
     New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
 }
@@ -457,7 +454,7 @@ $report = [ordered]@{
     findings = @($findings)
 }
 
-$reportJsonText = $report | ConvertTo-Json -Depth 10
+$reportJsonText = $report | ConvertTo-Json -Depth 20
 [System.IO.File]::WriteAllText($reportJsonPath, $reportJsonText, [System.Text.UTF8Encoding]::new($false))
 
 $subscriptionLines = if ($report.subscriptionIds.Count -gt 0) { ($report.subscriptionIds -join ', ') } else { '' }
