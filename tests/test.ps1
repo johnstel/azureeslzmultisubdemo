@@ -2161,9 +2161,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
 
     Write-Host '25/25 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
     if (-not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func hasCanonicalArmIdSegments' -Quiet) -or
-        -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func isCanonicalNameSegment' -Quiet) -or
-        -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func isWorkspaceResourceId\(value string\) bool => length\(split\(value, ''/''\)\) == 9 && hasCanonicalArmIdSegments\(value\)' -Quiet)) {
-        Stop-Test 'Workspace resource ID validation must require a canonical absolute ARM ID and canonical segment names.'
+        -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern "func isResourceGroupName\(value string\) bool => !empty\(value\) && length\(value\) <= 90 && value == trim\(value\) && !endsWith\(value, '\.'\) && empty\(stripAlphaNumeric\(stripResourceGroupNamePunctuation\(value\)\)\)" -Quiet) -or
+        -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern "func isLogAnalyticsWorkspaceName\(value string\) bool => length\(value\) >= 4 && length\(value\) <= 63 && value == trim\(value\) && !startsWith\(value, '-'\) && !endsWith\(value, '-'\) && empty\(stripAlphaNumeric\(replace\(value, '-', ''\)\)\)" -Quiet) -or
+        -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern "func isWorkspaceResourceId\(value string\) bool => length\(split\(value, ''/''\)\) == 9 && hasCanonicalArmIdSegments\(value\) && toLower\(split\(value, ''/''\)\[1\]\) == 'subscriptions' && isGuid\(split\(value, ''/''\)\[2\]\) && toLower\(split\(value, ''/''\)\[3\]\) == 'resourcegroups' && isResourceGroupName\(split\(value, ''/''\)\[4\]\) && toLower\(split\(value, ''/''\)\[5\]\) == 'providers' && toLower\(split\(value, ''/''\)\[6\]\) == 'microsoft\.operationalinsights' && toLower\(split\(value, ''/''\)\[7\]\) == 'workspaces' && isLogAnalyticsWorkspaceName\(split\(value, ''/''\)\[8\]\)" -Quiet)) {
+        Stop-Test 'Workspace resource ID validation must require canonical absolute ARM IDs plus Azure-legal resource group and workspace name rules.'
     }
     $logActivityControl = $controlCatalog.controls | Where-Object { $_.id -eq 'REQ-LOG-01' } | Select-Object -First 1
     $logDiagnosticsControl = $controlCatalog.controls | Where-Object { $_.id -eq 'REQ-LOG-02' } | Select-Object -First 1
@@ -2206,6 +2207,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($compiledJson.variables.monitoringContributorRoleDefinitionId -ne @($logActivityControl.roleDefinitionIds)[0] -or
         $compiledJson.variables.logAnalyticsContributorRoleDefinitionId -ne @($logDiagnosticsControl.roleDefinitionIds)[0]) {
         Stop-Test 'Logging remediation role variables must match the verified control-catalog roleDefinitionIds.'
+    }
+    if ($compiledJson.variables.loggingAssignmentsRequireWorkspace -ne "[or(or(equals(parameters('activityLogExportPolicyEffect'), 'DeployIfNotExists'), equals(parameters('resourceDiagnosticsPolicyEffect'), 'DeployIfNotExists')), equals(parameters('resourceDiagnosticsPolicyEffect'), 'AuditIfNotExists'))]" -or
+        $compiledJson.variables.activityLogRemediationDeployRequested -ne "[equals(parameters('activityLogExportPolicyEffect'), 'DeployIfNotExists')]" -or
+        $compiledJson.variables.resourceDiagnosticsRemediationDeployRequested -ne "[equals(parameters('resourceDiagnosticsPolicyEffect'), 'DeployIfNotExists')]" -or
+        $compiledJson.variables.deployActivityLogRemediationRoleAssignments -ne "[and(and(parameters('deployRoleAssignments'), parameters('deployLoggingRemediationRoleAssignments')), variables('activityLogRemediationDeployRequested'))]" -or
+        $compiledJson.variables.deployResourceDiagnosticsRemediationRoleAssignments -ne "[and(and(parameters('deployRoleAssignments'), parameters('deployLoggingRemediationRoleAssignments')), variables('resourceDiagnosticsRemediationDeployRequested'))]") {
+        Stop-Test 'Logging workspace validation/remediation gating expressions must exactly match the expected compiled conditions.'
     }
     $activityDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -2373,6 +2381,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test 'loggingAssignments output must expose effects, category-group, and gated workspace destination-role assignment outputs.'
     }
     Write-Host '    Confirm mirrored logging compile-matrix coverage across enabled/disabled effects, workspace paths, and category-group modes...'
+    $validWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+    $malformedWorkspaceResourceId = '/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/'
+    $wrongTypeWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.Storage/storageAccounts/not-a-workspace'
+    $malformedPrefixWorkspaceResourceId = 'junk/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+    $forbiddenSegmentWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/./providers/Microsoft.OperationalInsights/workspaces/..'
+    $illegalResourceGroupWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg#bad/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+    $illegalWorkspaceNameResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/-bad-'
     $loggingCases = @(
         @{
             Name = 'disabled-empty-default'
@@ -2387,7 +2402,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         @{
             Name = 'activity-deploy-existing-valid'
             deployCentralLogAnalytics = $false
-            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+            existingLogAnalyticsWorkspaceResourceId = $validWorkspaceResourceId
             activityLogExportPolicyEffect = 'DeployIfNotExists'
             resourceDiagnosticsPolicyEffect = 'Disabled'
             resourceDiagnosticsCategoryGroup = 'audit'
@@ -2397,7 +2412,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         @{
             Name = 'diagnostics-deploy-existing-alllogs'
             deployCentralLogAnalytics = $false
-            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+            existingLogAnalyticsWorkspaceResourceId = $validWorkspaceResourceId
             activityLogExportPolicyEffect = 'Disabled'
             resourceDiagnosticsPolicyEffect = 'DeployIfNotExists'
             resourceDiagnosticsCategoryGroup = 'allLogs'
@@ -2407,7 +2422,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         @{
             Name = 'diagnostics-auditif-existing'
             deployCentralLogAnalytics = $false
-            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+            existingLogAnalyticsWorkspaceResourceId = $validWorkspaceResourceId
             activityLogExportPolicyEffect = 'Disabled'
             resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
             resourceDiagnosticsCategoryGroup = 'audit'
@@ -2437,7 +2452,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         @{
             Name = 'enabled-malformed-existing-id'
             deployCentralLogAnalytics = $false
-            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/'
+            existingLogAnalyticsWorkspaceResourceId = $malformedWorkspaceResourceId
             activityLogExportPolicyEffect = 'DeployIfNotExists'
             resourceDiagnosticsPolicyEffect = 'DeployIfNotExists'
             resourceDiagnosticsCategoryGroup = 'audit'
@@ -2447,7 +2462,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         @{
             Name = 'enabled-wrong-type-existing-id'
             deployCentralLogAnalytics = $false
-            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.Storage/storageAccounts/not-a-workspace'
+            existingLogAnalyticsWorkspaceResourceId = $wrongTypeWorkspaceResourceId
             activityLogExportPolicyEffect = 'Disabled'
             resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
             resourceDiagnosticsCategoryGroup = 'allLogs'
@@ -2457,7 +2472,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         @{
             Name = 'enabled-malformed-prefix-existing-id'
             deployCentralLogAnalytics = $false
-            existingLogAnalyticsWorkspaceResourceId = 'junk/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central'
+            existingLogAnalyticsWorkspaceResourceId = $malformedPrefixWorkspaceResourceId
             activityLogExportPolicyEffect = 'DeployIfNotExists'
             resourceDiagnosticsPolicyEffect = 'Disabled'
             resourceDiagnosticsCategoryGroup = 'audit'
@@ -2467,7 +2482,27 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         @{
             Name = 'enabled-forbidden-segment-existing-id'
             deployCentralLogAnalytics = $false
-            existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/./providers/Microsoft.OperationalInsights/workspaces/..'
+            existingLogAnalyticsWorkspaceResourceId = $forbiddenSegmentWorkspaceResourceId
+            activityLogExportPolicyEffect = 'Disabled'
+            resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
+            resourceDiagnosticsCategoryGroup = 'allLogs'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'enabled-illegal-rg-name-existing-id'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = $illegalResourceGroupWorkspaceResourceId
+            activityLogExportPolicyEffect = 'DeployIfNotExists'
+            resourceDiagnosticsPolicyEffect = 'Disabled'
+            resourceDiagnosticsCategoryGroup = 'audit'
+            deployRoleAssignments = $true
+            deployLoggingRemediationRoleAssignments = $true
+        },
+        @{
+            Name = 'enabled-illegal-workspace-name-existing-id'
+            deployCentralLogAnalytics = $false
+            existingLogAnalyticsWorkspaceResourceId = $illegalWorkspaceNameResourceId
             activityLogExportPolicyEffect = 'Disabled'
             resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
             resourceDiagnosticsCategoryGroup = 'allLogs'
@@ -2479,6 +2514,30 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $categoryModes = [System.Collections.Generic.HashSet[string]]::new()
     $effectStates = [System.Collections.Generic.HashSet[string]]::new()
     $loggingParameterTemplateText = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/main.template.bicepparam') -Raw
+    function Test-ResourceGroupName {
+        param([string]$Value)
+        if ($Value -cne $Value.Trim() -or $Value.Length -lt 1 -or $Value.Length -gt 90 -or $Value.EndsWith('.')) { return $false }
+        return $Value -cmatch '^[A-Za-z0-9_.()\-]+$'
+    }
+    function Test-LogAnalyticsWorkspaceName {
+        param([string]$Value)
+        if ($Value -cne $Value.Trim() -or $Value.Length -lt 4 -or $Value.Length -gt 63) { return $false }
+        if ($Value.StartsWith('-') -or $Value.EndsWith('-')) { return $false }
+        return $Value -cmatch '^[A-Za-z0-9-]+$'
+    }
+    function Test-WorkspaceResourceIdOffline {
+        param([string]$Value)
+        if ($Value -cne $Value.Trim() -or -not $Value.StartsWith('/') -or $Value.EndsWith('/')) { return $false }
+        $parts = $Value.Split('/')
+        if ($parts.Length -ne 9 -or $parts[0] -ne '') { return $false }
+        foreach ($part in $parts[1..8]) {
+            if ($part -eq '' -or $part -cne $part.Trim()) { return $false }
+        }
+        if ($parts[1].ToLowerInvariant() -ne 'subscriptions' -or $parts[2] -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') { return $false }
+        if ($parts[3].ToLowerInvariant() -ne 'resourcegroups' -or -not (Test-ResourceGroupName -Value $parts[4])) { return $false }
+        if ($parts[5].ToLowerInvariant() -ne 'providers' -or $parts[6].ToLowerInvariant() -ne 'microsoft.operationalinsights' -or $parts[7].ToLowerInvariant() -ne 'workspaces') { return $false }
+        return Test-LogAnalyticsWorkspaceName -Value $parts[8]
+    }
     foreach ($loggingCase in $loggingCases) {
         $caseParametersPath = Join-Path $TempDir ("logging-" + $loggingCase.Name + '.bicepparam')
         $caseText = $loggingParameterTemplateText -replace "(?m)^using '\.\./main\.bicep'$", "using '../../main.bicep'"
@@ -2496,26 +2555,36 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
                 Stop-Test "Logging matrix case $($loggingCase.Name) did not compile expected parameter value for $property."
             }
         }
+        if (-not $loggingCase.deployCentralLogAnalytics -and -not [string]::IsNullOrEmpty($loggingCase.existingLogAnalyticsWorkspaceResourceId)) {
+            $expectedValidWorkspaceId = $loggingCase.existingLogAnalyticsWorkspaceResourceId -ceq $validWorkspaceResourceId
+            if ((Test-WorkspaceResourceIdOffline -Value $loggingCase.existingLogAnalyticsWorkspaceResourceId) -ne $expectedValidWorkspaceId) {
+                Stop-Test "Logging matrix case $($loggingCase.Name) did not match offline workspace-ID rejection expectations."
+            }
+        }
         if ($loggingCase.deployCentralLogAnalytics) {
             [void]$workspaceModes.Add('new')
         } elseif ([string]::IsNullOrEmpty($loggingCase.existingLogAnalyticsWorkspaceResourceId)) {
             [void]$workspaceModes.Add('empty')
-        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central') {
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq $validWorkspaceResourceId) {
             [void]$workspaceModes.Add('existing-valid')
-        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq '/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/') {
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq $malformedWorkspaceResourceId) {
             [void]$workspaceModes.Add('existing-malformed')
-        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.Storage/storageAccounts/not-a-workspace') {
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq $wrongTypeWorkspaceResourceId) {
             [void]$workspaceModes.Add('existing-wrong-type')
-        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq 'junk/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central') {
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq $malformedPrefixWorkspaceResourceId) {
             [void]$workspaceModes.Add('existing-malformed-prefix')
-        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/./providers/Microsoft.OperationalInsights/workspaces/..') {
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq $forbiddenSegmentWorkspaceResourceId) {
             [void]$workspaceModes.Add('existing-forbidden-segment')
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq $illegalResourceGroupWorkspaceResourceId) {
+            [void]$workspaceModes.Add('existing-illegal-rg-name')
+        } elseif ($loggingCase.existingLogAnalyticsWorkspaceResourceId -eq $illegalWorkspaceNameResourceId) {
+            [void]$workspaceModes.Add('existing-illegal-workspace-name')
         }
         [void]$categoryModes.Add($loggingCase.resourceDiagnosticsCategoryGroup)
         [void]$effectStates.Add("$($loggingCase.activityLogExportPolicyEffect)|$($loggingCase.resourceDiagnosticsPolicyEffect)")
     }
-    if (Compare-Object @($workspaceModes) @('new', 'empty', 'existing-valid', 'existing-malformed', 'existing-wrong-type', 'existing-malformed-prefix', 'existing-forbidden-segment')) {
-        Stop-Test 'Logging matrix coverage must include new, empty, valid-existing, malformed-existing, wrong-type-existing, malformed-prefix, and forbidden-segment workspace paths.'
+    if (Compare-Object @($workspaceModes) @('new', 'empty', 'existing-valid', 'existing-malformed', 'existing-wrong-type', 'existing-malformed-prefix', 'existing-forbidden-segment', 'existing-illegal-rg-name', 'existing-illegal-workspace-name')) {
+        Stop-Test 'Logging matrix coverage must include new, empty, valid-existing, malformed-existing, wrong-type-existing, malformed-prefix, forbidden-segment, illegal-resource-group-name, and illegal-workspace-name workspace paths.'
     }
     if (Compare-Object @($categoryModes) @('audit', 'allLogs')) {
         Stop-Test 'Logging matrix coverage must include both resourceDiagnosticsCategoryGroup values: audit and allLogs.'

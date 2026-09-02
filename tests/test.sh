@@ -1658,8 +1658,9 @@ jq -e '
 
 printf '25/25 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
 rg -q -F "func hasCanonicalArmIdSegments" "${PROJECT_DIR}/main.bicep"
-rg -q -F "func isCanonicalNameSegment" "${PROJECT_DIR}/main.bicep"
-rg -q -F "func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && hasCanonicalArmIdSegments(value)" "${PROJECT_DIR}/main.bicep"
+rg -q -F "func isResourceGroupName(value string) bool => !empty(value) && length(value) <= 90 && value == trim(value) && !endsWith(value, '.') && empty(stripAlphaNumeric(stripResourceGroupNamePunctuation(value)))" "${PROJECT_DIR}/main.bicep"
+rg -q -F "func isLogAnalyticsWorkspaceName(value string) bool => length(value) >= 4 && length(value) <= 63 && value == trim(value) && !startsWith(value, '-') && !endsWith(value, '-') && empty(stripAlphaNumeric(replace(value, '-', '')))" "${PROJECT_DIR}/main.bicep"
+rg -q -F "func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && hasCanonicalArmIdSegments(value) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceGroupName(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && isLogAnalyticsWorkspaceName(split(value, '/')[8])" "${PROJECT_DIR}/main.bicep"
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
     first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
@@ -1697,8 +1698,14 @@ jq -e --slurpfile catalog "${control_catalog}" '
     "[if(parameters(\u0027deployCentralLogAnalytics\u0027), format(\u0027log-{0}-central\u0027, parameters(\u0027namePrefix\u0027)), variables(\u0027existingWorkspaceResourceIdParts\u0027)[8])]" and
   .variables.monitoringContributorRoleDefinitionId == (control("REQ-LOG-01").roleDefinitionIds | first) and
   .variables.logAnalyticsContributorRoleDefinitionId == (control("REQ-LOG-02").roleDefinitionIds | first) and
+  .variables.loggingAssignmentsRequireWorkspace ==
+    "[or(or(equals(parameters(\u0027activityLogExportPolicyEffect\u0027), \u0027DeployIfNotExists\u0027), equals(parameters(\u0027resourceDiagnosticsPolicyEffect\u0027), \u0027DeployIfNotExists\u0027)), equals(parameters(\u0027resourceDiagnosticsPolicyEffect\u0027), \u0027AuditIfNotExists\u0027))]" and
   .variables.activityLogRemediationDeployRequested == "[equals(parameters(\u0027activityLogExportPolicyEffect\u0027), \u0027DeployIfNotExists\u0027)]" and
   .variables.resourceDiagnosticsRemediationDeployRequested == "[equals(parameters(\u0027resourceDiagnosticsPolicyEffect\u0027), \u0027DeployIfNotExists\u0027)]" and
+  .variables.deployActivityLogRemediationRoleAssignments ==
+    "[and(and(parameters(\u0027deployRoleAssignments\u0027), parameters(\u0027deployLoggingRemediationRoleAssignments\u0027)), variables(\u0027activityLogRemediationDeployRequested\u0027))]" and
+  .variables.deployResourceDiagnosticsRemediationRoleAssignments ==
+    "[and(and(parameters(\u0027deployRoleAssignments\u0027), parameters(\u0027deployLoggingRemediationRoleAssignments\u0027)), variables(\u0027resourceDiagnosticsRemediationDeployRequested\u0027))]" and
   assigned_at_demo_root($activity) and assigned_at_demo_root($activity_remediating) and
   assigned_at_demo_root($diagnostics) and assigned_at_demo_root($diagnostics_remediating) and
   all(($activity, $activity_remediating, $diagnostics, $diagnostics_remediating);
@@ -1868,6 +1875,8 @@ wrong_type_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/reso
 malformed_workspace = "/subscriptions/not-a-guid/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/"
 malformed_prefix_workspace = "junk/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/log-demo-central"
 forbidden_segment_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/./providers/Microsoft.OperationalInsights/workspaces/.."
+illegal_rg_name_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg#bad/providers/Microsoft.OperationalInsights/workspaces/log-demo-central"
+illegal_workspace_name_workspace = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitor/providers/Microsoft.OperationalInsights/workspaces/-bad-"
 
 cases = [
     {
@@ -1970,11 +1979,59 @@ cases = [
         "deployRoleAssignments": "true",
         "deployLoggingRemediationRoleAssignments": "true",
     },
+    {
+        "name": "enabled-illegal-rg-name-existing-id",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": illegal_rg_name_workspace,
+        "activityLogExportPolicyEffect": "DeployIfNotExists",
+        "resourceDiagnosticsPolicyEffect": "Disabled",
+        "resourceDiagnosticsCategoryGroup": "audit",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
+    {
+        "name": "enabled-illegal-workspace-name-existing-id",
+        "deployCentralLogAnalytics": "false",
+        "existingLogAnalyticsWorkspaceResourceId": illegal_workspace_name_workspace,
+        "activityLogExportPolicyEffect": "Disabled",
+        "resourceDiagnosticsPolicyEffect": "AuditIfNotExists",
+        "resourceDiagnosticsCategoryGroup": "allLogs",
+        "deployRoleAssignments": "true",
+        "deployLoggingRemediationRoleAssignments": "true",
+    },
 ]
 
 def replace_param(text: str, name: str, value_literal: str) -> str:
     pattern = rf"(?m)^param {re.escape(name)} = .*$"
     return re.sub(pattern, f"param {name} = {value_literal}", text)
+
+def is_resource_group_name(value: str) -> bool:
+    if value != value.strip() or len(value) < 1 or len(value) > 90 or value.endswith('.'):
+        return False
+    return all(ch.isalnum() or ch in "_.-()" for ch in value)
+
+def is_workspace_name(value: str) -> bool:
+    if value != value.strip() or len(value) < 4 or len(value) > 63:
+        return False
+    if value.startswith("-") or value.endswith("-"):
+        return False
+    return all(ch.isalnum() or ch == '-' for ch in value)
+
+def is_workspace_resource_id(value: str) -> bool:
+    if value != value.strip() or not value.startswith('/') or value.endswith('/'):
+        return False
+    parts = value.split('/')
+    if len(parts) != 9 or parts[0] != '':
+        return False
+    if any(part == '' or part != part.strip() for part in parts[1:]):
+        return False
+    if parts[1].lower() != "subscriptions" or not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", parts[2]):
+        return False
+    if parts[3].lower() != "resourcegroups" or not is_resource_group_name(parts[4]):
+        return False
+    if parts[5].lower() != "providers" or parts[6].lower() != "microsoft.operationalinsights" or parts[7].lower() != "workspaces":
+        return False
+    return is_workspace_name(parts[8])
 
 covered_workspace_modes = set()
 covered_category_modes = set()
@@ -2012,6 +2069,11 @@ for case in cases:
         if compiled_value != expected_value:
             raise SystemExit(f"ERROR: Logging matrix case {case['name']} did not compile expected parameter value for {key}.")
     existing_id = case["existingLogAnalyticsWorkspaceResourceId"]
+    if case["deployCentralLogAnalytics"] == "false" and existing_id != "":
+        is_valid = is_workspace_resource_id(existing_id)
+        expected_valid = existing_id == valid_workspace
+        if is_valid != expected_valid:
+            raise SystemExit(f"ERROR: Logging matrix offline workspace-ID rejection mismatch for {case['name']}.")
     if case["deployCentralLogAnalytics"] == "true":
         covered_workspace_modes.add("new")
     elif existing_id == "":
@@ -2026,6 +2088,10 @@ for case in cases:
         covered_workspace_modes.add("existing-malformed-prefix")
     elif existing_id == forbidden_segment_workspace:
         covered_workspace_modes.add("existing-forbidden-segment")
+    elif existing_id == illegal_rg_name_workspace:
+        covered_workspace_modes.add("existing-illegal-rg-name")
+    elif existing_id == illegal_workspace_name_workspace:
+        covered_workspace_modes.add("existing-illegal-workspace-name")
     covered_category_modes.add(case["resourceDiagnosticsCategoryGroup"])
     covered_effect_states.add((case["activityLogExportPolicyEffect"], case["resourceDiagnosticsPolicyEffect"]))
 
@@ -2037,6 +2103,8 @@ required_workspace_modes = {
     "existing-wrong-type",
     "existing-malformed-prefix",
     "existing-forbidden-segment",
+    "existing-illegal-rg-name",
+    "existing-illegal-workspace-name",
 }
 if covered_workspace_modes != required_workspace_modes:
     raise SystemExit(f"ERROR: Logging matrix coverage mismatch for workspace-path modes: {covered_workspace_modes}")
