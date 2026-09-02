@@ -1985,6 +1985,7 @@ jq -e --slurpfile catalog "${control_catalog}" '
   deployment("assign-vault-diagnostics") as $diagnostics |
   deployment("customer-owned-backup-vault") as $vault |
   deployment("vault-diagnostics-workspace-rbac") as $workspaceRbac |
+  deployment("assign-vault-diagnostics-audit") as $diagnosticsAudit |
   ($initiative.properties.parameters.policyDefinitionReferences.value
     | map({key: .policyDefinitionReferenceId, value: .}) | from_entries) as $references |
   .parameters.enableVmBackupRemediation.defaultValue == false and
@@ -2063,7 +2064,24 @@ jq -e --slurpfile catalog "${control_catalog}" '
     "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].region]" and
   $vmBackup.properties.parameters.parameters.value.inclusionTagValue.value ==
     "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].inclusionTagValues]" and
-  $diagnostics.condition == "[variables(\u0027vaultDiagnosticsActive\u0027)]" and
+  .variables.vaultDiagnosticsRemediationActive ==
+    "[and(variables(\u0027vaultDiagnosticsActive\u0027), equals(parameters(\u0027vaultDiagnosticsEffect\u0027), \u0027DeployIfNotExists\u0027))]" and
+  .variables.vaultDiagnosticsAuditActive ==
+    "[and(variables(\u0027vaultDiagnosticsActive\u0027), not(equals(parameters(\u0027vaultDiagnosticsEffect\u0027), \u0027DeployIfNotExists\u0027)))]" and
+  .variables.vaultDiagnosticsWorkspaceAccessActive ==
+    "[and(and(parameters(\u0027grantVaultDiagnosticsWorkspaceAccess\u0027), variables(\u0027vaultDiagnosticsRemediationActive\u0027)), variables(\u0027validatedVaultDiagnosticsWorkspaceAccess\u0027))]" and
+  $diagnostics.condition == "[variables(\u0027vaultDiagnosticsRemediationActive\u0027)]" and
+  $diagnosticsAudit.condition == "[variables(\u0027vaultDiagnosticsAuditActive\u0027)]" and
+  ($diagnosticsAudit.scope | contains("landingZonesManagementGroupId")) and
+  ($diagnosticsAudit.properties.parameters | has("identity") | not) and
+  ($diagnosticsAudit.properties.parameters | has("verifiedRoleDefinitionIds") | not) and
+  ([$diagnosticsAudit.properties.template.resources[]
+    | select(has("identity"))] | length) == 0 and
+  ([$diagnosticsAudit.properties.template.resources[]
+    | select(.type? == "Microsoft.Authorization/roleAssignments")] | length) == 0 and
+  $diagnosticsAudit.properties.parameters.definitionVersion.value == pinned_version("REQ-BKP-07") and
+  $diagnosticsAudit.properties.parameters.parameters.value.resourceTypeList.value ==
+    ["microsoft.recoveryservices/vaults"] and
   ($diagnostics.scope | contains("landingZonesManagementGroupId")) and
   $diagnostics.properties.parameters.definitionVersion.value == pinned_version("REQ-BKP-07") and
   $diagnostics.properties.parameters.parameters.value.resourceTypeList.value ==
@@ -2105,12 +2123,25 @@ jq -e --slurpfile catalog "${control_catalog}" '
   .outputs.backupRemediation.value.vaultDiagnosticsEnforcementMode ==
     "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
   (.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite
-    | contains("vaultDiagnosticsEffect") and contains("DeployIfNotExists") and contains("Default")) and
+    | contains("vaultDiagnosticsRemediationActive") and contains("Default")) and
   (.outputs.backupRemediation.value.vaultDiagnosticsPrincipalId | contains("identityPrincipalId")) and
   (.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceAccessGranted
     | contains("vaultDiagnosticsWorkspaceAccessActive")) and
   (.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceRoleAssignmentIds
-    | contains("roleAssignmentIds"))
+    | contains("roleAssignmentIds")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsIdentityAttached
+    | contains("vaultDiagnosticsRemediationActive")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsRoleDefinitionIds
+    | contains("vaultDiagnosticsRemediationActive")) and
+  (.variables.validatedVaultDiagnosticsWorkspaceAccess
+    | contains("vaultDiagnosticsEffect") and contains("vaultDiagnosticsWorkspaceIdValid")) and
+  (.variables.vaultDiagnosticsWorkspaceIdValid
+    | contains("isLogAnalyticsWorkspaceId")) and
+  (.functions[0].members.isLogAnalyticsWorkspaceId.output.value
+    | contains("\u0027subscriptions\u0027") and contains("\u0027resourcegroups\u0027")
+      and contains("\u0027providers\u0027") and contains("\u0027microsoft.operationalinsights\u0027")
+      and contains("\u0027workspaces\u0027") and contains("trim(") and contains("isGuid")
+      and contains("isResourceNameSegment"))
 ' "${TEMP_DIR}/main.json" >/dev/null || {
   printf 'ERROR: Backup coverage and vault posture controls do not match the verified control catalog or safe defaults.\n' >&2
   exit 1
@@ -2126,7 +2157,8 @@ for backup_validation_message in \
   'must not share an inclusion tag value' \
   'must map to exactly one region' \
   'grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true' \
-  'grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID'; do
+  'grantVaultDiagnosticsWorkspaceAccess requires a canonical absolute effective Log Analytics workspace resource ID' \
+  'grantVaultDiagnosticsWorkspaceAccess requires vaultDiagnosticsEffect to be DeployIfNotExists'; do
   rg -q "${backup_validation_message}" "${PROJECT_DIR}/main.bicep" || {
     printf 'ERROR: Backup input validation is missing: %s\n' "${backup_validation_message}" >&2
     exit 1
@@ -2145,7 +2177,8 @@ jq -e --slurpfile fixture "${PROJECT_DIR}/tests/fixtures/backup-vault-placement-
   ($fx.compiledGuardCopyExpressions | to_entries | all(.value == $copies[.key])) and
   ($fx.compiledGuardFunctions | to_entries
     | all(.value == $template.functions[0].members[.key].output.value)) and
-  ($fx.guardCases | length) >= 20 and
+  ($fx.guardCases | length) >= 32 and
+  (($fx.guardCases | map(select(.guardVariable == "validatedVaultDiagnosticsWorkspaceAccess")) | length) >= 13) and
   all($fx.guardCases[];
     . as $case
     | $fx.compiledGuardExpressions[$case.guardVariable] as $guard

@@ -8,6 +8,7 @@ func isIpv4Cidr(value string) bool => length(split(value, '/')) == 2 && isIpv4(f
 func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
 func isResourceNameSegment(value string) bool => !empty(value) && value == trim(value) && empty(filter(['<', '>', '%', '&', '\\', '?', '#', '+', ':', '"', '|', '*', ';', ' '], forbiddenCharacter => contains(value, forbiddenCharacter)))
 func isRecoveryServicesVaultId(value string) bool => value == trim(value) && length(split(value, '/')) == 9 && empty(split(value, '/')[0]) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceNameSegment(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.recoveryservices' && toLower(split(value, '/')[7]) == 'vaults' && isResourceNameSegment(split(value, '/')[8])
+func isLogAnalyticsWorkspaceId(value string) bool => value == trim(value) && length(split(value, '/')) == 9 && empty(split(value, '/')[0]) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceNameSegment(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && isResourceNameSegment(split(value, '/')[8])
 func isBackupPolicyIdOfVault(value string, vaultResourceId string) bool => value == trim(value) && length(split(value, '/')) == 11 && isRecoveryServicesVaultId(vaultResourceId) && startsWith(toLower(value), '${toLower(vaultResourceId)}/backuppolicies/') && toLower(split(value, '/')[9]) == 'backuppolicies' && isResourceNameSegment(split(value, '/')[10])
 
 @sealed()
@@ -319,14 +320,16 @@ var validatedVaultDiagnostics = enableVaultDiagnostics && !vaultDiagnosticsWorks
 // deployment scope) so an explicitly gated, least-privilege role assignment can be created at the
 // workspace itself.
 var centralLogAnalyticsWorkspaceResourceId = '/subscriptions/${connectivitySubscriptionId}/resourceGroups/rg-${namePrefix}-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-${namePrefix}-central'
-var vaultDiagnosticsWorkspaceResourceId = deployCentralLogAnalytics ? centralLogAnalyticsWorkspaceResourceId : trim(existingLogAnalyticsWorkspaceResourceId)
-var vaultDiagnosticsWorkspaceIdParts = split(empty(vaultDiagnosticsWorkspaceResourceId) ? '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.OperationalInsights/workspaces/placeholder' : vaultDiagnosticsWorkspaceResourceId, '/')
-var vaultDiagnosticsWorkspaceIdValid = length(vaultDiagnosticsWorkspaceIdParts) == 9 && empty(vaultDiagnosticsWorkspaceIdParts[0]) && isGuid(vaultDiagnosticsWorkspaceIdParts[2]) && toLower(vaultDiagnosticsWorkspaceIdParts[3]) == 'resourcegroups' && isResourceNameSegment(vaultDiagnosticsWorkspaceIdParts[4]) && toLower(vaultDiagnosticsWorkspaceIdParts[6]) == 'microsoft.operationalinsights' && toLower(vaultDiagnosticsWorkspaceIdParts[7]) == 'workspaces' && isResourceNameSegment(vaultDiagnosticsWorkspaceIdParts[8])
+var vaultDiagnosticsWorkspaceResourceId = deployCentralLogAnalytics ? centralLogAnalyticsWorkspaceResourceId : existingLogAnalyticsWorkspaceResourceId
+var vaultDiagnosticsWorkspaceIdValid = isLogAnalyticsWorkspaceId(vaultDiagnosticsWorkspaceResourceId)
+var vaultDiagnosticsWorkspaceIdParts = split(vaultDiagnosticsWorkspaceIdValid ? vaultDiagnosticsWorkspaceResourceId : '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.OperationalInsights/workspaces/placeholder', '/')
 var validatedVaultDiagnosticsWorkspaceAccess = grantVaultDiagnosticsWorkspaceAccess && !enableVaultDiagnostics
   ? fail('grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true, because the role assignment binds the diagnostics assignment identity that only exists when vault diagnostics are assigned.')
-  : grantVaultDiagnosticsWorkspaceAccess && !vaultDiagnosticsWorkspaceIdValid
-    ? fail('grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID, so supply existingLogAnalyticsWorkspaceResourceId or set deployCentralLogAnalytics to true.')
-    : true
+  : grantVaultDiagnosticsWorkspaceAccess && vaultDiagnosticsEffect != 'DeployIfNotExists'
+    ? fail('grantVaultDiagnosticsWorkspaceAccess requires vaultDiagnosticsEffect to be DeployIfNotExists, because an AuditIfNotExists or Disabled assignment only reports and must never receive a managed identity or a role assignment.')
+    : grantVaultDiagnosticsWorkspaceAccess && !vaultDiagnosticsWorkspaceIdValid
+      ? fail('grantVaultDiagnosticsWorkspaceAccess requires a canonical absolute effective Log Analytics workspace resource ID of the form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name> with no surrounding whitespace, so supply existingLogAnalyticsWorkspaceResourceId or set deployCentralLogAnalytics to true.')
+      : true
 var validatedRecoveryServicesVaultCreation = deployRecoveryServicesVault && !empty(approvedBackupVaults)
   ? fail('deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied; approved existing vault and backup policy IDs are the preferred integration path.')
   : deployRecoveryServicesVault && (empty(normalizedApprovedVaultRegions) || !contains(normalizedApprovedVaultRegions, toLower(trim(recoveryServicesVaultLocation))))
@@ -1970,7 +1973,40 @@ module vmBackupConfigurationAssignments 'modules/remediating-policy-assignment.b
   }
 ]
 
-module vaultDiagnosticsAssignment 'modules/remediating-policy-assignment.bicep' = if (vaultDiagnosticsActive) {
+// The vault diagnostics control keeps least privilege by effect: an AuditIfNotExists or Disabled
+// assignment only reports, so it is created without a managed identity and without any role
+// assignment. Only the explicit DeployIfNotExists effect uses the remediating assignment that
+// attaches an identity and grants Log Analytics Contributor.
+module vaultDiagnosticsAuditAssignment 'modules/policy-assignment.bicep' = if (vaultDiagnosticsAuditActive) {
+  name: 'assign-vault-diagnostics-audit'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-vault-diagnostics'
+    displayName: 'Demo - Recovery Services vault diagnostics'
+    description: 'Reports Recovery Services vaults without diagnostic settings that send logs to the effective central Log Analytics workspace. This assignment has no identity and deploys nothing.'
+    policyDefinitionId: resourceDiagnosticsToLogAnalyticsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: vaultDiagnosticsEffect
+      }
+      logAnalytics: {
+        value: centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
+      }
+      resourceTypeList: {
+        value: [
+          'microsoft.recoveryservices/vaults'
+        ]
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module vaultDiagnosticsAssignment 'modules/remediating-policy-assignment.bicep' = if (vaultDiagnosticsRemediationActive) {
   name: 'assign-vault-diagnostics'
   scope: managementGroup(landingZonesManagementGroupId)
   params: {
@@ -2010,7 +2046,7 @@ module vaultDiagnosticsWorkspaceRbac 'modules/workspace-diagnostics-rbac.bicep' 
   name: 'vault-diagnostics-workspace-rbac'
   scope: resourceGroup(vaultDiagnosticsWorkspaceIdParts[2], vaultDiagnosticsWorkspaceIdParts[4])
   params: {
-    principalId: vaultDiagnosticsActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
+    principalId: vaultDiagnosticsRemediationActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
     roleDefinitionIds: [
       logAnalyticsContributorRoleDefinitionId
     ]
@@ -2138,7 +2174,9 @@ module centralMonitoring 'modules/central-monitoring.bicep' = {
 var vmBackupRemediationActive = enableVmBackupRemediation && validatedVmBackupRemediation
 var vaultDiagnosticsActive = enableVaultDiagnostics && validatedVaultDiagnostics
 var customerOwnedVaultActive = deployRecoveryServicesVault && validatedRecoveryServicesVaultCreation
-var vaultDiagnosticsWorkspaceAccessActive = grantVaultDiagnosticsWorkspaceAccess && vaultDiagnosticsActive && validatedVaultDiagnosticsWorkspaceAccess
+var vaultDiagnosticsRemediationActive = vaultDiagnosticsActive && vaultDiagnosticsEffect == 'DeployIfNotExists'
+var vaultDiagnosticsAuditActive = vaultDiagnosticsActive && vaultDiagnosticsEffect != 'DeployIfNotExists'
+var vaultDiagnosticsWorkspaceAccessActive = grantVaultDiagnosticsWorkspaceAccess && vaultDiagnosticsRemediationActive && validatedVaultDiagnosticsWorkspaceAccess
 
 output hierarchy object = {
   demoRoot: demoRootManagementGroupId
@@ -2210,15 +2248,18 @@ output backupRemediation object = {
     virtualMachineContributorRoleDefinitionId
     backupContributorRoleDefinitionId
   ]
-  vaultDiagnosticsAssignmentId: vaultDiagnosticsActive
+  vaultDiagnosticsAssignmentId: vaultDiagnosticsRemediationActive
     ? vaultDiagnosticsAssignment!.outputs.policyAssignmentId
-    : ''
-  vaultDiagnosticsRoleDefinitionIds: [
-    logAnalyticsContributorRoleDefinitionId
-  ]
+    : vaultDiagnosticsAuditActive ? vaultDiagnosticsAuditAssignment!.outputs.policyAssignmentId : ''
+  vaultDiagnosticsIdentityAttached: vaultDiagnosticsRemediationActive
+  vaultDiagnosticsRoleDefinitionIds: vaultDiagnosticsRemediationActive
+    ? [
+        logAnalyticsContributorRoleDefinitionId
+      ]
+    : []
   vaultDiagnosticsEnforcementMode: denyPolicyEnforcementMode
-  vaultDiagnosticsAutomaticSettingsOnResourceWrite: vaultDiagnosticsActive && vaultDiagnosticsEffect == 'DeployIfNotExists' && denyPolicyEnforcementMode == 'Default'
-  vaultDiagnosticsPrincipalId: vaultDiagnosticsActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
+  vaultDiagnosticsAutomaticSettingsOnResourceWrite: vaultDiagnosticsRemediationActive && denyPolicyEnforcementMode == 'Default'
+  vaultDiagnosticsPrincipalId: vaultDiagnosticsRemediationActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
   vaultDiagnosticsWorkspaceResourceId: vaultDiagnosticsActive ? vaultDiagnosticsWorkspaceResourceId : ''
   vaultDiagnosticsWorkspaceAccessGranted: vaultDiagnosticsWorkspaceAccessActive
   vaultDiagnosticsWorkspaceRoleAssignmentIds: vaultDiagnosticsWorkspaceAccessActive

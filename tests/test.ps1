@@ -2636,6 +2636,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         vmBackupRemediationActive = "[and(parameters('enableVmBackupRemediation'), variables('validatedVmBackupRemediation'))]"
         vaultDiagnosticsActive    = "[and(parameters('enableVaultDiagnostics'), variables('validatedVaultDiagnostics'))]"
         customerOwnedVaultActive  = "[and(parameters('deployRecoveryServicesVault'), variables('validatedRecoveryServicesVaultCreation'))]"
+        vaultDiagnosticsRemediationActive = "[and(variables('vaultDiagnosticsActive'), equals(parameters('vaultDiagnosticsEffect'), 'DeployIfNotExists'))]"
+        vaultDiagnosticsAuditActive = "[and(variables('vaultDiagnosticsActive'), not(equals(parameters('vaultDiagnosticsEffect'), 'DeployIfNotExists')))]"
+        vaultDiagnosticsWorkspaceAccessActive = "[and(and(parameters('grantVaultDiagnosticsWorkspaceAccess'), variables('vaultDiagnosticsRemediationActive')), variables('validatedVaultDiagnosticsWorkspaceAccess'))]"
+        vaultDiagnosticsWorkspaceIdValid = "[__bicep.isLogAnalyticsWorkspaceId(variables('vaultDiagnosticsWorkspaceResourceId'))]"
     }
     foreach ($activeVariable in $expectedActiveConditions.Keys) {
         if ($compiledJson.variables.$activeVariable -ne $expectedActiveConditions[$activeVariable]) {
@@ -2673,11 +2677,39 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         $node.PSObject.Properties['name'] -and $node.name -eq 'assign-vault-diagnostics'
     } | Select-Object -First 1
     if (-not $vaultDiagnosticsAssignment -or
-        $vaultDiagnosticsAssignment.condition -ne "[variables('vaultDiagnosticsActive')]" -or
+        $vaultDiagnosticsAssignment.condition -ne "[variables('vaultDiagnosticsRemediationActive')]" -or
         (Compare-Object @($vaultDiagnosticsAssignment.properties.parameters.parameters.value.resourceTypeList.value) `
             @('microsoft.recoveryservices/vaults') -SyncWindow 0) -or
         ([string]$vaultDiagnosticsAssignment.properties.parameters.parameters.value.logAnalytics.value) -notmatch 'centralMonitoring') {
-        Stop-Test 'Vault diagnostics must stay opt-in, vault-scoped, and bound to the central workspace.'
+        Stop-Test 'Vault diagnostics remediation must stay opt-in, vault-scoped, and bound to the central workspace.'
+    }
+    $vaultDiagnosticsAuditAssignment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-vault-diagnostics-audit'
+    } | Select-Object -First 1
+    $auditAssignmentResources = @(
+        $vaultDiagnosticsAuditAssignment.properties.template.resources.PSObject.Properties.Value
+    )
+    if (-not $vaultDiagnosticsAuditAssignment -or
+        $vaultDiagnosticsAuditAssignment.condition -ne "[variables('vaultDiagnosticsAuditActive')]" -or
+        $vaultDiagnosticsAuditAssignment.scope -notmatch 'landingZonesManagementGroupId' -or
+        $vaultDiagnosticsAuditAssignment.properties.parameters.PSObject.Properties['identity'] -or
+        $vaultDiagnosticsAuditAssignment.properties.parameters.PSObject.Properties['verifiedRoleDefinitionIds'] -or
+        @($auditAssignmentResources | Where-Object { $_.PSObject.Properties['identity'] }).Count -ne 0 -or
+        @($auditAssignmentResources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' }).Count -ne 0 -or
+        $vaultDiagnosticsAuditAssignment.properties.parameters.definitionVersion.value -ne $backupMajorVersions['REQ-BKP-07'] -or
+        (Compare-Object @($vaultDiagnosticsAuditAssignment.properties.parameters.parameters.value.resourceTypeList.value) `
+            @('microsoft.recoveryservices/vaults') -SyncWindow 0)) {
+        Stop-Test 'An audit-only or disabled vault diagnostics assignment must have no identity and grant no role.'
+    }
+    $workspaceIdFunction = [string]$compiledJson.functions[0].members.isLogAnalyticsWorkspaceId.output.value
+    foreach ($requiredWorkspaceIdCheck in @(
+        "'subscriptions'", "'resourcegroups'", "'providers'",
+        "'microsoft.operationalinsights'", "'workspaces'", 'trim(', 'isGuid', 'isResourceNameSegment'
+    )) {
+        if (-not $workspaceIdFunction.Contains($requiredWorkspaceIdCheck)) {
+            Stop-Test "The workspace resource-ID guard must enforce $requiredWorkspaceIdCheck."
+        }
     }
     $workspaceRbacDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
@@ -2728,12 +2760,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         ([string]$compiledJson.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite) -notmatch 'DeployIfNotExists' -or
         ([string]$compiledJson.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite) -notmatch 'Default' -or
         $compiledJson.outputs.backupRemediation.value.vaultDiagnosticsEnforcementMode -ne "[parameters('denyPolicyEnforcementMode')]" -or
-        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'vaultDiagnosticsEffect' -or
-        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'DeployIfNotExists' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'vaultDiagnosticsRemediationActive' -or
         ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'Default' -or
         ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsPrincipalId) -notmatch 'identityPrincipalId' -or
         ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceAccessGranted) -notmatch 'vaultDiagnosticsWorkspaceAccessActive' -or
-        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceRoleAssignmentIds) -notmatch 'roleAssignmentIds') {
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceRoleAssignmentIds) -notmatch 'roleAssignmentIds' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsIdentityAttached) -notmatch 'vaultDiagnosticsRemediationActive' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsRoleDefinitionIds) -notmatch 'vaultDiagnosticsRemediationActive') {
         Stop-Test 'Backup governance must never start remediation tasks and must report automatic DeployIfNotExists protection and diagnostics cost impact.'
     }
     foreach ($backupValidationMessage in @(
@@ -2747,7 +2780,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         'must not share an inclusion tag value',
         'must map to exactly one region',
         'grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true',
-        'grantVaultDiagnosticsWorkspaceAccess requires a canonical effective Log Analytics workspace resource ID')) {
+        'grantVaultDiagnosticsWorkspaceAccess requires a canonical absolute effective Log Analytics workspace resource ID',
+        'grantVaultDiagnosticsWorkspaceAccess requires vaultDiagnosticsEffect to be DeployIfNotExists')) {
         if (-not $mainBicepText.Contains($backupValidationMessage)) {
             Stop-Test "Backup input validation is missing: $backupValidationMessage"
         }
@@ -2777,7 +2811,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
     $backupGuardCases = @($backupGuardFixture.guardCases)
-    if ($backupGuardCases.Count -lt 20 -or
+    if ($backupGuardCases.Count -lt 32 -or
+        @($backupGuardCases | Where-Object {
+            $_.guardVariable -eq 'validatedVaultDiagnosticsWorkspaceAccess'
+        }).Count -lt 13 -or
         @($backupGuardCases | ForEach-Object { $_.guardVariable } | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -lt 4) {
         Stop-Test 'The backup guard fixture must keep covering every dependency guard with negative cases.'
     }

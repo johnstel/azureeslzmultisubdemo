@@ -300,15 +300,27 @@ no ingestion cost is incurred until both are changed deliberately. The
 `vaultDiagnosticsAutomaticSettingsOnResourceWrite` next to
 `vaultDiagnosticsPrincipalId` and `vaultDiagnosticsWorkspaceResourceId`.
 
-The diagnostics assignment identity is granted Log Analytics Contributor at the
-assigned Landing Zones scope, which does **not** cover a workspace in the
-connectivity subscription or in a customer subscription, so a
-`DeployIfNotExists` deployment would fail there.
+Least privilege follows the effect. With the default `AuditIfNotExists` — or
+with `Disabled` — the control is assigned through the identity-free assignment
+module, so **no** managed identity is created and **no** role assignment is made
+anywhere. Only `vaultDiagnosticsEffect = 'DeployIfNotExists'` uses the
+remediating assignment that attaches a system-assigned identity and grants Log
+Analytics Contributor; `backupRemediation.vaultDiagnosticsIdentityAttached`
+reports which path is active, and `vaultDiagnosticsRoleDefinitionIds` is empty on
+the audit path.
+
+That identity is granted Log Analytics Contributor at the assigned Landing Zones
+scope, which does **not** cover a workspace in the connectivity subscription or
+in a customer subscription, so a `DeployIfNotExists` deployment would fail there.
 `grantVaultDiagnosticsWorkspaceAccess` (default `false`) creates the missing
 least-privilege role assignment — only Log Analytics Contributor, only on the
-effective workspace resource — and requires `enableVaultDiagnostics=true` plus a
-canonical effective workspace resource ID. The resulting role assignment IDs are
-returned in `backupRemediation.vaultDiagnosticsWorkspaceRoleAssignmentIds`.
+effective workspace resource. It requires `enableVaultDiagnostics=true`,
+`vaultDiagnosticsEffect = 'DeployIfNotExists'`, and a canonical absolute
+effective workspace resource ID of the form
+`/subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name>`
+with no surrounding whitespace; an audit or disabled effect can therefore never
+grant a role. The resulting role assignment IDs are returned in
+`backupRemediation.vaultDiagnosticsWorkspaceRoleAssignmentIds`.
 
 `deployRecoveryServicesVault` (default `false`) is the only switch that creates
 a **metered, customer-owned** vault and backup policy, in a
@@ -561,10 +573,13 @@ The person or service principal running the deployment must have:
    `deployRoleAssignments=true`;
 4. Contributor on both subscriptions when `deployEvidenceResources=true`;
 5. Owner or Role Based Access Control Administrator at the Landing Zones
-   management group when `enableVmBackupRemediation=true` or
-   `enableVaultDiagnostics=true`, because those assignments create a
-   system-assigned identity and grant it Virtual Machine Contributor plus
-   Backup Contributor (backup) or Log Analytics Contributor (diagnostics);
+   management group when `enableVmBackupRemediation=true`, or when
+   `enableVaultDiagnostics=true` **and**
+   `vaultDiagnosticsEffect = 'DeployIfNotExists'`, because only those
+   assignments create a system-assigned identity and grant it Virtual Machine
+   Contributor plus Backup Contributor (backup) or Log Analytics Contributor
+   (diagnostics). An `AuditIfNotExists` or `Disabled` diagnostics assignment
+   needs no identity and no role assignment;
 6. Backup Contributor for the backup remediation identity in the vault's own
    subscription when `allowCrossSubscriptionBackupVaults=true`, since the
    built-in deploys the protected item into that subscription and this
