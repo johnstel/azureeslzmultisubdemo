@@ -239,6 +239,8 @@ check_resource() {
   local resource_id="$1"
   local expected_type="$2"
   local actual_type
+  local normalized_actual_type
+  local normalized_expected_type
   actual_type="$(az resource show --ids "${resource_id}" --query type --output tsv 2>/dev/null)" \
     || fail "Cannot read referenced resource ${resource_id}. Check its ID and permissions."
   normalized_actual_type="$(printf '%s' "${actual_type}" | tr '[:upper:]' '[:lower:]')"

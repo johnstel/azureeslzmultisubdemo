@@ -143,19 +143,28 @@ foreach ($groupParameter in $groupParameters) {
 
 Test-ResourceIdParameter existingLogAnalyticsWorkspaceResourceId Microsoft.OperationalInsights workspaces
 Test-ResourceIdParameter approvedFirewallResourceId Microsoft.Network azureFirewalls
-foreach ($routeTableId in @(Get-OptionalParameterValue approvedRouteTableResourceIds)) {
-    if (-not (Test-ResourceId ([string]$routeTableId) Microsoft.Network routeTables)) {
-        Stop-Preflight 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
+$routeTableIds = Get-OptionalParameterValue approvedRouteTableResourceIds
+if ($null -ne $routeTableIds) {
+    foreach ($routeTableId in @($routeTableIds)) {
+        if (-not (Test-ResourceId ([string]$routeTableId) Microsoft.Network routeTables)) {
+            Stop-Preflight 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
+        }
     }
 }
-foreach ($keyVaultUri in @(Get-OptionalParameterValue approvedCustomerManagedKeyVaultUris)) {
-    if ([string]$keyVaultUri -notmatch '^https://[a-zA-Z0-9-]+\.vault\.azure\.net/$') {
-        Stop-Preflight 'approvedCustomerManagedKeyVaultUris contains an invalid Key Vault URI.'
+$keyVaultUris = Get-OptionalParameterValue approvedCustomerManagedKeyVaultUris
+if ($null -ne $keyVaultUris) {
+    foreach ($keyVaultUri in @($keyVaultUris)) {
+        if ([string]$keyVaultUri -notmatch '^https://[a-zA-Z0-9-]+\.vault\.azure\.net/$') {
+            Stop-Preflight 'approvedCustomerManagedKeyVaultUris contains an invalid Key Vault URI.'
+        }
     }
 }
-foreach ($keyName in @(Get-OptionalParameterValue approvedCustomerManagedKeyNames)) {
-    if ([string]$keyName -notmatch '^[A-Za-z0-9-]{1,127}$') {
-        Stop-Preflight 'approvedCustomerManagedKeyNames contains an invalid key name.'
+$keyNames = Get-OptionalParameterValue approvedCustomerManagedKeyNames
+if ($null -ne $keyNames) {
+    foreach ($keyName in @($keyNames)) {
+        if ([string]$keyName -notmatch '^[A-Za-z0-9-]{1,127}$') {
+            Stop-Preflight 'approvedCustomerManagedKeyNames contains an invalid key name.'
+        }
     }
 }
 
@@ -173,16 +182,20 @@ if ((Test-ParameterTrue deploySentinel) -and -not (Test-ParameterTrue deployCent
 }
 
 $criticalSubscriptions = @()
-foreach ($criticalSubscription in @(Get-OptionalParameterValue criticalInfrastructureSubscriptionIds)) {
-    if (-not (Test-GuidShape ([string]$criticalSubscription))) { Stop-Preflight 'criticalInfrastructureSubscriptionIds contains a non-GUID subscription ID.' }
-    if ($criticalSubscriptions -contains ([string]$criticalSubscription).ToLowerInvariant()) { Stop-Preflight 'criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs.' }
-    $criticalSubscriptions += ([string]$criticalSubscription).ToLowerInvariant()
+$criticalSubscriptionIds = Get-OptionalParameterValue criticalInfrastructureSubscriptionIds
+if ($null -ne $criticalSubscriptionIds) {
+    foreach ($criticalSubscription in @($criticalSubscriptionIds)) {
+        if (-not (Test-GuidShape ([string]$criticalSubscription))) { Stop-Preflight 'criticalInfrastructureSubscriptionIds contains a non-GUID subscription ID.' }
+        if ($criticalSubscriptions -contains ([string]$criticalSubscription).ToLowerInvariant()) { Stop-Preflight 'criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs.' }
+        $criticalSubscriptions += ([string]$criticalSubscription).ToLowerInvariant()
+    }
 }
 if ((Test-ParameterTrue enableCriticalInfrastructure) -and $criticalSubscriptions.Count -eq 0) {
     Stop-Preflight 'enableCriticalInfrastructure requires one or more criticalInfrastructureSubscriptionIds.'
 }
 
-$approvedBackupVaults = @(Get-OptionalParameterValue approvedBackupVaults)
+$approvedBackupVaultInput = Get-OptionalParameterValue approvedBackupVaults
+$approvedBackupVaults = if ($null -eq $approvedBackupVaultInput) { @() } else { @($approvedBackupVaultInput) }
 foreach ($approvedBackupVault in $approvedBackupVaults) {
     $vaultId = [string]$approvedBackupVault.vaultResourceId
     $backupPolicyId = [string]$approvedBackupVault.backupPolicyResourceId
@@ -300,8 +313,10 @@ $workspaceId = [string](Get-OptionalParameterValue existingLogAnalyticsWorkspace
 if (-not [string]::IsNullOrWhiteSpace($workspaceId)) { Test-ReferencedResource $workspaceId Microsoft.OperationalInsights/workspaces }
 $firewallId = [string](Get-OptionalParameterValue approvedFirewallResourceId)
 if (-not [string]::IsNullOrWhiteSpace($firewallId)) { Test-ReferencedResource $firewallId Microsoft.Network/azureFirewalls }
-foreach ($routeTableId in @(Get-OptionalParameterValue approvedRouteTableResourceIds)) {
-    Test-ReferencedResource ([string]$routeTableId) Microsoft.Network/routeTables
+if ($null -ne $routeTableIds) {
+    foreach ($routeTableId in @($routeTableIds)) {
+        Test-ReferencedResource ([string]$routeTableId) Microsoft.Network/routeTables
+    }
 }
 foreach ($approvedBackupVault in $approvedBackupVaults) {
     Test-ReferencedResource ([string]$approvedBackupVault.vaultResourceId) Microsoft.RecoveryServices/vaults
