@@ -133,7 +133,19 @@ types needed for diagnostics, VM extensions, private endpoints, backup, and
 Azure Policy remediation. Both templates retain explicit replacement
 placeholders for external identities and resources, keep paid and remediating
 switches off, and require `DoNotEnforce` until those lists and a what-if/policy
-impact report are approved.
+impact report are approved. Resource diagnostics are `Disabled` until an
+operator supplies a canonical `existingLogAnalyticsWorkspaceResourceId` (or
+explicitly enables `deployCentralLogAnalytics`), then explicitly selects
+`AuditIfNotExists` or `DeployIfNotExists`; the latter also requires the
+separate remediation-RBAC opt-ins.
+
+`policyExemptions` is an empty-by-default structured input for time-bound,
+customer-approved exemptions. Each supplied record requires its target scope,
+policy assignment ID, owner, justification, expiry, ticket/reference,
+approver, and creation/review metadata; initiative reference IDs and permitted
+ancestor scopes are explicit optional arrays. Records are validated by the
+governed exemption module and no exemption is created by either profile unless
+a complete record is supplied.
 
 The workload network-ingress initiative recognizes `*`, `Internet`,
 `0.0.0.0/0`, and arbitrary public IPv4 host/CIDR source values in singular and

@@ -290,29 +290,78 @@ try {
         @($parameterTemplate.parameters.customerAllowedVmSkus.value).Count -eq 0) {
         Stop-Test 'Customer resource-type and VM SKU allowlists must remain safe and populated.'
     }
+    if ($parameterTemplate.parameters.resourceDiagnosticsPolicyEffect.value -ne 'Disabled' -or
+        $parameterTemplate.parameters.policyExemptions.value.Count -ne 0) {
+        Stop-Test 'Safe-demo diagnostics and policy exemptions must remain disabled and empty by default.'
+    }
+    $safeDemoParametersPath = Join-Path $TempDir 'main.parameters.json'
+    & az bicep build-params `
+        --file (Join-Path $ProjectDir 'parameters/main.template.bicepparam') `
+        --outfile $safeDemoParametersPath
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Safe-demo Bicep parameter build failed.' }
     $compiledParametersPath = Join-Path $TempDir 'customer-control.parameters.json'
     & az bicep build-params `
         --file (Join-Path $ProjectDir 'parameters/customer-control.template.bicepparam') `
         --outfile $compiledParametersPath
-    if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Customer-control Bicep parameter build failed.' }
+    $safeDemoParameters = Get-Content -LiteralPath $safeDemoParametersPath -Raw | ConvertFrom-Json
     $compiledParameters = Get-Content -LiteralPath $compiledParametersPath -Raw | ConvertFrom-Json
     if ($compiledParameters.parameters.networkIngressPolicyEffect.value -ne 'Audit') {
         Stop-Test 'networkIngressPolicyEffect must default to Audit in the Bicep parameter template.'
     }
-    if ($compiledParameters.parameters.enableTagInheritance.value -ne $false) {
-        Stop-Test 'enableTagInheritance must default to false in the Bicep parameter template.'
+    if ($safeDemoParameters.parameters.enableTagInheritance.value -ne $false) {
+        Stop-Test 'enableTagInheritance must default to false in the safe-demo Bicep parameter template.'
     }
-    $safeDemoParameterNames = @($parameterTemplate.parameters.PSObject.Properties.Name | Sort-Object)
-    $customerControlParameterNames = @($compiledParameters.parameters.PSObject.Properties.Name | Sort-Object)
-    if (Compare-Object $safeDemoParameterNames $customerControlParameterNames) {
-        Stop-Test 'Safe-demo JSON and customer-control Bicep parameter templates must expose identical controls.'
+    if ($compiledParameters.parameters.resourceDiagnosticsPolicyEffect.value -ne 'Disabled' -or
+        $compiledParameters.parameters.existingLogAnalyticsWorkspaceResourceId.value -ne '' -or
+        $compiledParameters.parameters.policyExemptions.value.Count -ne 0) {
+        Stop-Test 'Customer-control diagnostics require an explicit workspace and policy exemptions must remain opt-in.'
     }
-    foreach ($parameterName in $safeDemoParameterNames) {
-        $safeDemoParameterValue = $parameterTemplate.parameters.$parameterName | ConvertTo-Json -Depth 20 -Compress
-        $customerControlParameterValue = $compiledParameters.parameters.$parameterName | ConvertTo-Json -Depth 20 -Compress
-        if ($safeDemoParameterValue -cne $customerControlParameterValue) {
-            Stop-Test "Safe-demo and customer-control values differ for $parameterName."
-        }
+    $profileShapes = @(
+        $parameterTemplate.parameters,
+        $safeDemoParameters.parameters,
+        $compiledParameters.parameters
+    ) | ForEach-Object {
+        @($_.PSObject.Properties | Sort-Object Name | ForEach-Object {
+            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+            '{0}:{1}' -f $_.Name, $valueType
+        })
+    }
+    if ((Compare-Object $profileShapes[0] $profileShapes[1]) -or
+        (Compare-Object $profileShapes[0] $profileShapes[2])) {
+        Stop-Test 'Safe-demo JSON and both Bicep profiles must expose identical parameter names and value types.'
+    }
+    $monitoringPositivePath = Join-Path $TempDir 'monitoring-positive.bicepparam'
+    $monitoringNegativePath = Join-Path $TempDir 'monitoring-negative.bicepparam'
+    $customerControlText = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/customer-control.template.bicepparam') -Raw
+    $customerControlText = $customerControlText.Replace("using '../main.bicep'", "using '../../main.bicep'")
+    [regex]::Replace(
+        [regex]::Replace(
+            $customerControlText,
+            '(?m)^param resourceDiagnosticsPolicyEffect = .*$',
+            "param resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'"
+        ),
+        '(?m)^param existingLogAnalyticsWorkspaceResourceId = .*$',
+        "param existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitoring/providers/Microsoft.OperationalInsights/workspaces/logmonitoring'"
+    ) | Set-Content -LiteralPath $monitoringPositivePath
+    [regex]::Replace(
+        $customerControlText,
+        '(?m)^param resourceDiagnosticsPolicyEffect = .*$',
+        "param resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'"
+    ) | Set-Content -LiteralPath $monitoringNegativePath
+    & az bicep build-params --file $monitoringPositivePath --outfile "$monitoringPositivePath.json"
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Workspace-backed diagnostics profile failed to compile.' }
+    & az bicep build-params --file $monitoringNegativePath --outfile "$monitoringNegativePath.json"
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'Workspace-free diagnostics guard profile failed to compile.' }
+    if (-not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -SimpleMatch -Pattern 'var loggingPoliciesRequireWorkspace = loggingAssignmentsRequireWorkspace && !effectiveMonitoringWorkspaceIdIsValid' -Quiet) -or
+        -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -SimpleMatch -Pattern "fail('Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID" -Quiet)) {
+        Stop-Test 'Audit/Deploy diagnostics must remain guarded by a valid effective workspace ID.'
+    }
+    $monitoringPositive = Get-Content -LiteralPath "$monitoringPositivePath.json" -Raw | ConvertFrom-Json
+    $monitoringNegative = Get-Content -LiteralPath "$monitoringNegativePath.json" -Raw | ConvertFrom-Json
+    if ($monitoringPositive.parameters.existingLogAnalyticsWorkspaceResourceId.value -eq '' -or
+        $monitoringNegative.parameters.existingLogAnalyticsWorkspaceResourceId.value -ne '') {
+        Stop-Test 'Monitoring guard fixtures must cover workspace-backed and workspace-free diagnostics activation.'
     }
     foreach ($tagInheritanceEnabled in @($false, $true)) {
         $tagParameterPath = Join-Path $TempDir "tag-inheritance-$($tagInheritanceEnabled.ToString().ToLowerInvariant()).bicepparam"
@@ -2600,10 +2649,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     }
     if ($armParameterTemplate.parameters.activityLogExportPolicyEffect.value -ne 'Disabled' -or
         $armParameterTemplate.parameters.activityLogExportLogsEnabled.value -ne 'True' -or
-        $armParameterTemplate.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $armParameterTemplate.parameters.resourceDiagnosticsPolicyEffect.value -ne 'Disabled' -or
         $armParameterTemplate.parameters.resourceDiagnosticsCategoryGroup.value -ne 'audit' -or
         $armParameterTemplate.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
-        Stop-Test 'ARM parameter template logging defaults must match the safe baseline values.'
+        Stop-Test 'ARM parameter template must disable diagnostics until an effective workspace is configured.'
     }
     $expectedActivityDefinitionId = "[tenantResourceId('Microsoft.Authorization/policyDefinitions', '$($logActivityControl.mechanism.definitionId)')]"
     $expectedDiagnosticsAllLogsDefinitionId = "[tenantResourceId('Microsoft.Authorization/policySetDefinitions', '$($logDiagnosticsControl.mechanism.definitionId)')]"

@@ -162,6 +162,9 @@
     "criticalInfrastructureSubscriptionIds": {
       "value": []
     },
+    "policyExemptions": {
+      "value": []
+    },
     "enableDefenderCspm": {
       "value": false
     },
@@ -202,7 +205,7 @@
       "value": "True"
     },
     "resourceDiagnosticsPolicyEffect": {
-      "value": "AuditIfNotExists"
+      "value": "Disabled"
     },
     "resourceDiagnosticsCategoryGroup": {
       "value": "audit"

@@ -130,14 +130,19 @@ jq -e '
   .parameters.approvedRouteTableResourceIds.value == [] and
   .parameters.approvedRouteTablePrefixes.value == [] and
   .parameters.deployLoggingRemediationRoleAssignments.value == false and
+  .parameters.resourceDiagnosticsPolicyEffect.value == "Disabled" and
+  .parameters.policyExemptions.value == [] and
   .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
   (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
   (.parameters.customerAllowedVmSkus.value | length) > 0 and
   .parameters.networkIngressPolicyEffect.value == "Audit"
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
-  --file "${PROJECT_DIR}/parameters/customer-control.template.bicepparam" \
+  --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
+az bicep build-params \
+  --file "${PROJECT_DIR}/parameters/customer-control.template.bicepparam" \
+  --outfile "${TEMP_DIR}/customer-control.parameters.json"
 jq -e '
   .parameters.networkIngressPolicyEffect.value == "Audit" and
   .parameters.privateAccessPublicNetworkPolicyEffect.value == "Audit" and
@@ -147,15 +152,41 @@ jq -e '
   .parameters.approvedFirewallPrivateIp.value == "" and
   .parameters.approvedRouteTableResourceIds.value == [] and
   .parameters.approvedRouteTablePrefixes.value == [] and
-  .parameters.deployLoggingRemediationRoleAssignments.value == false
-' "${TEMP_DIR}/main.parameters.json" >/dev/null
+ .parameters.deployLoggingRemediationRoleAssignments.value == false and
+ .parameters.resourceDiagnosticsPolicyEffect.value == "Disabled" and
+ .parameters.existingLogAnalyticsWorkspaceResourceId.value == "" and
+ .parameters.policyExemptions.value == []
+' "${TEMP_DIR}/customer-control.parameters.json" >/dev/null
 jq -e '.parameters.enableTagInheritance.value == false' "${TEMP_DIR}/main.parameters.json" >/dev/null
-jq -S '.parameters' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${TEMP_DIR}/safe-demo.parameters.sorted.json"
-jq -S '.parameters' "${TEMP_DIR}/main.parameters.json" > "${TEMP_DIR}/customer-control.parameters.sorted.json"
-cmp -s "${TEMP_DIR}/safe-demo.parameters.sorted.json" "${TEMP_DIR}/customer-control.parameters.sorted.json" || {
- printf 'ERROR: Safe-demo JSON and customer-control Bicep parameter templates must expose identical controls.\n' >&2
- exit 1
-}
+for profile_file in \
+ "${PROJECT_DIR}/parameters/demo.parameters.template.json" \
+ "${TEMP_DIR}/main.parameters.json" \
+ "${TEMP_DIR}/customer-control.parameters.json"; do
+ jq -S '[.parameters | to_entries[] | {key, type: (.value.value | type)}]' "${profile_file}" \
+   > "${TEMP_DIR}/$(basename "${profile_file}").shape.json"
+done
+{
+ cmp -s "${TEMP_DIR}/demo.parameters.template.json.shape.json" "${TEMP_DIR}/main.parameters.json.shape.json" &&
+   cmp -s "${TEMP_DIR}/demo.parameters.template.json.shape.json" "${TEMP_DIR}/customer-control.parameters.json.shape.json"
+} || {
+   printf 'ERROR: Safe-demo JSON and both Bicep profiles must expose identical parameter names and value types.\n' >&2
+   exit 1
+ }
+monitoring_positive_params="${TEMP_DIR}/monitoring-positive.bicepparam"
+monitoring_negative_params="${TEMP_DIR}/monitoring-negative.bicepparam"
+sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
+ -e "s|^param resourceDiagnosticsPolicyEffect = .*$|param resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'|" \
+ -e "s|^param existingLogAnalyticsWorkspaceResourceId = .*$|param existingLogAnalyticsWorkspaceResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-monitoring/providers/Microsoft.OperationalInsights/workspaces/logmonitoring'|" \
+ "${PROJECT_DIR}/parameters/customer-control.template.bicepparam" > "${monitoring_positive_params}"
+sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
+ -e "s|^param resourceDiagnosticsPolicyEffect = .*$|param resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'|" \
+ "${PROJECT_DIR}/parameters/customer-control.template.bicepparam" > "${monitoring_negative_params}"
+az bicep build-params --file "${monitoring_positive_params}" --outfile "${monitoring_positive_params}.json" >/dev/null
+az bicep build-params --file "${monitoring_negative_params}" --outfile "${monitoring_negative_params}.json" >/dev/null
+jq -e '.parameters.resourceDiagnosticsPolicyEffect.value == "AuditIfNotExists" and .parameters.existingLogAnalyticsWorkspaceResourceId.value != ""' "${monitoring_positive_params}.json" >/dev/null
+jq -e '.parameters.resourceDiagnosticsPolicyEffect.value == "AuditIfNotExists" and .parameters.existingLogAnalyticsWorkspaceResourceId.value == ""' "${monitoring_negative_params}.json" >/dev/null
+rg -q "var loggingPoliciesRequireWorkspace = loggingAssignmentsRequireWorkspace && !effectiveMonitoringWorkspaceIdIsValid" "${PROJECT_DIR}/main.bicep"
+rg -q -F "fail('Activity Log and supported-resource diagnostics assignments require a valid effective Log Analytics workspace resource ID" "${PROJECT_DIR}/main.bicep"
 for tag_inheritance_enabled in false true; do
   tag_params="${TEMP_DIR}/tag-inheritance-${tag_inheritance_enabled}.bicepparam"
   sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
@@ -2181,11 +2212,11 @@ jq -e --slurpfile catalog "${control_catalog}" '
 jq -e '
   .parameters.activityLogExportPolicyEffect.value == "Disabled" and
   .parameters.activityLogExportLogsEnabled.value == "True" and
-  .parameters.resourceDiagnosticsPolicyEffect.value == "AuditIfNotExists" and
+  .parameters.resourceDiagnosticsPolicyEffect.value == "Disabled" and
   .parameters.resourceDiagnosticsCategoryGroup.value == "audit" and
   .parameters.deployLoggingRemediationRoleAssignments.value == false
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
-  printf 'ERROR: Logging policy defaults in parameters/demo.parameters.template.json are not safe audit-first values.\n' >&2
+  printf 'ERROR: Logging policy defaults in parameters/demo.parameters.template.json must keep diagnostics disabled without a workspace.\n' >&2
   exit 1
 }
 printf '    Confirm mirrored logging compile-matrix coverage across enabled/disabled effects, workspace paths, and category-group modes...\n'
