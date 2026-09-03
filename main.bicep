@@ -372,6 +372,40 @@ var validatedRecoveryServicesVaultCreation = deployRecoveryServicesVault && !emp
     : deployRecoveryServicesVault && empty(trim(backupRetentionStandardId))
       ? fail('deployRecoveryServicesVault requires a documented backupRetentionStandardId so the metered customer-owned vault records an approved retention standard instead of an undocumented default.')
       : true
+var nercCipApprovedLocationsAsStrings = [for location in nercCipApprovedLocations: string(location)]
+var nercCipApprovedLocationsContainOnlyStrings = nercCipApprovedLocations == nercCipApprovedLocationsAsStrings
+var normalizedNercCipApprovedLocations = [for location in nercCipApprovedLocationsAsStrings: toLower(trim(location))]
+var nercCipApprovedLocationsContainEmptyValues = contains(normalizedNercCipApprovedLocations, '')
+var validatedNercCipApprovedLocations = !nercCipApprovedLocationsContainOnlyStrings
+  ? fail('nercCipApprovedLocations must contain only string region values.')
+  : nercCipApprovedLocationsContainEmptyValues
+      ? fail('nercCipApprovedLocations must not contain empty or whitespace-only values.')
+      : length(normalizedNercCipApprovedLocations) != length(union(normalizedNercCipApprovedLocations, []))
+          ? fail('nercCipApprovedLocations must contain case-insensitively unique region values.')
+          : normalizedNercCipApprovedLocations
+var validatedNercCipOverlayInputs = !enableNercCipTechnicalOverlay
+  ? true
+  : !enableCriticalInfrastructure
+      ? fail('enableNercCipTechnicalOverlay requires enableCriticalInfrastructure to be true so the overlay remains Critical-scope only.')
+      : empty(criticalInfrastructureSubscriptionIds)
+          ? fail('enableNercCipTechnicalOverlay requires at least one criticalInfrastructureSubscriptionIds entry.')
+          : empty(validatedNercCipApprovedLocations)
+              ? fail('enableNercCipTechnicalOverlay requires at least one nercCipApprovedLocations region.')
+              : !(deployCentralLogAnalytics || isLogAnalyticsWorkspaceId(existingLogAnalyticsWorkspaceResourceId))
+                  ? fail('enableNercCipTechnicalOverlay requires a canonical effective monitoring workspace resource ID from deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId.')
+                  : activityLogExportPolicyEffect != 'DeployIfNotExists'
+                      ? fail('enableNercCipTechnicalOverlay requires activityLogExportPolicyEffect to be DeployIfNotExists so centralized Activity Log export remains active.')
+                      : !deployRoleAssignments || !deployLoggingRemediationRoleAssignments
+                          ? fail('enableNercCipTechnicalOverlay requires deployRoleAssignments and deployLoggingRemediationRoleAssignments to be true so the overlay assignment identity can receive least-privilege remediation access.')
+                      : !enableFirewallRouteGuardrails
+                          ? fail('enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to be true with approved firewall and route-table evidence.')
+                      : empty(validatedApprovedBackupVaults)
+                          ? fail('enableNercCipTechnicalOverlay requires approvedBackupVaults records for backup coverage evidence.')
+                          : empty(trim(backupRetentionStandardId))
+                              ? fail('enableNercCipTechnicalOverlay requires backupRetentionStandardId so backup controls map to a documented standard.')
+                              : empty(trim(nercCipDataClassificationTagValue)) || empty(trim(nercCipSspIdTagValue))
+                                  ? fail('enableNercCipTechnicalOverlay requires non-empty nercCipDataClassificationTagValue and nercCipSspIdTagValue inputs.')
+                                  : true
 
 @description('Assign the stable Microsoft cloud security benchmark (MCSB) initiative at the demo root. Enabled by default for the customer-control profile. The separate Microsoft cloud security benchmark v2 preview initiative is never assigned by this template.')
 param enableMicrosoftCloudSecurityBenchmark bool = true
@@ -381,6 +415,24 @@ param enableCisAzureFoundationsBenchmark bool = false
 
 @description('Set true to add the optional NIST SP 800-53 Rev. 5 overlay at the demo root. This initiative contains four fixed Guest Configuration DeployIfNotExists/Modify members, so the assignment needs a system-assigned identity with the Contributor role; assignment alone does not establish NIST compliance.')
 param enableNistSp80053Rev5 bool = false
+
+@description('Set true to opt in to the stricter NERC CIP technical policy overlay at the Critical Infrastructure management group only. Assignment alone does not establish NERC CIP compliance.')
+param enableNercCipTechnicalOverlay bool = false
+
+@description('Approved Azure regions for critical-infrastructure subscriptions under the NERC CIP technical overlay.')
+param nercCipApprovedLocations array = []
+
+@description('Required DataClassification tag value for critical-infrastructure resource groups under the NERC CIP technical overlay.')
+param nercCipDataClassificationTagValue string = ''
+
+@description('Required SSP-ID tag value for critical-infrastructure resource groups under the NERC CIP technical overlay.')
+param nercCipSspIdTagValue string = ''
+
+@description('Set true to require Recovery Services vault infrastructure double encryption in the NERC CIP technical overlay.')
+param nercCipVaultDoubleEncryptionRequired bool = true
+
+@description('Set true to require Recovery Services vault soft delete to be AlwaysOn in the NERC CIP technical overlay.')
+param nercCipVaultCheckAlwaysOnSoftDeleteOnly bool = true
 
 @description('Effect for the virtual machine backup coverage audit (REQ-BKP-01). AuditIfNotExists reports uncovered virtual machines without configuring any backup.')
 @allowed([
@@ -622,6 +674,10 @@ var cisAzureFoundationsPolicySetDefinitionId = tenantResourceId(
 var nistSp80053Rev5PolicySetDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policySetDefinitions',
   '179d1daa-458f-4e47-8086-2a68d0d6c38f'
+)
+var requireResourceGroupTagAndValuePolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '8ce3da23-7156-49e4-b145-24f95f9dcb46'
 )
 var activityLogExportPolicyDefinitionId = tenantResourceId(
   'Microsoft.Authorization/policyDefinitions',
@@ -2191,6 +2247,893 @@ module backupPostureAssignment 'modules/policy-assignment.bicep' = {
   ]
 }
 
+module nercCipTechnicalOverlayInitiative 'modules/policy-initiative.bicep' = {
+  name: 'nerc-cip-technical-overlay-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-nerc-cip-technical-overlay'
+    initiativeDisplayName: 'Demo - NERC CIP technical overlay (critical only)'
+    initiativeDescription: 'Opt-in, stricter technical overlay for critical-infrastructure subscriptions. Composes existing verified controls for regions, network boundaries, private access, data protection, diagnostics readiness, Defender readiness, and backup posture. Assignment alone does not establish NERC CIP compliance.'
+    initiativeCategory: 'Regulatory Compliance'
+    initiativeVersion: '1.0.0'
+    initiativeParameters: {
+      allowedLocations: {
+        type: 'Array'
+        metadata: {
+          displayName: 'Approved critical regions'
+        }
+        defaultValue: []
+      }
+      networkIngressEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      privateAccessPublicNetworkEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      privateAccessServiceCategories: {
+        type: 'Array'
+        defaultValue: [
+          'Storage'
+          'KeyVault'
+        ]
+      }
+      dataProtectionEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      dataProtectionPurgeProtectionEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      dataProtectionAuditOnlyEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      dataProtectionAuditIfNotExistsEffect: {
+        type: 'String'
+        defaultValue: 'AuditIfNotExists'
+      }
+      storageMinimumTlsVersion: {
+        type: 'String'
+        defaultValue: 'TLS1_2'
+      }
+      approvedKeyVaultUris: {
+        type: 'Array'
+        defaultValue: []
+      }
+      approvedKeyNames: {
+        type: 'Array'
+        defaultValue: []
+      }
+      backupCoverageEffect: {
+        type: 'String'
+        defaultValue: 'AuditIfNotExists'
+      }
+      vaultPublicNetworkAccessEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      vaultEncryptionEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      vaultDoubleEncryption: {
+        type: 'Boolean'
+        defaultValue: true
+      }
+      vaultImmutabilityEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      vaultCheckLockedImmutabilityOnly: {
+        type: 'Boolean'
+        defaultValue: true
+      }
+      vaultSoftDeleteEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      vaultCheckAlwaysOnSoftDeleteOnly: {
+        type: 'Boolean'
+        defaultValue: true
+      }
+      vaultMultiUserAuthorizationEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      firewallRouteEffect: {
+        type: 'String'
+        defaultValue: 'Audit'
+      }
+      approvedFirewallPrivateIp: {
+        type: 'String'
+        defaultValue: ''
+      }
+      approvedFirewallResourceId: {
+        type: 'String'
+        defaultValue: ''
+      }
+      approvedRouteTableResourceIds: {
+        type: 'Array'
+        defaultValue: []
+      }
+      approvedRouteTablePrefixes: {
+        type: 'Array'
+        defaultValue: []
+      }
+      dataClassificationTagValue: {
+        type: 'String'
+        defaultValue: ''
+      }
+      sspIdTagValue: {
+        type: 'String'
+        defaultValue: ''
+      }
+      auditIfNotExistsEffect: {
+        type: 'String'
+        defaultValue: 'AuditIfNotExists'
+      }
+      diagnosticsEffect: {
+        type: 'String'
+        defaultValue: 'Disabled'
+      }
+      diagnosticsWorkspaceResourceId: {
+        type: 'String'
+        defaultValue: ''
+      }
+    }
+    policyDefinitionGroups: [
+      {
+        name: 'critical-boundary'
+        displayName: 'Critical boundary'
+        category: 'Regulatory Compliance'
+        description: 'Critical region and boundary controls.'
+      }
+      {
+        name: 'critical-data'
+        displayName: 'Critical data protection'
+        category: 'Regulatory Compliance'
+        description: 'Data-protection, private-access, and backup controls.'
+      }
+      {
+        name: 'critical-monitoring'
+        displayName: 'Critical monitoring readiness'
+        category: 'Regulatory Compliance'
+        description: 'Diagnostics and Defender readiness controls.'
+      }
+    ]
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: policyLibrary.outputs.allowedLocationsPolicyDefinitionId
+        policyDefinitionReferenceId: 'critical-approved-locations'
+        parameters: {
+          allowedLocations: {
+            value: '[parameters(\'allowedLocations\')]'
+          }
+        }
+        groupNames: [
+          'critical-boundary'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.publicManagementIngressPolicyDefinitionId
+        policyDefinitionReferenceId: 'critical-public-management-ingress'
+        parameters: {
+          effect: {
+            value: '[parameters(\'networkIngressEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-boundary'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.requireSubnetNsgPolicyDefinitionId
+        policyDefinitionReferenceId: 'critical-require-subnet-nsg'
+        parameters: {
+          effect: {
+            value: '[parameters(\'networkIngressEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-boundary'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.privateAccessPublicNetworkPolicyDefinitionId
+        policyDefinitionReferenceId: 'critical-paas-public-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'privateAccessPublicNetworkEffect\')]'
+          }
+          serviceCategories: {
+            value: '[parameters(\'privateAccessServiceCategories\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: '/providers/Microsoft.Authorization/policyDefinitions/6edd7eda-6dd8-40f7-810d-67160c639cd9'
+        policyDefinitionReferenceId: 'critical-storage-private-link'
+        definitionVersion: '2.*.*'
+        parameters: {}
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: '/providers/Microsoft.Authorization/policyDefinitions/a6abeaec-4d90-4a02-805f-6b26c4d3fbe9'
+        policyDefinitionReferenceId: 'critical-key-vault-private-link'
+        definitionVersion: '1.*.*'
+        parameters: {
+          audit_effect: {
+            value: 'Audit'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '404c3081-a854-4457-ae30-26a93ef643f9'
+        )
+        definitionVersion: '2.*.*'
+        policyDefinitionReferenceId: 'critical-storage-secure-transfer'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          'fe83a0eb-a853-422d-aac2-1bffd182c5d0'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-storage-minimum-tls'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+          minimumTlsVersion: {
+            value: '[parameters(\'storageMinimumTlsVersion\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '4fa4b6c0-31ca-4c0d-b10d-24b96f62a751'
+        )
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'critical-storage-public-blob-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '34c877ad-507e-4c82-993e-3452a6e0ad3c'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-storage-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '8c6a50c6-9ffd-4ae7-986f-5fa6111f9a54'
+        )
+        definitionVersion: '2.*.*'
+        policyDefinitionReferenceId: 'critical-storage-shared-key-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '1e66c121-a66a-4b1f-9b83-0fd99bf0fc2d'
+        )
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'critical-key-vault-soft-delete'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '0b60c0b2-2dc2-4e1c-b5c9-abbed971de53'
+        )
+        definitionVersion: '2.*.*'
+        policyDefinitionReferenceId: 'critical-key-vault-deletion-protection'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionPurgeProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '12d4fa5e-1f9f-4c21-97a9-b99b3c6611b5'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-key-vault-rbac-authorization'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '55615ac9-af46-4a59-874e-391cc3dfb490'
+        )
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'critical-key-vault-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          'cf820ca0-f99e-4f3e-84fb-66e913812d21'
+        )
+        definitionVersion: '5.*.*'
+        policyDefinitionReferenceId: 'critical-key-vault-diagnostics-readiness'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionAuditIfNotExistsEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: tenantResourceId(
+          'Microsoft.Authorization/policyDefinitions',
+          '6fac406b-40ca-413b-bf8e-0bf964659c25'
+        )
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-storage-customer-managed-key'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionAuditOnlyEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.storageCmkApprovedKeyPolicyDefinitionId
+        policyDefinitionReferenceId: 'critical-storage-approved-customer-managed-key'
+        parameters: {
+          effect: {
+            value: '[parameters(\'dataProtectionEffect\')]'
+          }
+          approvedKeyVaultUris: {
+            value: '[parameters(\'approvedKeyVaultUris\')]'
+          }
+          approvedKeyNames: {
+            value: '[parameters(\'approvedKeyNames\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: vmBackupCoveragePolicyDefinitionId
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'critical-vm-backup-coverage'
+        parameters: {
+          effect: {
+            value: '[parameters(\'backupCoverageEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: vaultPublicNetworkPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-vault-public-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultPublicNetworkAccessEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: vaultEncryptionPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-vault-customer-managed-key'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultEncryptionEffect\')]'
+          }
+          enableDoubleEncryption: {
+            value: '[parameters(\'vaultDoubleEncryption\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: vaultImmutabilityPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-vault-immutability'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultImmutabilityEffect\')]'
+          }
+          checkLockedImmutabilityOnly: {
+            value: '[parameters(\'vaultCheckLockedImmutabilityOnly\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: vaultSoftDeletePolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-vault-soft-delete'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultSoftDeleteEffect\')]'
+          }
+          checkAlwaysOnSoftDeleteOnly: {
+            value: '[parameters(\'vaultCheckAlwaysOnSoftDeleteOnly\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: vaultMultiUserAuthorizationPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-vault-multi-user-authorization'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultMultiUserAuthorizationEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: policyLibrary.outputs.approvedFirewallRoutesPolicyDefinitionId
+        policyDefinitionReferenceId: 'critical-approved-firewall-routes'
+        parameters: {
+          effect: {
+            value: '[parameters(\'firewallRouteEffect\')]'
+          }
+          approvedFirewallPrivateIp: {
+            value: '[parameters(\'approvedFirewallPrivateIp\')]'
+          }
+          approvedFirewallResourceId: {
+            value: '[parameters(\'approvedFirewallResourceId\')]'
+          }
+          approvedRouteTableResourceIds: {
+            value: '[parameters(\'approvedRouteTableResourceIds\')]'
+          }
+          approvedRouteTablePrefixes: {
+            value: '[parameters(\'approvedRouteTablePrefixes\')]'
+          }
+        }
+        groupNames: [
+          'critical-boundary'
+        ]
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagAndValuePolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-data-classification-value'
+        parameters: {
+          tagName: {
+            value: 'DataClassification'
+          }
+          tagValue: {
+            value: '[parameters(\'dataClassificationTagValue\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: requireResourceGroupTagAndValuePolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-ssp-id-value'
+        parameters: {
+          tagName: {
+            value: 'SSP-ID'
+          }
+          tagValue: {
+            value: '[parameters(\'sspIdTagValue\')]'
+          }
+        }
+        groupNames: [
+          'critical-data'
+        ]
+      }
+      {
+        policyDefinitionId: vulnerabilityAssessmentAuditPolicyDefinitionId
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'critical-vm-vulnerability-assessment'
+        parameters: {
+          effect: {
+            value: '[parameters(\'auditIfNotExistsEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-monitoring'
+        ]
+      }
+      {
+        policyDefinitionId: windowsAmaAuditPolicyDefinitionId
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'critical-windows-ama'
+        parameters: {
+          effect: {
+            value: '[parameters(\'auditIfNotExistsEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-monitoring'
+        ]
+      }
+      {
+        policyDefinitionId: linuxAmaAuditPolicyDefinitionId
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'critical-linux-ama'
+        parameters: {
+          effect: {
+            value: '[parameters(\'auditIfNotExistsEffect\')]'
+          }
+        }
+        groupNames: [
+          'critical-monitoring'
+        ]
+      }
+      {
+        policyDefinitionId: activityLogExportPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'critical-activity-log-export'
+        parameters: {
+          effect: {
+            value: '[parameters(\'diagnosticsEffect\')]'
+          }
+          logsEnabled: {
+            value: 'True'
+          }
+          logAnalytics: {
+            value: '[parameters(\'diagnosticsWorkspaceResourceId\')]'
+          }
+        }
+        groupNames: [
+          'critical-monitoring'
+        ]
+      }
+    ]
+  }
+}
+
+module nercCipTechnicalOverlayAssignment 'modules/remediating-policy-assignment.bicep' = if (enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs) {
+  name: 'assign-nerc-cip-technical-overlay'
+  scope: managementGroup(criticalInfrastructureManagementGroupId)
+  params: {
+    assignmentName: 'demo-nerc-cip-technical'
+    displayName: 'Demo - NERC CIP technical overlay (critical only)'
+    description: 'Opt-in assignment of stricter technical controls for the Critical Infrastructure branch only. Assignment alone does not establish NERC CIP compliance.'
+    policyDefinitionId: nercCipTechnicalOverlayInitiative.outputs.policySetDefinitionId
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      monitoringContributorRoleDefinitionId
+    ]
+    deployRemediationRoleAssignments: deployActivityLogRemediationRoleAssignments
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      allowedLocations: {
+        value: validatedNercCipApprovedLocations
+      }
+      networkIngressEffect: {
+        value: networkIngressPolicyEffect
+      }
+      privateAccessPublicNetworkEffect: {
+        value: privateAccessPublicNetworkPolicyEffect
+      }
+      privateAccessServiceCategories: {
+        value: validatedPrivateAccessServiceCategories
+      }
+      dataProtectionEffect: {
+        value: dataProtectionPolicyEffect
+      }
+      dataProtectionPurgeProtectionEffect: {
+        value: dataProtectionPurgeProtectionEffect
+      }
+      dataProtectionAuditOnlyEffect: {
+        value: dataProtectionAuditOnlyEffect
+      }
+      dataProtectionAuditIfNotExistsEffect: {
+        value: dataProtectionAuditIfNotExistsEffect
+      }
+      storageMinimumTlsVersion: {
+        value: storageMinimumTlsVersion
+      }
+      approvedKeyVaultUris: {
+        value: approvedCustomerManagedKeyVaultUris
+      }
+      approvedKeyNames: {
+        value: approvedCustomerManagedKeyNames
+      }
+      backupCoverageEffect: {
+        value: vmBackupCoveragePolicyEffect
+      }
+      vaultPublicNetworkAccessEffect: {
+        value: vaultPublicNetworkPolicyEffect
+      }
+      vaultEncryptionEffect: {
+        value: vaultEncryptionPolicyEffect
+      }
+      vaultDoubleEncryption: {
+        value: nercCipVaultDoubleEncryptionRequired
+      }
+      vaultImmutabilityEffect: {
+        value: vaultImmutabilityPolicyEffect
+      }
+      vaultCheckLockedImmutabilityOnly: {
+        value: vaultCheckLockedImmutabilityOnly
+      }
+      vaultSoftDeleteEffect: {
+        value: vaultSoftDeletePolicyEffect
+      }
+      vaultCheckAlwaysOnSoftDeleteOnly: {
+        value: nercCipVaultCheckAlwaysOnSoftDeleteOnly
+      }
+      vaultMultiUserAuthorizationEffect: {
+        value: vaultMultiUserAuthorizationPolicyEffect
+      }
+      firewallRouteEffect: {
+        value: 'Audit'
+      }
+      approvedFirewallPrivateIp: {
+        value: approvedFirewallPrivateIp
+      }
+      approvedFirewallResourceId: {
+        value: approvedFirewallResourceId
+      }
+      approvedRouteTableResourceIds: {
+        value: approvedRouteTableResourceIds
+      }
+      approvedRouteTablePrefixes: {
+        value: approvedRouteTablePrefixes
+      }
+      dataClassificationTagValue: {
+        value: trim(nercCipDataClassificationTagValue)
+      }
+      sspIdTagValue: {
+        value: trim(nercCipSspIdTagValue)
+      }
+      auditIfNotExistsEffect: {
+        value: 'AuditIfNotExists'
+      }
+      diagnosticsEffect: {
+        value: activityLogExportPolicyEffect
+      }
+      diagnosticsWorkspaceResourceId: {
+        value: validatedLoggingWorkspaceResourceId
+      }
+    }
+
+    nonComplianceMessages: [
+      {
+        message: 'Critical resources must remain in customer-approved CIP regions.'
+        policyDefinitionReferenceId: 'critical-approved-locations'
+      }
+      {
+        message: 'Critical network boundaries must block public SSH/RDP ingress and require NSGs on subnets.'
+        policyDefinitionReferenceId: 'critical-public-management-ingress'
+      }
+      {
+        message: 'Critical virtual-network subnets require an NSG association unless a governed exemption is approved.'
+        policyDefinitionReferenceId: 'critical-require-subnet-nsg'
+      }
+      {
+        message: 'Critical PaaS services must use approved private-access posture and avoid public network exposure.'
+        policyDefinitionReferenceId: 'critical-paas-public-network-access'
+      }
+      {
+        message: 'Critical storage accounts must satisfy private endpoint readiness checks.'
+        policyDefinitionReferenceId: 'critical-storage-private-link'
+      }
+      {
+        message: 'Critical Key Vaults must satisfy private endpoint readiness checks.'
+        policyDefinitionReferenceId: 'critical-key-vault-private-link'
+      }
+      {
+        message: 'Critical storage accounts must require secure transfer (HTTPS).'
+        policyDefinitionReferenceId: 'critical-storage-secure-transfer'
+      }
+      {
+        message: 'Critical storage accounts must enforce the approved minimum TLS version.'
+        policyDefinitionReferenceId: 'critical-storage-minimum-tls'
+      }
+      {
+        message: 'Critical storage accounts must not allow anonymous public blob access.'
+        policyDefinitionReferenceId: 'critical-storage-public-blob-access'
+      }
+      {
+        message: 'Critical storage accounts must restrict network access to approved paths.'
+        policyDefinitionReferenceId: 'critical-storage-network-access'
+      }
+      {
+        message: 'Critical storage accounts must disable Shared Key authorization.'
+        policyDefinitionReferenceId: 'critical-storage-shared-key-access'
+      }
+      {
+        message: 'Critical Key Vaults must enable soft delete.'
+        policyDefinitionReferenceId: 'critical-key-vault-soft-delete'
+      }
+      {
+        message: 'Critical Key Vaults must enable deletion protection (purge protection).'
+        policyDefinitionReferenceId: 'critical-key-vault-deletion-protection'
+      }
+      {
+        message: 'Critical Key Vaults must use Azure RBAC authorization for data-plane access.'
+        policyDefinitionReferenceId: 'critical-key-vault-rbac-authorization'
+      }
+      {
+        message: 'Critical Key Vaults must restrict public network access or use the firewall.'
+        policyDefinitionReferenceId: 'critical-key-vault-network-access'
+      }
+      {
+        message: 'Critical Key Vaults must emit diagnostic logs to approved monitoring destinations.'
+        policyDefinitionReferenceId: 'critical-key-vault-diagnostics-readiness'
+      }
+      {
+        message: 'Critical storage accounts in CMK scope must use customer-managed keys.'
+        policyDefinitionReferenceId: 'critical-storage-customer-managed-key'
+      }
+      {
+        message: 'Critical storage customer-managed keys must come from approved vault URI and key-name inputs.'
+        policyDefinitionReferenceId: 'critical-storage-approved-customer-managed-key'
+      }
+      {
+        message: 'Critical virtual machines must be protected by approved backup coverage.'
+        policyDefinitionReferenceId: 'critical-vm-backup-coverage'
+      }
+      {
+        message: 'Critical Recovery Services vaults must disable public network access.'
+        policyDefinitionReferenceId: 'critical-vault-public-network-access'
+      }
+      {
+        message: 'Critical Recovery Services vaults must use customer-managed key encryption.'
+        policyDefinitionReferenceId: 'critical-vault-customer-managed-key'
+      }
+      {
+        message: 'Critical Recovery Services vaults must enable immutability protection.'
+        policyDefinitionReferenceId: 'critical-vault-immutability'
+      }
+      {
+        message: 'Critical Recovery Services vaults must enforce soft delete according to the approved profile.'
+        policyDefinitionReferenceId: 'critical-vault-soft-delete'
+      }
+      {
+        message: 'Critical Recovery Services vaults must enable multi-user authorization.'
+        policyDefinitionReferenceId: 'critical-vault-multi-user-authorization'
+      }
+      {
+        message: 'Critical route tables must use approved firewall routes and next-hop configuration.'
+        policyDefinitionReferenceId: 'critical-approved-firewall-routes'
+      }
+      {
+        message: 'Critical resource groups must set DataClassification to the customer-approved CIP value.'
+        policyDefinitionReferenceId: 'critical-data-classification-value'
+      }
+      {
+        message: 'Critical resource groups must set SSP-ID to the customer-approved CIP value.'
+        policyDefinitionReferenceId: 'critical-ssp-id-value'
+      }
+      {
+        message: 'Critical virtual machines must maintain Defender vulnerability-assessment readiness.'
+        policyDefinitionReferenceId: 'critical-vm-vulnerability-assessment'
+      }
+      {
+        message: 'Critical Windows virtual machines must maintain Azure Monitor Agent readiness.'
+        policyDefinitionReferenceId: 'critical-windows-ama'
+      }
+      {
+        message: 'Critical Linux virtual machines must maintain Azure Monitor Agent readiness.'
+        policyDefinitionReferenceId: 'critical-linux-ama'
+      }
+      {
+        message: 'Critical supported resources must send diagnostics to the approved monitoring workspace.'
+        policyDefinitionReferenceId: 'critical-activity-log-export'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module nercCipOverlayWorkspaceDestinationRbac 'modules/workspace-remediation-rbac.bicep' = if (enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs && deployActivityLogRemediationRoleAssignments) {
+  name: 'nerc-cip-overlay-workspace-destination-rbac'
+  scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
+  params: {
+    workspaceName: loggingWorkspaceName
+    principalId: nercCipTechnicalOverlayAssignment!.outputs.identityPrincipalId
+    roleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+  }
+}
+
 module vmBackupConfigurationAssignments 'modules/remediating-policy-assignment.bicep' = [
   for (approvedVault, approvedVaultIndex) in validatedApprovedBackupVaults: if (vmBackupRemediationActive) {
     name: 'assign-vm-backup-${approvedVaultIndex}'
@@ -2673,6 +3616,14 @@ output loggingAssignments object = {
     categoryGroup: resourceDiagnosticsCategoryGroup
     policySetDefinitionId: resourceDiagnosticsPolicySetDefinitionId
   }
+}
+output nercCipTechnicalOverlay object = {
+  enabled: enableNercCipTechnicalOverlay
+  policyAssignmentId: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs ? nercCipTechnicalOverlayAssignment!.outputs.policyAssignmentId : ''
+  identityPrincipalId: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs ? nercCipTechnicalOverlayAssignment!.outputs.identityPrincipalId : ''
+  roleAssignmentIds: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs ? nercCipTechnicalOverlayAssignment!.outputs.roleAssignmentIds : []
+  workspaceDestinationAccessEnabled: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs && deployActivityLogRemediationRoleAssignments
+  workspaceDestinationRoleAssignmentIds: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs && deployActivityLogRemediationRoleAssignments ? nercCipOverlayWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
 }
 
 

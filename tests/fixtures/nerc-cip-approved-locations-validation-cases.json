@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "value": [
+        "eastus2"
+      ],
+      "valid": true
+    },
+    {
+      "value": [
+        "eastus2",
+        "westus3"
+      ],
+      "valid": true
+    },
+    {
+      "value": [],
+      "valid": false
+    },
+    {
+      "value": [
+        ""
+      ],
+      "valid": false
+    },
+    {
+      "value": [
+        "   "
+      ],
+      "valid": false
+    },
+    {
+      "value": [
+        "eastus2",
+        " EASTUS2 "
+      ],
+      "valid": false
+    },
+    {
+      "value": [
+        "eastus2",
+        12
+      ],
+      "valid": false
+    }
+  ]
+}

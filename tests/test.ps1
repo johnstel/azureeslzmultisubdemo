@@ -317,18 +317,20 @@ try {
         $compiledParameters.parameters.policyExemptions.value.Count -ne 0) {
         Stop-Test 'Customer-control diagnostics require an explicit workspace and policy exemptions must remain opt-in.'
     }
-    $profileShapes = @(
-        $parameterTemplate.parameters,
-        $safeDemoParameters.parameters,
-        $compiledParameters.parameters
-    ) | ForEach-Object {
-        @($_.PSObject.Properties | Sort-Object Name | ForEach-Object {
-            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
-            '{0}:{1}' -f $_.Name, $valueType
-        })
-    }
-    if ((Compare-Object $profileShapes[0] $profileShapes[1]) -or
-        (Compare-Object $profileShapes[0] $profileShapes[2])) {
+    $demoProfileShape = @($parameterTemplate.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    $safeDemoProfileShape = @($safeDemoParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    $customerControlProfileShape = @($compiledParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    if ((Compare-Object $demoProfileShape $safeDemoProfileShape) -or
+        (Compare-Object $demoProfileShape $customerControlProfileShape)) {
         Stop-Test 'Safe-demo JSON and both Bicep profiles must expose identical parameter names and value types.'
     }
     $monitoringPositivePath = Join-Path $TempDir 'monitoring-positive.bicepparam'
@@ -359,7 +361,9 @@ try {
     }
     $monitoringPositive = Get-Content -LiteralPath "$monitoringPositivePath.json" -Raw | ConvertFrom-Json
     $monitoringNegative = Get-Content -LiteralPath "$monitoringNegativePath.json" -Raw | ConvertFrom-Json
-    if ($monitoringPositive.parameters.existingLogAnalyticsWorkspaceResourceId.value -eq '' -or
+    if ($monitoringPositive.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $monitoringNegative.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $monitoringPositive.parameters.existingLogAnalyticsWorkspaceResourceId.value -eq '' -or
         $monitoringNegative.parameters.existingLogAnalyticsWorkspaceResourceId.value -ne '') {
         Stop-Test 'Monitoring guard fixtures must cover workspace-backed and workspace-free diagnostics activation.'
     }
@@ -454,6 +458,12 @@ try {
         $parameterTemplate.parameters.approvedFirewallPrivateIp.value -ne '' -or
         @($parameterTemplate.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
         @($parameterTemplate.parameters.approvedRouteTablePrefixes.value).Count -ne 0 -or
+        $parameterTemplate.parameters.enableNercCipTechnicalOverlay.value -ne $false -or
+        @($parameterTemplate.parameters.nercCipApprovedLocations.value).Count -ne 0 -or
+        $parameterTemplate.parameters.nercCipDataClassificationTagValue.value -ne '' -or
+        $parameterTemplate.parameters.nercCipSspIdTagValue.value -ne '' -or
+        $parameterTemplate.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $parameterTemplate.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true -or
         $parameterTemplate.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
         Stop-Test 'Private-access and firewall-route JSON template parameters must retain safe defaults.'
     }
@@ -464,6 +474,12 @@ try {
         $compiledParameters.parameters.approvedFirewallPrivateIp.value -ne '' -or
         @($compiledParameters.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
         @($compiledParameters.parameters.approvedRouteTablePrefixes.value).Count -ne 0 -or
+        $compiledParameters.parameters.enableNercCipTechnicalOverlay.value -ne $false -or
+        @($compiledParameters.parameters.nercCipApprovedLocations.value).Count -ne 0 -or
+        $compiledParameters.parameters.nercCipDataClassificationTagValue.value -ne '' -or
+        $compiledParameters.parameters.nercCipSspIdTagValue.value -ne '' -or
+        $compiledParameters.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $compiledParameters.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true -or
         $compiledParameters.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
         Stop-Test 'Private-access and firewall-route Bicep template parameters must retain safe defaults.'
     }
@@ -1155,6 +1171,112 @@ exit $LASTEXITCODE
         ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'fail\(' -or
         ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'approvedRouteTablePrefixes') {
         Stop-Test 'Firewall-route assignment must retain approved-firewall evidence and validate all architecture inputs.'
+    }
+    $nercCipOverlayInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'nerc-cip-technical-overlay-initiative' })
+    $nercCipOverlayAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-nerc-cip-technical-overlay' })
+    $nercCipOverlayWorkspaceRbac = @($compiledJson.resources | Where-Object { $_.name -eq 'nerc-cip-overlay-workspace-destination-rbac' })
+    if ($nercCipOverlayInitiative.Count -ne 1 -or
+        $nercCipOverlayAssignment.Count -ne 1 -or
+        $nercCipOverlayWorkspaceRbac.Count -ne 1) {
+        Stop-Test 'NERC CIP technical overlay initiative, assignment, and destination workspace RBAC deployment must each be present exactly once.'
+    }
+    $nercCipOverlayReferences = @($nercCipOverlayInitiative[0].properties.parameters.policyDefinitionReferences.value)
+    $nercCipOverlayReferenceIds = @($nercCipOverlayReferences | ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object)
+    if (
+        $nercCipOverlayInitiative[0].scope -notmatch 'demoRootManagementGroupId' -or
+        $nercCipOverlayReferenceIds.Count -lt 25 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-public-management-ingress' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-require-subnet-nsg' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-paas-public-network-access' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-vault-customer-managed-key' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-activity-log-export' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-network-ingress' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-private-access' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-data-protection' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-backup-posture' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-resource-diagnostics' }).Count -ne 0 -or
+        @($nercCipOverlayReferences | Where-Object {
+            ([string]$_.policyDefinitionId).Contains('/policySetDefinitions/')
+        }).Count -ne 0 -or
+        ([string]$nercCipOverlayAssignment[0].condition) -notmatch 'enableNercCipTechnicalOverlay' -or
+        ([string]$nercCipOverlayAssignment[0].condition) -notmatch 'validatedNercCipOverlayInputs' -or
+        $nercCipOverlayAssignment[0].scope -notmatch 'criticalInfrastructureManagementGroupId' -or
+        $nercCipOverlayAssignment[0].scope -match 'workloadManagementGroupId' -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.location.value -ne "[parameters('deploymentLocation')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.identity.value.type -ne 'SystemAssigned' -or
+        (Compare-Object @($nercCipOverlayAssignment[0].properties.parameters.verifiedRoleDefinitionIds.value) @("[variables('monitoringContributorRoleDefinitionId')]")) -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.deployRemediationRoleAssignments.value -ne "[variables('deployActivityLogRemediationRoleAssignments')]" -or
+        $nercCipOverlayAssignment[0].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.allowedLocations.value -notmatch 'validatedNercCipApprovedLocations' -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.dataClassificationTagValue.value -notmatch 'nercCipDataClassificationTagValue' -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.sspIdTagValue.value -ne "[trim(parameters('nercCipSspIdTagValue'))]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultDoubleEncryption.value -ne "[parameters('nercCipVaultDoubleEncryptionRequired')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value -ne "[parameters('nercCipVaultCheckAlwaysOnSoftDeleteOnly')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.diagnosticsEffect.value -ne "[parameters('activityLogExportPolicyEffect')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].condition -ne "[and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments'))]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].subscriptionId -ne "[variables('loggingWorkspaceSubscriptionId')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].resourceGroup -ne "[variables('loggingWorkspaceResourceGroupName')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].properties.parameters.workspaceName.value -ne "[variables('loggingWorkspaceName')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].properties.parameters.principalId.value -ne "[reference('nercCipTechnicalOverlayAssignment').outputs.identityPrincipalId.value]" -or
+        (Compare-Object @($nercCipOverlayWorkspaceRbac[0].properties.parameters.roleDefinitionIds.value) @("[variables('logAnalyticsContributorRoleDefinitionId')]")) -or
+        $compiledJson.outputs.nercCipTechnicalOverlay.value.workspaceDestinationAccessEnabled -ne "[and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments'))]" -or
+        $compiledJson.outputs.nercCipTechnicalOverlay.value.workspaceDestinationRoleAssignmentIds -ne "[if(and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments')), reference('nercCipOverlayWorkspaceDestinationRbac').outputs.roleAssignmentIds.value, createArray())]") {
+        Stop-Test 'NERC CIP technical overlay must stay opt-in, critical-only, and parameter-wired to stricter inputs.'
+    }
+    $nercCipMessageReferenceIds = @(
+        $nercCipOverlayAssignment[0].properties.parameters.nonComplianceMessages.value |
+        ForEach-Object { $_.policyDefinitionReferenceId } |
+        Sort-Object
+    )
+    if (@($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-public-management-ingress' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-require-subnet-nsg' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-paas-public-network-access' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-vault-customer-managed-key' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-activity-log-export' }).Count -ne 1 -or
+        @($nercCipOverlayAssignment[0].properties.parameters.nonComplianceMessages.value |
+            Where-Object { [string]::IsNullOrEmpty($_.message) }).Count -ne 0) {
+        Stop-Test 'NERC CIP technical overlay must include non-empty noncompliance messages for each reference.'
+    }
+    foreach ($requiredValidationText in @(
+        'enableNercCipTechnicalOverlay requires enableCriticalInfrastructure to be true so the overlay remains Critical-scope only.',
+        'enableNercCipTechnicalOverlay requires at least one criticalInfrastructureSubscriptionIds entry.',
+        'enableNercCipTechnicalOverlay requires a canonical effective monitoring workspace resource ID from deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId.',
+        'enableNercCipTechnicalOverlay requires activityLogExportPolicyEffect to be DeployIfNotExists so centralized Activity Log export remains active.',
+        'enableNercCipTechnicalOverlay requires deployRoleAssignments and deployLoggingRemediationRoleAssignments to be true so the overlay assignment identity can receive least-privilege remediation access.',
+        'enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to be true with approved firewall and route-table evidence.',
+        'enableNercCipTechnicalOverlay requires approvedBackupVaults records for backup coverage evidence.',
+        'enableNercCipTechnicalOverlay requires backupRetentionStandardId so backup controls map to a documented standard.',
+        'enableNercCipTechnicalOverlay requires non-empty nercCipDataClassificationTagValue and nercCipSspIdTagValue inputs.',
+        'nercCipApprovedLocations must contain only string region values.',
+        'nercCipApprovedLocations must not contain empty or whitespace-only values.',
+        'nercCipApprovedLocations must contain case-insensitively unique region values.'
+    )) {
+        if (-not $mainBicepText.Contains($requiredValidationText)) {
+            Stop-Test "NERC CIP overlay guard validation is missing: $requiredValidationText"
+        }
+    }
+    if ($compiledJson.parameters.nercCipVaultDoubleEncryptionRequired.defaultValue -ne $true -or
+        $compiledJson.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.defaultValue -ne $true -or
+        $parameterTemplate.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $parameterTemplate.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true -or
+        $compiledParameters.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $compiledParameters.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true) {
+        Stop-Test 'NERC CIP stricter backup defaults must stay true in compiled and parameter templates.'
+    }
+    $nercCipLocationValidationFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/nerc-cip-approved-locations-validation-cases.json') -Raw | ConvertFrom-Json
+    foreach ($case in $nercCipLocationValidationFixture.cases) {
+        $values = @($case.value)
+        $allStrings = @($values | Where-Object { $_ -isnot [string] }).Count -eq 0
+        $normalized = @($values | ForEach-Object {
+            if ($_ -is [string]) { $_.Trim().ToLowerInvariant() } else { '' }
+        })
+        $valid = $allStrings -and
+            $normalized.Count -gt 0 -and
+            (@($normalized | Where-Object { [string]::IsNullOrEmpty($_) }).Count -eq 0) -and
+            (@($normalized | Sort-Object -Unique).Count -eq $normalized.Count)
+        if ($valid -ne $case.valid) {
+            Stop-Test "NERC CIP approved-location validation case failed: $($values -join ',')"
+        }
     }
     foreach ($requiredValidationText in @(
         'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values',
@@ -3827,7 +3949,9 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $accessReviewStrictReport = Get-Content -LiteralPath (
         @(Get-ChildItem -LiteralPath $accessReviewStrictOut -Filter 'privileged-access-review-*.json')[0].FullName) -Raw |
         ConvertFrom-Json -Depth 20
-    if (@($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) -ne @($accessReviewSubscription) -or
+    if ((Compare-Object `
+            -ReferenceObject @($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) `
+            -DifferenceObject @($accessReviewSubscription)) -or
         $accessReviewStrictReport.criteria.maxOwnersPerSubscription -ne 1 -or
         $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].ownerPrincipalCount -ne 2 -or
         -not $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].exceedsThreshold) {
