@@ -192,10 +192,11 @@ function Find-ProhibitedPaidDeclarations {
 }
 
 try {
-    $realAzSource = (Get-Command az -ErrorAction SilentlyContinue).Source
-    if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
+    $realAzCommand = Get-Command az -ErrorAction SilentlyContinue
+    if ($null -eq $realAzCommand) {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
+    $realAzSource = $realAzCommand.Source
 
     Invoke-OfflineParitySuite
     if ((Get-Command az -ErrorAction SilentlyContinue).Source -ne $realAzSource) {
