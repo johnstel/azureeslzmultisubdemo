@@ -324,13 +324,6 @@ if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
   wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "${backup_resource_group}"
 fi
 
-delete_policy_assignment 'demo-require-rg-tags' "${landing_zones_scope}"
-delete_policy_assignment 'demo-require-rg-tags' "${workload_scope}"
-delete_policy_assignment 'demo-audit-platform-tags' "${platform_scope}"
-delete_policy_assignment 'demo-block-expensive' "${demo_root_scope}"
-delete_policy_assignment 'demo-audit-public-ip' "${demo_root_scope}"
-delete_policy_assignment 'demo-allowed-us-locs' "${demo_root_scope}"
-
 for policy_name in \
   "${prefix}-allowed-us-locations" \
   "${prefix}-allowed-resource-types-all" \

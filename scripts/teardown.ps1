@@ -388,13 +388,6 @@ if ($recoveryServicesVaultEnabled) {
     Wait-ResourceGroupDeletionIfNotProtected -Subscription $workloadSubscription -Group $backupResourceGroupName
 }
 
-Remove-PolicyAssignment 'demo-require-rg-tags' $landingZonesScope
-Remove-PolicyAssignment 'demo-require-rg-tags' $workloadScope
-Remove-PolicyAssignment 'demo-audit-platform-tags' $platformScope
-Remove-PolicyAssignment 'demo-block-expensive' $demoRootScope
-Remove-PolicyAssignment 'demo-audit-public-ip' $demoRootScope
-Remove-PolicyAssignment 'demo-allowed-us-locs' $demoRootScope
-
 $policyNames = @(
     "$prefix-allowed-us-locations",
     "$prefix-allowed-resource-types-all",

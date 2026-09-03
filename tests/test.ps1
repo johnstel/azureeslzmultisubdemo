@@ -2057,6 +2057,14 @@ if [[ "$1" == 'group' && "$2" == 'exists' ]]; then
   echo 'true'
   exit 0
 fi
+if [[ "$1" == 'policy' && "$2" == 'assignment' && "$3" == 'show' ]]; then
+  echo '11111111-1111-1111-1111-111111111111'
+  exit 0
+fi
+if [[ "$1" == 'role' && "$2" == 'assignment' && "$3" == 'list' ]]; then
+  echo '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/demo-owned'
+  exit 0
+fi
 exit 0
 '@ | Set-Content -LiteralPath $mockAzPath -NoNewline
     if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod +x $mockAzPath }
@@ -2072,6 +2080,14 @@ exit 0
 echo %* >> "%AZ_CALL_LOG%"
 if /I "%~1"=="group" if /I "%~2"=="exists" (
   echo true
+  exit /b 0
+)
+if /I "%~1"=="policy" if /I "%~2"=="assignment" if /I "%~3"=="show" (
+  echo 11111111-1111-1111-1111-111111111111
+  exit /b 0
+)
+if /I "%~1"=="role" if /I "%~2"=="assignment" if /I "%~3"=="list" (
+  echo /subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/demo-owned
   exit /b 0
 )
 exit /b 0
@@ -2106,7 +2122,17 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $templateJson.parameters.workloadContributorsGroupObjectId.value = '66666666-6666-6666-6666-666666666666'
     $templateJson.parameters.readOnlyAuditorsGroupObjectId.value = '77777777-7777-7777-7777-777777777777'
     $templateJson.parameters.deployCentralLogAnalytics.value = $true
-    $templateJson.parameters.existingLogAnalyticsWorkspaceResourceId.value = '   '
+    $templateJson.parameters.existingLogAnalyticsWorkspaceResourceId.value = '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-monitoring/providers/Microsoft.OperationalInsights/workspaces/external-log'
+    $templateJson.parameters.deployEvidenceResources.value = $false
+    $templateJson.parameters.enableCriticalInfrastructure.value = $true
+    $templateJson.parameters.criticalInfrastructureSubscriptionIds.value = @('88888888-8888-8888-8888-888888888888')
+    $templateJson.parameters.enableFirewallRouteGuardrails.value = $true
+    $templateJson.parameters.approvedBackupVaults.value = @(@{})
+    $templateJson.parameters.policyExemptions.value = @(@{
+        exemptionName = 'child-exemption'; exemptionScopeType = 'resourceGroup'
+        subscriptionId = '22222222-2222-2222-2222-222222222222'; resourceGroupName = 'child-rg'
+        policyAssignmentId = '/providers/Microsoft.Management/managementGroups/eslz-demo/providers/Microsoft.Authorization/policyAssignments/demo-audit-public-ip'
+    })
     $templateJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $whitespaceParamFile
 
     if (Get-Command bash -ErrorAction SilentlyContinue) {
@@ -2123,6 +2149,15 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         $azCalls = Get-Content -LiteralPath $azCallLog -Raw
         if ($azCalls -match 'rg-eslz-demo-monitoring') {
             Stop-Test 'teardown.sh must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+        }
+        foreach ($requiredCall in @(
+            'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
+            'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra',
+            'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp',
+            'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones',
+            'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888'
+        )) {
+            if (-not $azCalls.Contains($requiredCall)) { Stop-Test "teardown.sh missing mocked lifecycle call: $requiredCall" }
         }
     }
 
@@ -2145,6 +2180,15 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         $azCalls = Get-Content -LiteralPath $azCallLog -Raw
         if ($azCalls -match 'rg-eslz-demo-monitoring') {
             Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+        }
+        foreach ($requiredCall in @(
+            'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
+            'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra',
+            'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp',
+            'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones',
+            'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888'
+        )) {
+            if (-not $azCalls.Contains($requiredCall)) { Stop-Test "teardown.ps1 missing mocked lifecycle call: $requiredCall" }
         }
     }
 

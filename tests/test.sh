@@ -1675,6 +1675,14 @@ if [[ "$1" == 'group' && "$2" == 'exists' ]]; then
   echo 'true'
   exit 0
 fi
+if [[ "$1" == 'policy' && "$2" == 'assignment' && "$3" == 'show' ]]; then
+  echo '11111111-1111-1111-1111-111111111111'
+  exit 0
+fi
+if [[ "$1" == 'role' && "$2" == 'assignment' && "$3" == 'list' ]]; then
+  echo '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/demo-owned'
+  exit 0
+fi
 exit 0
 MOCKAZ
 chmod +x "${mock_bin_dir}/az"
@@ -1689,7 +1697,19 @@ jq '
   .parameters.workloadContributorsGroupObjectId.value = "66666666-6666-6666-6666-666666666666" |
   .parameters.readOnlyAuditorsGroupObjectId.value = "77777777-7777-7777-7777-777777777777" |
   .parameters.deployCentralLogAnalytics.value = true |
-  .parameters.existingLogAnalyticsWorkspaceResourceId.value = "   "
+  .parameters.existingLogAnalyticsWorkspaceResourceId.value = "/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-monitoring/providers/Microsoft.OperationalInsights/workspaces/external-log" |
+  .parameters.deployEvidenceResources.value = false |
+  .parameters.enableCriticalInfrastructure.value = true |
+  .parameters.criticalInfrastructureSubscriptionIds.value = ["88888888-8888-8888-8888-888888888888"] |
+  .parameters.enableFirewallRouteGuardrails.value = true |
+  .parameters.approvedBackupVaults.value = [{}] |
+  .parameters.policyExemptions.value = [{
+    "exemptionName": "child-exemption",
+    "exemptionScopeType": "resourceGroup",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroupName": "child-rg",
+    "policyAssignmentId": "/providers/Microsoft.Management/managementGroups/eslz-demo/providers/Microsoft.Authorization/policyAssignments/demo-audit-public-ip"
+  }]
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${whitespace_param_file}"
 
 : > "${az_call_log}"
@@ -1711,6 +1731,20 @@ if command -v pwsh >/dev/null 2>&1; then
     exit 1
   fi
 fi
+
+for lifecycle_log in "${az_call_log}"; do
+  rg -q -F 'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg' "${lifecycle_log}"
+  rg -q -F 'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra' "${lifecycle_log}"
+  rg -q -F 'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp' "${lifecycle_log}"
+  rg -q -F 'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones' "${lifecycle_log}"
+  rg -q -F 'role assignment list --assignee 11111111-1111-1111-1111-111111111111 --scope /subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-monitoring/providers/Microsoft.OperationalInsights/workspaces/external-log' "${lifecycle_log}"
+  ! rg -q -F 'group delete --subscription 11111111-1111-1111-1111-111111111111 --name rg-eslz-demo-connectivity' "${lifecycle_log}"
+  rg -q -F 'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888' "${lifecycle_log}"
+  ! rg -q -F 'external-monitoring' "${lifecycle_log}" || [[ "$(rg -c -F 'external-monitoring' "${lifecycle_log}")" -eq "$(rg -c -F 'role assignment list' "${lifecycle_log}")" ]] || { printf 'ERROR: external workspace may only be queried for deployment-owned identity roles.\n' >&2; exit 1; }
+  nerc_role_line="$(rg -n -F 'role assignment delete --ids' "${lifecycle_log}" | head -1 | cut -d: -f1)"
+  nerc_assignment_line="$(rg -n -F 'policy assignment delete --name demo-nerc-cip-technical' "${lifecycle_log}" | cut -d: -f1)"
+  [[ "${nerc_role_line}" -lt "${nerc_assignment_line}" ]] || { printf 'ERROR: NERC role cleanup must precede assignment deletion.\n' >&2; exit 1; }
+done
 
 printf '19/29 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
