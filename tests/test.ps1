@@ -32,6 +32,17 @@ function Invoke-OfflineParitySuite {
         switch ($Arguments[0]) {
             'account' { if ($Arguments[1] -eq 'show') { $env:MOCK_ACCOUNT_JSON ?? '{"tenantId":"11111111-1111-1111-1111-111111111111","state":"Enabled"}' }; return }
             'bicep' { return }
+            'group' {
+                if ($Arguments[1] -eq 'exists') {
+                    if ($env:MOCK_GROUP_EXISTS_ERROR -eq 'true') { $global:LASTEXITCODE = 1; return }
+                    $env:MOCK_GROUP_EXISTS ?? 'false'
+                }
+                elseif ($Arguments[1] -eq 'show') {
+                    if ($env:MOCK_GROUP_SHOW_ERROR -eq 'true') { $global:LASTEXITCODE = 1; return }
+                    $env:MOCK_GROUP_OWNER ?? 'demo'
+                }
+                return
+            }
             'role' { return }
             'provider' { 'Registered'; return }
             'rest' {
@@ -143,8 +154,37 @@ function Invoke-OfflineParitySuite {
             throw "Offline parity case $($case.Name) expected $($case.Expected) but got $($passed.ToString().ToLowerInvariant()). Output: $($output -join ' ')"
         }
     }
+    $collisionDocument = $baseDocument | ConvertFrom-Json
+    $collisionDocument.parameters.tenantRootManagementGroupId.value = 'demo-root'
+    $collisionDocument.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
+    $collisionDocument.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
+    $collisionDocument.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    $collisionDocument.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    $collisionDocument.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+    $collisionDocument.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+    $collisionDocument.parameters.namePrefix.value = 'demo'
+    $collisionDocument.parameters.deployEvidenceResources.value = $true
+    $collisionPath = Join-Path $TempDir 'collision.parameters.json'
+    $collisionDocument | ConvertTo-Json -Depth 20 | Set-Content -Path $collisionPath -Encoding utf8
+    foreach ($collisionCase in @(
+        @{ Name = 'absent'; Expected = $true },
+        @{ Name = 'existing'; Expected = $true; Exists = 'true'; Owner = 'demo' },
+        @{ Name = 'unreadable'; Expected = $false; Exists = 'true'; ShowError = 'true' },
+        @{ Name = 'mismatched'; Expected = $false; Exists = 'true'; Owner = 'external' },
+        @{ Name = 'error'; Expected = $false; ExistsError = 'true' }
+    )) {
+        foreach ($name in 'MOCK_GROUP_EXISTS', 'MOCK_GROUP_OWNER', 'MOCK_GROUP_SHOW_ERROR', 'MOCK_GROUP_EXISTS_ERROR') { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
+        if ($collisionCase.ContainsKey('Exists')) { $env:MOCK_GROUP_EXISTS = $collisionCase.Exists }
+        if ($collisionCase.ContainsKey('Owner')) { $env:MOCK_GROUP_OWNER = $collisionCase.Owner }
+        if ($collisionCase.ContainsKey('ShowError')) { $env:MOCK_GROUP_SHOW_ERROR = $collisionCase.ShowError }
+        if ($collisionCase.ContainsKey('ExistsError')) { $env:MOCK_GROUP_EXISTS_ERROR = $collisionCase.ExistsError }
+        $env:MOCK_REST_JSON = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+        $output = & (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $collisionPath 2>&1
+        if (($LASTEXITCODE -eq 0) -ne $collisionCase.Expected) { throw "Resource-group collision fixture $($collisionCase.Name) failed. Output: $($output -join ' ')" }
+    }
+    foreach ($name in 'MOCK_GROUP_EXISTS', 'MOCK_GROUP_OWNER', 'MOCK_GROUP_SHOW_ERROR', 'MOCK_GROUP_EXISTS_ERROR') { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
 
-        Write-Host 'Offline parity suite passed.'
+    Write-Host 'Offline parity suite passed.'
     }
     finally {
         if ($null -eq $priorAz) { Remove-Item function:global:az -ErrorAction SilentlyContinue }
@@ -179,7 +219,7 @@ function Invoke-TeardownOfflineFixture {
     "workloadContributorsGroupObjectId": { "value": "cccccccc-cccc-cccc-cccc-cccccccccccc" },
     "readOnlyAuditorsGroupObjectId": { "value": "dddddddd-dddd-dddd-dddd-dddddddddddd" },
     "deployCentralLogAnalytics": { "value": false },
-    "deployRecoveryServicesVault": { "value": false },
+    "deployRecoveryServicesVault": { "value": true },
     "deployRoleAssignments": { "value": true },
     "deployEvidenceResources": { "value": true },
     "enableFirewallRouteGuardrails": { "value": false },
@@ -189,8 +229,17 @@ function Invoke-TeardownOfflineFixture {
     "existingLogAnalyticsWorkspaceResourceId": {
       "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
     },
+    "approvedFirewallResourceId": {
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.Network/azureFirewalls/fw-protected"
+    },
+    "approvedRouteTableResourceIds": {
+      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-workloads-demo/providers/Microsoft.Network/routeTables/rt-protected"]
+    },
+    "approvedBackupVaults": {
+      "value": [{"vaultResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected", "backupPolicyResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected/backupPolicies/policy-protected"}]
+    },
     "policyExemptions": { "value": [] },
-    "approvedBackupVaults": { "value": [] }
+    "enableVmBackupRemediation": { "value": false }
   }
 }
 '@
@@ -214,6 +263,7 @@ case "${1}" in
           *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
           *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
           *"rg-demo-workloads-demo"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-backup"*) printf 'true\n'; exit 0 ;;
           *) printf 'false\n'; exit 0 ;;
         esac
         ;;
@@ -222,6 +272,7 @@ case "${1}" in
           *"rg-demo-monitoring"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *"rg-demo-connectivity"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *"rg-demo-workloads-demo"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-backup"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *) printf '%s\n' ''; exit 0 ;;
         esac
         ;;
@@ -285,12 +336,12 @@ if /I "%~1 %~2 %~3"=="role assignment list" (
   exit /b 0
 )
 if /I "%~1 %~2"=="group exists" (
-  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" >nul
+  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
   if errorlevel 1 (echo false) else (echo true)
   exit /b 0
 )
 if /I "%~1 %~2"=="group show" (
-  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" >nul
+  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
   if errorlevel 1 (echo.) else (echo %owner%)
   exit /b 0
 )
@@ -355,8 +406,8 @@ exit $LASTEXITCODE
         throw "PowerShell teardown fixture expected NERC role delete immediately before NERC assignment delete. Log: $($lines -join ' | ')"
     }
     foreach ($line in $lines) {
-        if ($line -match 'az group delete .*rg-demo-connectivity' -or $line -match 'az group wait .*rg-demo-connectivity') {
-            throw "PowerShell teardown fixture attempted to delete or wait on the protected evidence resource group: $line"
+        if ($line -match 'az group (delete|wait).*rg-demo-(connectivity|workloads-demo|backup)') {
+            throw "PowerShell teardown fixture acted on a protected external resource group: $line"
         }
     }
 

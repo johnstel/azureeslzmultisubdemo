@@ -411,7 +411,12 @@ fi
 check_owned_resource_group_collision() {
   local subscription="$1"
   local group="$2"
-  if az group exists --subscription "${subscription}" --name "${group}" --output tsv 2>/dev/null | grep -qi true; then
+  local exists
+  exists="$(az group exists --subscription "${subscription}" --name "${group}" --output tsv 2>/dev/null)" \
+    || fail "Cannot determine whether resource group ${group} exists; it is protected."
+  [[ "${exists}" == 'true' || "${exists}" == 'false' ]] \
+    || fail "Resource group ${group} returned an invalid existence result; it is protected."
+  if [[ "${exists}" == 'true' ]]; then
     local owner
     owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
       || fail "Cannot read existing resource group ${group}; it is protected."

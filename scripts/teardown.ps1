@@ -148,6 +148,15 @@ $approvedCustomerManagedKeyVaultUris = Get-OptionalArrayValue 'approvedCustomerM
 $approvedRouteTableResourceIds = Get-OptionalArrayValue 'approvedRouteTableResourceIds'
 $monitoringResourceGroupName = "rg-$prefix-monitoring"
 $backupResourceGroupName = "rg-$prefix-backup"
+$protectedExternalResourceGroups = @()
+$externalResourceIds = @($existingWorkspaceResourceId, $approvedFirewallResourceId) +
+    @($approvedRouteTableResourceIds) +
+    @($approvedBackupVaults | ForEach-Object { [string]$_.vaultResourceId; [string]$_.backupPolicyResourceId })
+foreach ($externalResourceId in $externalResourceIds) {
+    if ($externalResourceId -match '^/subscriptions/([^/]+)/resourceGroups/([^/]+)/providers/.+$') {
+        $protectedExternalResourceGroups += "$($Matches[1].ToLowerInvariant())|$($Matches[2].ToLowerInvariant())"
+    }
+}
 # The monitoring resource group is only repository-owned (and thus safe to delete) when a
 # new workspace was requested without also supplying an existing workspace resource ID. This
 # mirrors the conflict guard in modules/central-monitoring.bicep: a conflicting configuration
@@ -156,33 +165,29 @@ $backupResourceGroupName = "rg-$prefix-backup"
 # teardown must not delete one either.
 $monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied
 
-# Returns $true when the given subscription/resource-group pair matches the supplied
-# existing workspace's subscription/resource group, meaning it must never be deleted here.
-function Test-ProtectedExistingWorkspaceGroup {
+function Test-ProtectedExternalResourceGroup {
     param(
         [string]$Subscription,
         [string]$Group
     )
-    if ([string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
-        return $false
-    }
-    return ($Subscription -ieq $existingWorkspaceSubscription) -and ($Group -ieq $existingWorkspaceResourceGroup)
+    return $protectedExternalResourceGroups -contains "$($Subscription.ToLowerInvariant())|$($Group.ToLowerInvariant())"
 }
 
-# Deletes the named resource group only when it is not the protected existing-workspace
-# resource group. Safe to call even when the group does not exist.
 function Remove-ResourceGroupIfNotProtected {
     param(
         [string]$Subscription,
         [string]$Group
     )
-    if (Test-ProtectedExistingWorkspaceGroup -Subscription $Subscription -Group $Group) {
-        Write-Warning "SKIP: $Group matches the supplied existingLogAnalyticsWorkspaceResourceId resource group; it is never deleted by this script."
+    if (Test-ProtectedExternalResourceGroup -Subscription $Subscription -Group $Group) {
+        Write-Warning "SKIP: $Group contains a supplied external resource; it is never deleted by this script."
         return $false
     }
     $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
     if ($LASTEXITCODE -ne 0) {
         Stop-Teardown "Cannot determine whether resource group $Group exists."
+    }
+    if ([string]$groupExists -notin @('true', 'false')) {
+        Stop-Teardown "Resource group $Group returned an invalid existence result."
     }
     if ([string]$groupExists -eq 'true') {
         $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
@@ -279,6 +284,9 @@ foreach ($externalId in @(
     @($policyExemptions | ForEach-Object { [string]$_.policyAssignmentId })
 ) | Where-Object { $_.Length -gt 0 }) {
     Write-Host "     external/protected $externalId"
+}
+foreach ($protectedResourceGroup in $protectedExternalResourceGroups) {
+    Write-Host "     external/protected resource group $protectedResourceGroup"
 }
 Write-Host '  3. deployment-owned optional resource groups:'
 if ($evidenceResourcesEnabled) { Write-Host "     deployment-owned rg-$prefix-connectivity and rg-$prefix-$archetype-demo" }

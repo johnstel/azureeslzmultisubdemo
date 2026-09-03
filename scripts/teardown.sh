@@ -82,27 +82,40 @@ if [[ "${central_log_analytics_enabled}" == 'true' && -z "${existing_workspace_r
   monitoring_group_is_repo_owned='true'
 fi
 
-# Returns success (0) when the given subscription/resource-group pair matches the supplied
-# existing workspace's subscription/resource group, meaning it must never be deleted here.
-is_protected_existing_workspace_group() {
+protected_external_resource_groups=()
+while IFS=$'\t' read -r external_subscription external_group; do
+  [[ -n "${external_subscription}" && -n "${external_group}" ]] || continue
+  protected_external_resource_groups+=("$(printf '%s|%s' "${external_subscription}" "${external_group}" | tr '[:upper:]' '[:lower:]')")
+done < <(jq -r '
+  .parameters |
+  [
+    .existingLogAnalyticsWorkspaceResourceId.value?,
+    .approvedFirewallResourceId.value?,
+    (.approvedRouteTableResourceIds.value? // [] | .[]),
+    (.approvedBackupVaults.value? // [] | .[] | .vaultResourceId, .backupPolicyResourceId)
+  ] | .[]? |
+  select(type == "string") |
+  capture("^/subscriptions/(?<subscription>[^/]+)/resourceGroups/(?<group>[^/]+)/providers/.+$")? |
+  [.subscription, .group] | @tsv
+' "${PARAMETER_FILE}")
+
+is_protected_external_resource_group() {
   local subscription="$1"
   local group="$2"
-  [[ -n "${existing_workspace_resource_group}" ]] || return 1
-  local subscription_lower group_lower existing_sub_lower existing_group_lower
+  local subscription_lower group_lower protected_group
   subscription_lower="$(printf '%s' "${subscription}" | tr '[:upper:]' '[:lower:]')"
   group_lower="$(printf '%s' "${group}" | tr '[:upper:]' '[:lower:]')"
-  existing_sub_lower="$(printf '%s' "${existing_workspace_subscription}" | tr '[:upper:]' '[:lower:]')"
-  existing_group_lower="$(printf '%s' "${existing_workspace_resource_group}" | tr '[:upper:]' '[:lower:]')"
-  [[ "${subscription_lower}" == "${existing_sub_lower}" && "${group_lower}" == "${existing_group_lower}" ]]
+  for protected_group in "${protected_external_resource_groups[@]}"; do
+    [[ "${protected_group}" == "${subscription_lower}|${group_lower}" ]] && return 0
+  done
+  return 1
 }
 
-# Deletes the named resource group only when it is not the protected existing-workspace
-# resource group. Safe to call even when the group does not exist.
 delete_resource_group_if_not_protected() {
   local subscription="$1"
   local group="$2"
-  if is_protected_existing_workspace_group "${subscription}" "${group}"; then
-    printf 'SKIP: %s matches the supplied existingLogAnalyticsWorkspaceResourceId resource group; it is never deleted by this script.\n' "${group}" >&2
+  if is_protected_external_resource_group "${subscription}" "${group}"; then
+    printf 'SKIP: %s contains a supplied external resource; it is never deleted by this script.\n' "${group}" >&2
     return 1
   fi
   local group_exists
@@ -110,7 +123,11 @@ delete_resource_group_if_not_protected() {
     printf 'ERROR: Cannot determine whether resource group %s exists.\n' "${group}" >&2
     exit 1
   fi
-  if printf '%s\n' "${group_exists}" | grep -qi true; then
+  if [[ "${group_exists}" != 'true' && "${group_exists}" != 'false' ]]; then
+    printf 'ERROR: Resource group %s returned an invalid existence result.\n' "${group}" >&2
+    exit 1
+  fi
+  if [[ "${group_exists}" == 'true' ]]; then
     local owner
     owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
       || { printf 'ERROR: Cannot read ownership marker for %s; it is protected.\n' "${group}" >&2; return 1; }
@@ -218,6 +235,9 @@ print_plan() {
     ] | .[]? | select(type == "string" and length > 0) |
     "     external/protected \(. )"
   ' "${PARAMETER_FILE}"
+  for protected_group in "${protected_external_resource_groups[@]}"; do
+    printf '     external/protected resource group %s\n' "${protected_group}"
+  done
   printf '  %d. deployment-owned custom initiatives and policy definitions are deleted after assignments.\n' "${step_number}"
   printf '     deployment-owned initiatives %s-required-rg-tags, %s-inherit-rg-tags, %s-network-ingress, %s-private-access, %s-data-protection, %s-deploy-restrictions, %s-backup-posture, %s-nerc-cip-technical-overlay at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
   printf '     deployment-owned definitions %s-allowed-us-locations, %s-allowed-resource-types-all, %s-require-workload-rg-tags, %s-audit-public-ip, %s-public-mgmt-ingress, %s-require-subnet-nsg, %s-audit-paas-public-network, %s-audit-approved-firewall-routes, %s-block-expensive, %s-audit-storage-cmk-approved-key, %s-audit-platform-tags at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"

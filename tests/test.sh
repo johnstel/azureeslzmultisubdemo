@@ -18,6 +18,16 @@ set -e
 if [[ "${1:-}" == "bicep" ]]; then
   exit 0
 fi
+if [[ "${1:-}" == "group" && "${2:-}" == "exists" ]]; then
+  [[ "${MOCK_GROUP_EXISTS_ERROR:-false}" != true ]] || exit 1
+  printf '%s\n' "${MOCK_GROUP_EXISTS:-false}"
+  exit 0
+fi
+if [[ "${1:-}" == "group" && "${2:-}" == "show" ]]; then
+  [[ "${MOCK_GROUP_SHOW_ERROR:-false}" != true ]] || exit 1
+  printf '%s\n' "${MOCK_GROUP_OWNER:-demo}"
+  exit 0
+fi
 
 if [[ "${1:-}" == "account" ]]; then
   if [[ "${2:-}" == "show" ]]; then
@@ -89,6 +99,34 @@ printf '%s\n' '{}'
 exit 0
 EOF
   chmod +x "${mock_dir}/az"
+cat > "${mock_dir}/az.cmd" <<'EOF'
+@echo off
+echo az %* >> "%MOCK_AZ_LOG%"
+set "args=%*"
+if "%MOCK_AZ_OWNER%"=="" (set "owner=demo") else (set "owner=%MOCK_AZ_OWNER%")
+if /I "%~1 %~2 %~3"=="policy assignment show" (
+echo %args% | findstr /I /C:"demo-nerc-cip-technical" >nul
+if not errorlevel 1 (echo nerc-assignment-principal) else (echo null)
+exit /b 0
+)
+if /I "%~1 %~2 %~3"=="role assignment list" (
+echo %args% | findstr /I /C:"nerc-assignment-principal" >nul || exit /b 0
+echo %args% | findstr /I /C:"ws-protected" >nul || exit /b 0
+echo NERC-ROLE-ASSIGNMENT-ID
+exit /b 0
+)
+if /I "%~1 %~2"=="group exists" (
+echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+if errorlevel 1 (echo false) else (echo true)
+exit /b 0
+)
+if /I "%~1 %~2"=="group show" (
+echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+if errorlevel 1 (echo.) else (echo %owner%)
+exit /b 0
+)
+exit /b 0
+EOF
 
   local base_parameters="${TEMP_DIR}/base.parameters.json"
   jq '
@@ -143,6 +181,27 @@ EOF
   run_case permissions_separate_grant_pass pass '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]},{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write"],"notActions":[]}]}'
   run_case missing_policy_definition_write_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}'
   run_case backup_blank_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' '.parameters.approvedBackupVaults.value = [{"vaultResourceId":"","backupPolicyResourceId":""}]'
+  local collision_parameters="${TEMP_DIR}/collision.parameters.json"
+  jq '.parameters.namePrefix.value = "demo" | .parameters.deployEvidenceResources.value = true' "${base_parameters}" > "${collision_parameters}"
+  local collision_case collision_expected collision_result
+  for collision_case in absent existing unreadable mismatched error; do
+    unset MOCK_GROUP_EXISTS MOCK_GROUP_OWNER MOCK_GROUP_SHOW_ERROR MOCK_GROUP_EXISTS_ERROR
+    case "${collision_case}" in
+      absent) collision_expected=pass ;;
+      existing) collision_expected=pass; MOCK_GROUP_EXISTS=true; MOCK_GROUP_OWNER=demo ;;
+      unreadable) collision_expected=fail; MOCK_GROUP_EXISTS=true; MOCK_GROUP_SHOW_ERROR=true ;;
+      mismatched) collision_expected=fail; MOCK_GROUP_EXISTS=true; MOCK_GROUP_OWNER=external ;;
+      error) collision_expected=fail; MOCK_GROUP_EXISTS_ERROR=true ;;
+    esac
+    export MOCK_GROUP_EXISTS MOCK_GROUP_OWNER MOCK_GROUP_SHOW_ERROR MOCK_GROUP_EXISTS_ERROR
+    if PROJECT_DIR="${PROJECT_DIR}" PATH="${mock_dir}:$PATH" MOCK_REST_JSON='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' \
+      "${PROJECT_DIR}/scripts/preflight.sh" "${collision_parameters}" >/dev/null 2>&1; then collision_result=pass; else collision_result=fail; fi
+    [[ "${collision_result}" == "${collision_expected}" ]] || {
+      printf 'ERROR: Resource-group collision fixture %s expected %s but got %s.\n' "${collision_case}" "${collision_expected}" "${collision_result}" >&2
+      exit 1
+    }
+  done
+  unset MOCK_GROUP_EXISTS MOCK_GROUP_OWNER MOCK_GROUP_SHOW_ERROR MOCK_GROUP_EXISTS_ERROR
 
   local workspace_id='/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-external/providers/Microsoft.OperationalInsights/workspaces/ws-external'
   local management_permissions='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
@@ -188,6 +247,7 @@ case "${1}" in
           *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
           *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
           *"rg-demo-workloads-demo"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-backup"*) printf 'true\n'; exit 0 ;;
           *) printf 'false\n'; exit 0 ;;
         esac
         ;;
@@ -196,6 +256,7 @@ case "${1}" in
           *"rg-demo-monitoring"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *"rg-demo-connectivity"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *"rg-demo-workloads-demo"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-backup"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *) printf '%s\n' ''; exit 0 ;;
         esac
         ;;
@@ -259,7 +320,7 @@ EOF
     "workloadContributorsGroupObjectId": { "value": "cccccccc-cccc-cccc-cccc-cccccccccccc" },
     "readOnlyAuditorsGroupObjectId": { "value": "dddddddd-dddd-dddd-dddd-dddddddddddd" },
     "deployCentralLogAnalytics": { "value": false },
-    "deployRecoveryServicesVault": { "value": false },
+    "deployRecoveryServicesVault": { "value": true },
     "deployRoleAssignments": { "value": true },
     "deployEvidenceResources": { "value": true },
     "enableFirewallRouteGuardrails": { "value": false },
@@ -269,8 +330,17 @@ EOF
     "existingLogAnalyticsWorkspaceResourceId": {
       "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
     },
+    "approvedFirewallResourceId": {
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.Network/azureFirewalls/fw-protected"
+    },
+    "approvedRouteTableResourceIds": {
+      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-workloads-demo/providers/Microsoft.Network/routeTables/rt-protected"]
+    },
+    "approvedBackupVaults": {
+      "value": [{"vaultResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected", "backupPolicyResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected/backupPolicies/policy-protected"}]
+    },
     "policyExemptions": { "value": [] },
-    "approvedBackupVaults": { "value": [] }
+    "enableVmBackupRemediation": { "value": false }
   }
 }
 JSON
@@ -303,10 +373,8 @@ if role_delete is None or policy_delete is None:
 if role_delete + 1 != policy_delete:
     raise SystemExit(f'Bash teardown fixture expected NERC role delete immediately before NERC assignment delete; got {role_delete} and {policy_delete}')
 for idx, line in enumerate(lines):
-    if 'az group delete' in line and '--name rg-demo-connectivity' in line:
-        raise SystemExit(f'Bash teardown fixture deleted protected evidence resource group: {line}')
-    if 'az group wait' in line and '--name rg-demo-connectivity' in line:
-        raise SystemExit(f'Bash teardown fixture waited on protected evidence resource group: {line}')
+    if re.search(r'az group (delete|wait).*--name rg-demo-(connectivity|workloads-demo|backup)', line):
+        raise SystemExit(f'Bash teardown fixture acted on a protected external resource group: {line}')
 PY
 
   local mismatched_owner_log="${fixture_dir}/mismatched-owner.log"
@@ -325,10 +393,21 @@ PY
 
   if command -v pwsh >/dev/null 2>&1; then
     local powershell_log="${fixture_dir}/powershell.log"
+    local powershell_wrapper="${fixture_dir}/invoke-teardown-with-mock-check.ps1"
     : > "${powershell_log}"
+    cat > "${powershell_wrapper}" <<'EOF'
+param([string]$ParameterFile, [string]$ExpectedMockDir, [string]$TeardownScript)
+$azCommand = Get-Command az -ErrorAction SilentlyContinue
+if ($null -eq $azCommand -or -not $azCommand.Source.StartsWith($ExpectedMockDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+  Write-Error 'az did not resolve to the fixture mock directory.'
+  exit 1
+}
+function global:Read-Host { param([string]$Prompt) 'demo' }
+& $TeardownScript -ParameterFile $ParameterFile -Execute
+exit $LASTEXITCODE
+EOF
     if ! PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${powershell_log}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
-      pwsh -NoLogo -NoProfile -Command \
-        "function global:Read-Host { param([string]\$Prompt) 'demo' }; & '${PROJECT_DIR}/scripts/teardown.ps1' -ParameterFile '${parameter_file}' -Execute" >/dev/null 2>&1; then
+      pwsh -NoLogo -NoProfile -File "${powershell_wrapper}" -ParameterFile "${parameter_file}" -ExpectedMockDir "${mock_dir}" -TeardownScript "${PROJECT_DIR}/scripts/teardown.ps1" >/dev/null 2>&1; then
       printf 'ERROR: PowerShell teardown fixture unexpectedly failed with valid confirmation.\n' >&2
       return 1
     fi

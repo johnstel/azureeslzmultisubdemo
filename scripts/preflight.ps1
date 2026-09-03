@@ -500,6 +500,8 @@ if (Test-ParameterTrue deployRecoveryServicesVault) {
 function Test-OwnedResourceGroupCollision {
     param([string]$Subscription, [string]$Group)
     $exists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
+    if ($LASTEXITCODE -ne 0) { Stop-Preflight "Cannot determine whether resource group $Group exists; it is protected." }
+    if ([string]$exists -notin @('true', 'false')) { Stop-Preflight "Resource group $Group returned an invalid existence result; it is protected." }
     if ([string]$exists -eq 'true') {
         $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
         if ($LASTEXITCODE -ne 0) { Stop-Preflight "Cannot read existing resource group $Group; it is protected." }
