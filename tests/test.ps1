@@ -449,15 +449,19 @@ try {
         Stop-Test 'Customer-control diagnostics require an explicit workspace and policy exemptions must remain opt-in.'
     }
     $profileShapes = @(
-        $parameterTemplate.parameters,
-        $safeDemoParameters.parameters,
-        $compiledParameters.parameters
-    ) | ForEach-Object {
-        @($_.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        @($parameterTemplate.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+            '{0}:{1}' -f $_.Name, $valueType
+        }),
+        @($safeDemoParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+            '{0}:{1}' -f $_.Name, $valueType
+        }),
+        @($compiledParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
             $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
             '{0}:{1}' -f $_.Name, $valueType
         })
-    }
+    )
     if ((Compare-Object $profileShapes[0] $profileShapes[1]) -or
         (Compare-Object $profileShapes[0] $profileShapes[2])) {
         Stop-Test 'Safe-demo JSON and both Bicep profiles must expose identical parameter names and value types.'
