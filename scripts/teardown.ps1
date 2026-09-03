@@ -182,7 +182,8 @@ if ($monitoringGroupIsRepoOwned) {
     Write-Host "  1a. Delete the demo-created monitoring resource group $monitoringResourceGroupName (deployCentralLogAnalytics=true and no existing workspace supplied)."
 }
 if ($recoveryServicesVaultEnabled) {
-    Write-Host "  1b. Delete the demo-created backup resource group $backupResourceGroupName."
+    $backupStepSuffix = if ($monitoringGroupIsRepoOwned) { 'b' } else { 'a' }
+    Write-Host "  1$backupStepSuffix. Delete the demo-created backup resource group $backupResourceGroupName."
 }
 if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
     Write-Host ''
@@ -242,7 +243,7 @@ function Remove-PolicyAssignment {
     )
     $principalId = & az policy assignment show --name $AssignmentName --scope $Scope --query identity.principalId --output tsv 2>$null
     if (-not [string]::IsNullOrWhiteSpace([string]$principalId) -and [string]$principalId -ne 'null') {
-        $roleAssignmentIds = & az role assignment list --assignee $principalId --query '[].id' --output tsv 2>$null
+        $roleAssignmentIds = & az role assignment list --assignee $principalId --scope $Scope --query '[].id' --output tsv 2>$null
         foreach ($roleAssignmentId in @($roleAssignmentIds)) {
             if (-not [string]::IsNullOrWhiteSpace([string]$roleAssignmentId)) {
                 & az role assignment delete --ids $roleAssignmentId 2>$null

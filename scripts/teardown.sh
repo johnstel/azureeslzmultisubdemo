@@ -119,7 +119,9 @@ print_plan() {
     printf '  %da. Delete the demo-created monitoring resource group %s (deployCentralLogAnalytics=true and no existing workspace supplied).\n' "$((step_number - 1))" "${monitoring_resource_group}"
   fi
   if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
-    printf '  %db. Delete the demo-created backup resource group %s.\n' "$((step_number - 1))" "${backup_resource_group}"
+    local backup_step_suffix='a'
+    [[ "${monitoring_group_is_repo_owned}" == 'true' ]] && backup_step_suffix='b'
+    printf '  %d%s. Delete the demo-created backup resource group %s.\n' "$((step_number - 1))" "${backup_step_suffix}" "${backup_resource_group}"
   fi
   if [[ -n "${existing_workspace_resource_group}" ]]; then
     printf '\nNOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group %s in subscription %s is protected and will never be deleted by this script, even if its name collides with a group above.\n' \
@@ -166,7 +168,7 @@ delete_policy_assignment() {
   if [[ -n "${principal_id}" && "${principal_id}" != 'null' ]]; then
     while IFS= read -r role_assignment_id; do
       [[ -n "${role_assignment_id}" ]] && az role assignment delete --ids "${role_assignment_id}" 2>/dev/null || true
-    done < <(az role assignment list --assignee "${principal_id}" --query '[].id' --output tsv 2>/dev/null || true)
+    done < <(az role assignment list --assignee "${principal_id}" --scope "${scope}" --query '[].id' --output tsv 2>/dev/null || true)
   fi
   az policy assignment delete --name "${assignment_name}" --scope "${scope}" 2>/dev/null || true
 }
@@ -174,8 +176,9 @@ delete_policy_assignment() {
 delete_policy_exemptions() {
   while IFS= read -r exemption; do
     local exemption_name assignment_id exemption_scope
-    exemption_name="$(printf '%s' "${exemption}" | jq -er '.exemptionName')"
-    assignment_id="$(printf '%s' "${exemption}" | jq -er '.policyAssignmentId')"
+    exemption_name="$(printf '%s' "${exemption}" | jq -r '.exemptionName // empty')"
+    assignment_id="$(printf '%s' "${exemption}" | jq -r '.policyAssignmentId // empty')"
+    [[ -n "${exemption_name}" && -n "${assignment_id}" ]] || continue
     exemption_scope="${assignment_id%/providers/Microsoft.Authorization/policyAssignments/*}"
     [[ "${exemption_scope}" != "${assignment_id}" ]] || continue
     az policy exemption delete --name "${exemption_name}" --scope "${exemption_scope}" 2>/dev/null || true
@@ -263,20 +266,13 @@ delete_policy_assignment 'demo-require-rg-tags' "${workload_scope}"
 delete_policy_assignment 'demo-audit-platform-tags' "${platform_scope}"
 delete_policy_assignment 'demo-block-expensive' "${demo_root_scope}"
 delete_policy_assignment 'demo-audit-public-ip' "${demo_root_scope}"
-delete_policy_assignment 'demo-allowed-us-locations' "${demo_root_scope}"
+delete_policy_assignment 'demo-allowed-us-locs' "${demo_root_scope}"
 delete_demo_policy_assignments
 
 for policy_name in \
   "${prefix}-allowed-us-locations" \
   "${prefix}-allowed-resource-types-all" \
   "${prefix}-require-workload-rg-tags" \
-  "${prefix}-inherit-rg-tags" \
-  "${prefix}-network-ingress" \
-  "${prefix}-private-access" \
-  "${prefix}-data-protection" \
-  "${prefix}-deploy-restrictions" \
-  "${prefix}-backup-posture" \
-  "${prefix}-nerc-cip-technical-overlay" \
   "${prefix}-audit-platform-tags" \
   "${prefix}-block-expensive" \
   "${prefix}-audit-public-ip" \
