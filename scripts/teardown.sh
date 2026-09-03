@@ -125,6 +125,10 @@ print_plan() {
   jq -r '.parameters.policyExemptions.value // [] | .[] | "     deployment-owned exemption \(.exemptionName) at \(.exemptionScopeType)"' "${PARAMETER_FILE}"
   step_number=$((step_number + 1))
   printf '  %d. deployment-owned assignments and remediating identity role mappings:\n' "${step_number}"
+  printf '     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-defender-cspm, demo-mcsb-baseline, demo-cis-foundations, demo-nist-800-53-r5, demo-activity-logs, demo-resource-diags at %s\n' "${demo_root_scope}"
+  printf '     deployment-owned demo-audit-platform-tags at %s\n' "${platform_scope}"
+  printf '     deployment-owned demo-data-protection, demo-require-rg-tags, demo-defender-servers, demo-defender-storage, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-inherit-rg-tags, demo-backup-posture, demo-vault-diagnostics at %s\n' "${landing_zones_scope}"
+  printf '     deployment-owned demo-network-ingress, demo-private-access at %s\n' "${workload_scope}"
   printf '     deployment-owned demo-firewall-routes at %s when firewall guardrails are enabled\n' "${workload_scope}"
   jq -r '.parameters.approvedBackupVaults.value // [] | to_entries[] | "     deployment-owned demo-vm-backup-\(.key) at '"${landing_zones_scope}"'"' "${PARAMETER_FILE}"
   [[ -n "${workspace_scope}" ]] && printf '     deployment-owned remediating identity roles at %s; workspace is external/protected when supplied.\n' "${workspace_scope}"
@@ -147,6 +151,18 @@ print_plan() {
     printf '\nNOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group %s in subscription %s is protected and will never be deleted by this script, even if its name collides with a group above.\n' \
       "${existing_workspace_resource_group}" "${existing_workspace_subscription}"
   fi
+  jq -r '
+    .parameters |
+    [
+      .existingLogAnalyticsWorkspaceResourceId.value?,
+      .approvedFirewallResourceId.value?,
+      (.approvedCustomerManagedKeyVaultUris.value? // [] | .[]),
+      (.approvedBackupVaults.value? // [] | .[] | .vaultResourceId, .backupPolicyResourceId),
+      (.approvedRouteTableResourceIds.value? // [] | .[]),
+      (.policyExemptions.value? // [] | .[] | .policyAssignmentId)
+    ] | .[]? | select(type == "string" and length > 0) |
+    "     external/protected \(. )"
+  ' "${PARAMETER_FILE}"
   printf '  %d. deployment-owned custom initiatives and policy definitions are deleted after assignments.\n' "${step_number}"
   step_number=$((step_number + 1))
   printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
@@ -215,24 +231,27 @@ delete_policy_exemptions() {
 }
 
 delete_demo_policy_assignments() {
-  local scope assignment_name
-  for scope in "${demo_root_scope}" "${platform_scope}" "${landing_zones_scope}" "${workload_scope}"; do
-    for assignment_name in \
-      demo-allowed-us-locs demo-audit-public-ip demo-deploy-restrictions \
-      demo-network-ingress demo-private-access demo-data-protection \
-      demo-block-expensive demo-audit-platform-tags demo-require-rg-tags \
-      demo-defender-cspm demo-defender-servers demo-defender-storage \
-      demo-audit-vuln-assess demo-audit-ama-windows demo-audit-ama-linux \
-      demo-inherit-rg-tags demo-mcsb-baseline demo-cis-foundations \
-      demo-nist-800-53-r5 demo-backup-posture demo-vault-diagnostics \
-      demo-activity-logs demo-resource-diags; do
-      delete_policy_assignment "${assignment_name}" "${scope}" "${workspace_scope}"
-    done
+  local assignment
+  local owned_assignments=(
+    "demo-allowed-us-locs|${demo_root_scope}" "demo-audit-public-ip|${demo_root_scope}"
+    "demo-block-expensive|${demo_root_scope}" "demo-defender-cspm|${demo_root_scope}"
+    "demo-mcsb-baseline|${demo_root_scope}" "demo-cis-foundations|${demo_root_scope}"
+    "demo-nist-800-53-r5|${demo_root_scope}" "demo-activity-logs|${demo_root_scope}"
+    "demo-resource-diags|${demo_root_scope}" "demo-audit-platform-tags|${platform_scope}"
+    "demo-data-protection|${landing_zones_scope}" "demo-require-rg-tags|${landing_zones_scope}"
+    "demo-defender-servers|${landing_zones_scope}" "demo-defender-storage|${landing_zones_scope}"
+    "demo-audit-vuln-assess|${landing_zones_scope}" "demo-audit-ama-windows|${landing_zones_scope}"
+    "demo-audit-ama-linux|${landing_zones_scope}" "demo-inherit-rg-tags|${landing_zones_scope}"
+    "demo-backup-posture|${landing_zones_scope}" "demo-vault-diagnostics|${landing_zones_scope}"
+    "demo-network-ingress|${workload_scope}" "demo-private-access|${workload_scope}"
+  )
+  for assignment in "${owned_assignments[@]}"; do
+    delete_policy_assignment "${assignment%%|*}" "${assignment#*|}" "${workspace_scope}"
   done
   if [[ "${critical_enabled}" == 'true' ]]; then
     local critical_scope="/providers/Microsoft.Management/managementGroups/${prefix}-criticalinfra"
-    for assignment_name in demo-critical-private demo-critical-fw-routes demo-nerc-cip-technical; do
-      delete_policy_assignment "${assignment_name}" "${critical_scope}"
+    for assignment_name in demo-critical-private demo-nerc-cip-technical; do
+      delete_policy_assignment "${assignment_name}" "${critical_scope}" "${workspace_scope}"
     done
   fi
   if [[ "${firewall_route_guardrails_enabled}" == 'true' ]]; then

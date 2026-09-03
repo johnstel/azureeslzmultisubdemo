@@ -69,6 +69,13 @@ function Get-OptionalStringValue {
     if ($null -eq $property -or $null -eq $property.Value.value) {
         return $Default
     }
+
+    function Get-OptionalArrayValue {
+        param([string]$Name)
+        $property = $parameters.parameters.PSObject.Properties[$Name]
+        if ($null -eq $property -or $null -eq $property.Value.value) { return @() }
+        return @($property.Value.value)
+    }
     return [string]$property.Value.value
 }
 
@@ -135,6 +142,9 @@ $policyExemptionsProperty = $parameters.parameters.PSObject.Properties['policyEx
 $policyExemptions = if ($null -eq $policyExemptionsProperty -or $null -eq $policyExemptionsProperty.Value.value) { @() } else { @($policyExemptionsProperty.Value.value) }
 $approvedBackupVaultsProperty = $parameters.parameters.PSObject.Properties['approvedBackupVaults']
 $approvedBackupVaults = if ($null -eq $approvedBackupVaultsProperty -or $null -eq $approvedBackupVaultsProperty.Value.value) { @() } else { @($approvedBackupVaultsProperty.Value.value) }
+$approvedFirewallResourceId = Get-OptionalStringValue 'approvedFirewallResourceId' ''
+$approvedCustomerManagedKeyVaultUris = Get-OptionalArrayValue 'approvedCustomerManagedKeyVaultUris'
+$approvedRouteTableResourceIds = Get-OptionalArrayValue 'approvedRouteTableResourceIds'
 $monitoringResourceGroupName = "rg-$prefix-monitoring"
 $backupResourceGroupName = "rg-$prefix-backup"
 # The monitoring resource group is only repository-owned (and thus safe to delete) when a
@@ -195,11 +205,25 @@ foreach ($exemption in $policyExemptions) {
     if ($null -ne $exemption) { Write-Host "     deployment-owned exemption $($exemption.exemptionName) at $($exemption.exemptionScopeType)" }
 }
 Write-Host '  2. deployment-owned assignments and remediating identity role mappings:'
+Write-Host "     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-defender-cspm, demo-mcsb-baseline, demo-cis-foundations, demo-nist-800-53-r5, demo-activity-logs, demo-resource-diags at $demoRootScope"
+Write-Host "     deployment-owned demo-audit-platform-tags at $platformScope"
+Write-Host "     deployment-owned demo-data-protection, demo-require-rg-tags, demo-defender-servers, demo-defender-storage, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-inherit-rg-tags, demo-backup-posture, demo-vault-diagnostics at $landingZonesScope"
+Write-Host "     deployment-owned demo-network-ingress, demo-private-access at $workloadScope"
 Write-Host "     deployment-owned demo-firewall-routes at $workloadScope when firewall guardrails are enabled"
 for ($index = 0; $index -lt $approvedBackupVaults.Count; $index++) {
     Write-Host "     deployment-owned demo-vm-backup-$index at $landingZonesScope"
 }
 if ($workspaceScope.Length -gt 0) { Write-Host "     deployment-owned remediating identity roles at $workspaceScope; workspace is external/protected when supplied." }
+foreach ($externalId in @(
+    $existingWorkspaceResourceId,
+    $approvedFirewallResourceId,
+    $approvedCustomerManagedKeyVaultUris,
+    @($approvedBackupVaults | ForEach-Object { [string]$_.vaultResourceId; [string]$_.backupPolicyResourceId }),
+    $approvedRouteTableResourceIds,
+    @($policyExemptions | ForEach-Object { [string]$_.policyAssignmentId })
+) | Where-Object { $_.Length -gt 0 }) {
+    Write-Host "     external/protected $externalId"
+}
 Write-Host '  3. deployment-owned optional resource groups:'
 if ($evidenceResourcesEnabled) { Write-Host "     deployment-owned rg-$prefix-connectivity and rg-$prefix-$archetype-demo" }
 if ($monitoringGroupIsRepoOwned) {
@@ -296,25 +320,25 @@ function Remove-PolicyExemptions {
 
 function Remove-DemoPolicyAssignments {
     $criticalScope = "/providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
-    $scopes = @($demoRootScope, $platformScope, $landingZonesScope, $workloadScope)
-    $assignmentNames = @(
-        'demo-allowed-us-locs', 'demo-audit-public-ip', 'demo-deploy-restrictions',
-        'demo-network-ingress', 'demo-private-access', 'demo-data-protection',
-        'demo-block-expensive', 'demo-audit-platform-tags', 'demo-require-rg-tags',
-        'demo-defender-cspm', 'demo-defender-servers', 'demo-defender-storage',
-        'demo-audit-vuln-assess', 'demo-audit-ama-windows', 'demo-audit-ama-linux',
-        'demo-inherit-rg-tags', 'demo-mcsb-baseline', 'demo-cis-foundations',
-        'demo-nist-800-53-r5', 'demo-backup-posture', 'demo-vault-diagnostics',
-        'demo-activity-logs', 'demo-resource-diags'
+    $ownedAssignments = @(
+        @('demo-allowed-us-locs', $demoRootScope), @('demo-audit-public-ip', $demoRootScope),
+        @('demo-block-expensive', $demoRootScope), @('demo-defender-cspm', $demoRootScope),
+        @('demo-mcsb-baseline', $demoRootScope), @('demo-cis-foundations', $demoRootScope),
+        @('demo-nist-800-53-r5', $demoRootScope), @('demo-activity-logs', $demoRootScope),
+        @('demo-resource-diags', $demoRootScope), @('demo-audit-platform-tags', $platformScope),
+        @('demo-data-protection', $landingZonesScope), @('demo-require-rg-tags', $landingZonesScope),
+        @('demo-defender-servers', $landingZonesScope), @('demo-defender-storage', $landingZonesScope),
+        @('demo-audit-vuln-assess', $landingZonesScope), @('demo-audit-ama-windows', $landingZonesScope),
+        @('demo-audit-ama-linux', $landingZonesScope), @('demo-inherit-rg-tags', $landingZonesScope),
+        @('demo-backup-posture', $landingZonesScope), @('demo-vault-diagnostics', $landingZonesScope),
+        @('demo-network-ingress', $workloadScope), @('demo-private-access', $workloadScope)
     )
-    foreach ($scope in $scopes) {
-        foreach ($assignmentName in $assignmentNames) {
-            Remove-PolicyAssignment $assignmentName $scope $workspaceScope
-        }
+    foreach ($assignment in $ownedAssignments) {
+        Remove-PolicyAssignment $assignment[0] $assignment[1] $workspaceScope
     }
     if ($criticalEnabled) {
         foreach ($assignmentName in @('demo-critical-private', 'demo-nerc-cip-technical')) {
-            Remove-PolicyAssignment $assignmentName $criticalScope
+            Remove-PolicyAssignment $assignmentName $criticalScope $workspaceScope
         }
     }
     if ($firewallRouteGuardrailsEnabled) {
