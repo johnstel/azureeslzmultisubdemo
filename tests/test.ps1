@@ -14,6 +14,12 @@ New-Item -ItemType Directory -Path $TempDir | Out-Null
 function Invoke-OfflineParitySuite {
     $mockDir = Join-Path $TempDir 'mock-az'
     New-Item -ItemType Directory -Path $mockDir -Force | Out-Null
+    $priorAz = if (Test-Path function:global:az) { ${function:global:az} } else { $null }
+    $priorProjectDir = $env:PROJECT_DIR
+    $priorRestJson = $env:MOCK_REST_JSON
+    $priorAccountJson = $env:MOCK_ACCOUNT_JSON
+    $priorLastExitCode = if (Test-Path variable:global:LASTEXITCODE) { $global:LASTEXITCODE } else { $null }
+    try {
     $global:OfflinePolicyVersions = @{}
     foreach ($control in @((Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json).controls)) {
         if ($control.mechanism.builtIn -eq $true -and $control.mechanism.definitionId) {
@@ -47,6 +53,7 @@ function Invoke-OfflineParitySuite {
     $cases = @(
         @{ Name = 'canonical-id-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' },
         @{ Name = 'canonical-id-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.connectivitySubscriptionId.value = 'not-a-guid' } },
+        @{ Name = 'profile-shape-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.PSObject.Properties.Remove('deploySentinel') } },
         @{ Name = 'blank-members-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.approvedRouteTableResourceIds.value = @('') } },
         @{ Name = 'blank-members-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.approvedRouteTableResourceIds.value = @('', 'not-a-resource-id') } },
         @{ Name = 'ip-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallResourceId.value = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01'; $doc.parameters.approvedFirewallPrivateIp.value = '10.0.0.4'; $doc.parameters.approvedRouteTableResourceIds.value = @('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01'); $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24') } },
@@ -88,7 +95,22 @@ function Invoke-OfflineParitySuite {
         }
     }
 
-    Write-Host 'Offline parity suite passed.'
+        Write-Host 'Offline parity suite passed.'
+    }
+    finally {
+        if ($null -eq $priorAz) { Remove-Item function:global:az -ErrorAction SilentlyContinue }
+        else { Set-Item function:global:az -Value $priorAz }
+        foreach ($entry in @(
+            @{ Name = 'PROJECT_DIR'; Value = $priorProjectDir },
+            @{ Name = 'MOCK_REST_JSON'; Value = $priorRestJson },
+            @{ Name = 'MOCK_ACCOUNT_JSON'; Value = $priorAccountJson })) {
+            if ($null -eq $entry.Value) { Remove-Item "env:$($entry.Name)" -ErrorAction SilentlyContinue }
+            else { Set-Item "env:$($entry.Name)" -Value $entry.Value }
+        }
+        if ($null -eq $priorLastExitCode) { Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue }
+        else { $global:LASTEXITCODE = $priorLastExitCode }
+        Remove-Variable -Name OfflinePolicyVersions -Scope Global -ErrorAction SilentlyContinue
+    }
 }
 
 if ($env:ESLZ_OFFLINE_TESTS -eq '1') {
@@ -170,11 +192,15 @@ function Find-ProhibitedPaidDeclarations {
 }
 
 try {
+    $realAzSource = (Get-Command az -ErrorAction SilentlyContinue).Source
     if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
     Invoke-OfflineParitySuite
+    if ((Get-Command az -ErrorAction SilentlyContinue).Source -ne $realAzSource) {
+        Stop-Test 'Offline preflight tests must restore the real Azure CLI command.'
+    }
 
     Write-Host '1/29 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
