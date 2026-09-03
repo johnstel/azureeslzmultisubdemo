@@ -317,18 +317,20 @@ try {
         $compiledParameters.parameters.policyExemptions.value.Count -ne 0) {
         Stop-Test 'Customer-control diagnostics require an explicit workspace and policy exemptions must remain opt-in.'
     }
-    $profileShapes = @(
-        $parameterTemplate.parameters,
-        $safeDemoParameters.parameters,
-        $compiledParameters.parameters
-    ) | ForEach-Object {
-        @($_.PSObject.Properties | Sort-Object Name | ForEach-Object {
-            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
-            '{0}:{1}' -f $_.Name, $valueType
-        })
-    }
-    if ((Compare-Object $profileShapes[0] $profileShapes[1]) -or
-        (Compare-Object $profileShapes[0] $profileShapes[2])) {
+    $demoProfileShape = @($parameterTemplate.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    $safeDemoProfileShape = @($safeDemoParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    $customerControlProfileShape = @($compiledParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    if ((Compare-Object $demoProfileShape $safeDemoProfileShape) -or
+        (Compare-Object $demoProfileShape $customerControlProfileShape)) {
         Stop-Test 'Safe-demo JSON and both Bicep profiles must expose identical parameter names and value types.'
     }
     $monitoringPositivePath = Join-Path $TempDir 'monitoring-positive.bicepparam'
@@ -359,7 +361,9 @@ try {
     }
     $monitoringPositive = Get-Content -LiteralPath "$monitoringPositivePath.json" -Raw | ConvertFrom-Json
     $monitoringNegative = Get-Content -LiteralPath "$monitoringNegativePath.json" -Raw | ConvertFrom-Json
-    if ($monitoringPositive.parameters.existingLogAnalyticsWorkspaceResourceId.value -eq '' -or
+    if ($monitoringPositive.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $monitoringNegative.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $monitoringPositive.parameters.existingLogAnalyticsWorkspaceResourceId.value -eq '' -or
         $monitoringNegative.parameters.existingLogAnalyticsWorkspaceResourceId.value -ne '') {
         Stop-Test 'Monitoring guard fixtures must cover workspace-backed and workspace-free diagnostics activation.'
     }
