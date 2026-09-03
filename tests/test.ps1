@@ -310,6 +310,7 @@ $global:FixtureTeardownConfirmation = $Confirmation
 function global:Read-Host { param([string]$Prompt) $global:FixtureTeardownConfirmation }
 if ($MissingConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue }
 & $TeardownScript -ParameterFile $ParameterFile -Execute
+exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $wrapperPath
 
     $goodLog = Join-Path $fixtureDir 'good.log'
@@ -349,7 +350,8 @@ if ($MissingConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAct
     }
 
     foreach ($case in @(
-        @{ Name = 'missing-env'; Confirmation = $null; Input = 'demo' }
+        @{ Name = 'missing-env'; Confirmation = $null; Input = 'demo' },
+        @{ Name = 'wrong-confirm'; Confirmation = 'DELETE-ESLZ-DEMO'; Input = 'wrong-demo-root' }
     )) {
         $caseLog = Join-Path $fixtureDir "$($case.Name).log"
         Remove-Item -LiteralPath $caseLog -ErrorAction SilentlyContinue
@@ -367,7 +369,7 @@ if ($MissingConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAct
                 $env:ESLZ_TEARDOWN_CONFIRMATION = $case.Confirmation
             }
             $missingConfirmationArgument = if ($null -eq $case.Confirmation) { @('-MissingConfirmation') } else { @() }
-            $null = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation $case.Input @missingConfirmationArgument 2>&1
+            $caseOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation $case.Input @missingConfirmationArgument 2>&1
             $caseExitCode = $LASTEXITCODE
         }
         finally {
