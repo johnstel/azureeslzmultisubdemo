@@ -41,6 +41,31 @@ type approvedBackupVault = {
   inclusionTagValues: string[]
 }
 
+@sealed()
+type policyExemption = {
+  exemptionName: string
+  exemptionScopeType: 'managementGroup' | 'subscription' | 'resourceGroup'
+  managementGroupName: string
+  subscriptionId: string
+  resourceGroupName: string
+  policyAssignmentId: string
+  displayName: string
+  description: string
+  exemptionCategory: 'Waiver' | 'Mitigated'
+  owner: string
+  justification: string
+  expiresOn: string
+  ticketReference: string
+  policyDefinitionReferenceIds: string[]
+  allowedPolicyDefinitionReferenceIds: string[]
+  permittedAncestorAssignmentScopeIds: string[]
+  source: string
+  approver: string
+  createdOn: string
+  reviewedOn: string
+  governanceOwner: string
+}
+
 @description('Azure region used only to store tenant deployment metadata.')
 param deploymentLocation string = 'eastus'
 
@@ -269,6 +294,9 @@ param enableCriticalInfrastructure bool = false
 
 @description('Existing critical-workload subscription IDs to associate with the Critical Infrastructure branch. Only used when enableCriticalInfrastructure is true.')
 param criticalInfrastructureSubscriptionIds array = []
+
+@description('Documented, time-bound policy exemptions. Empty by default; no exemption is deployed unless a complete record is supplied. Each record is validated and scoped by modules/policy-exemption.bicep.')
+param policyExemptions policyExemption[] = []
 
 var invalidPrivateAccessServiceCategories = filter(privateAccessServiceCategories, serviceCategory => !(serviceCategory == 'Storage' || serviceCategory == 'KeyVault'))
 var validatedPrivateAccessServiceCategories = empty(privateAccessServiceCategories) || !empty(invalidPrivateAccessServiceCategories) || length(privateAccessServiceCategories) != length(union(privateAccessServiceCategories, []))
@@ -3474,6 +3502,36 @@ module workloadEvidence 'modules/evidence-workload.bicep' = if (deployEvidenceRe
     resourceGroupTagsAssignment
   ]
 }
+
+module policyExemptionModules 'modules/policy-exemption.bicep' = [for (exemption, exemptionIndex) in policyExemptions: {
+  name: 'policy-exemption-${exemptionIndex}-${uniqueString(deployment().name, exemption.exemptionName, exemption.policyAssignmentId)}'
+  params: {
+    exemptionName: exemption.exemptionName
+    exemptionScopeType: exemption.exemptionScopeType
+    managementGroupName: exemption.managementGroupName
+    subscriptionId: exemption.subscriptionId
+    resourceGroupName: exemption.resourceGroupName
+    policyAssignmentId: exemption.policyAssignmentId
+    displayName: exemption.displayName
+    description: exemption.description
+    exemptionCategory: exemption.exemptionCategory
+    owner: exemption.owner
+    justification: exemption.justification
+    expiresOn: exemption.expiresOn
+    ticketReference: exemption.ticketReference
+    policyDefinitionReferenceIds: exemption.policyDefinitionReferenceIds
+    allowedPolicyDefinitionReferenceIds: exemption.allowedPolicyDefinitionReferenceIds
+    permittedAncestorAssignmentScopeIds: exemption.permittedAncestorAssignmentScopeIds
+    source: exemption.source
+    approver: exemption.approver
+    createdOn: exemption.createdOn
+    reviewedOn: exemption.reviewedOn
+    governanceOwner: exemption.governanceOwner
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}]
 
 module centralMonitoring 'modules/central-monitoring.bicep' = {
   name: 'central-monitoring'
