@@ -1203,6 +1203,23 @@ exit $LASTEXITCODE
             }
         }
     }
+    foreach ($assignmentName in @('demo-firewall-routes', 'demo-vm-backup-${approvedVaultIndex}')) {
+        if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw) -notmatch [regex]::Escape("assignmentName: '$assignmentName'")) {
+            Stop-Test "main.bicep is missing $assignmentName."
+        }
+        foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {
+            if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir $teardownScript) -Raw).Contains($assignmentName)) {
+                Stop-Test "$teardownScript does not clean up $assignmentName."
+            }
+        }
+    }
+    foreach ($requiredText in @('exemptionScopeType', 'deployEvidenceResources')) {
+        foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {
+            if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir $teardownScript) -Raw).Contains($requiredText)) {
+                Stop-Test "$teardownScript is missing lifecycle ownership handling for $requiredText."
+            }
+        }
+    }
 
     Write-Host '8/29 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw

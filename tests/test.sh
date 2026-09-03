@@ -956,6 +956,15 @@ for teardown_script in "${PROJECT_DIR}/scripts/teardown.sh" "${PROJECT_DIR}/scri
   rg -q 'role assignment list --assignee' "${teardown_script}"
   rg -q 'Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted' "${teardown_script}"
 done
+for assignment_name in demo-firewall-routes 'demo-vm-backup-${approvedVaultIndex}'; do
+  rg -Fq "assignmentName: '${assignment_name}'" "${PROJECT_DIR}/main.bicep"
+  rg -Fq "${assignment_name}" "${PROJECT_DIR}/scripts/teardown.sh"
+  rg -Fq "${assignment_name}" "${PROJECT_DIR}/scripts/teardown.ps1"
+done
+rg -Fq 'exemptionScopeType' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'exemptionScopeType' "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -Fq 'deployEvidenceResources' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'deployEvidenceResources' "${PROJECT_DIR}/scripts/teardown.ps1"
 
 printf '8/29 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"

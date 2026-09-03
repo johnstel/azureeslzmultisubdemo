@@ -36,6 +36,8 @@ auditors_group="$(value readOnlyAuditorsGroupObjectId)"
 central_log_analytics_enabled="$(jq -r '.parameters.deployCentralLogAnalytics.value // false' "${PARAMETER_FILE}")"
 recovery_services_vault_enabled="$(jq -r '.parameters.deployRecoveryServicesVault.value // false' "${PARAMETER_FILE}")"
 role_assignments_enabled="$(jq -r '.parameters.deployRoleAssignments.value // false' "${PARAMETER_FILE}")"
+evidence_resources_enabled="$(jq -r '.parameters.deployEvidenceResources.value // false' "${PARAMETER_FILE}")"
+firewall_route_guardrails_enabled="$(jq -r '.parameters.enableFirewallRouteGuardrails.value // false' "${PARAMETER_FILE}")"
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
 # by this script, regardless of any naming collision with a generated resource group name.
@@ -59,6 +61,12 @@ landing_zones_scope="/providers/Microsoft.Management/managementGroups/${prefix}-
 workload_scope="/providers/Microsoft.Management/managementGroups/${prefix}-${archetype}"
 connectivity_scope="/subscriptions/${connectivity_subscription}"
 subscription_workload_scope="/subscriptions/${workload_subscription}"
+workspace_scope=''
+if [[ "${central_log_analytics_enabled}" == 'true' ]]; then
+  workspace_scope="/subscriptions/${connectivity_subscription}/resourceGroups/rg-${prefix}-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-${prefix}-central"
+elif [[ "${existing_workspace_resource_id}" =~ ^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.OperationalInsights/workspaces/[^/]+$ ]]; then
+  workspace_scope="${existing_workspace_resource_id}"
+fi
 monitoring_resource_group="rg-${prefix}-monitoring"
 backup_resource_group="rg-${prefix}-backup"
 # The monitoring resource group is only repository-owned (and thus safe to delete) when a
@@ -113,8 +121,18 @@ wait_for_resource_group_deletion_if_not_protected() {
 print_plan() {
   local step_number=1
   printf 'TEARDOWN PLAN (reverse dependency order)\n'
-  printf '  %d. Delete resource groups rg-%s-connectivity and rg-%s-%s-demo if present.\n' "${step_number}" "${prefix}" "${prefix}" "${archetype}"
+  printf '  %d. deployment-owned policy exemptions:\n' "${step_number}"
+  jq -r '.parameters.policyExemptions.value // [] | .[] | "     deployment-owned exemption \(.exemptionName) at \(.exemptionScopeType)"' "${PARAMETER_FILE}"
   step_number=$((step_number + 1))
+  printf '  %d. deployment-owned assignments and remediating identity role mappings:\n' "${step_number}"
+  printf '     deployment-owned demo-firewall-routes at %s when firewall guardrails are enabled\n' "${workload_scope}"
+  jq -r '.parameters.approvedBackupVaults.value // [] | to_entries[] | "     deployment-owned demo-vm-backup-\(.key) at '"${landing_zones_scope}"'"' "${PARAMETER_FILE}"
+  [[ -n "${workspace_scope}" ]] && printf '     deployment-owned remediating identity roles at %s; workspace is external/protected when supplied.\n' "${workspace_scope}"
+  step_number=$((step_number + 1))
+  printf '  %d. deployment-owned optional resource groups:\n' "${step_number}"
+  if [[ "${evidence_resources_enabled}" == 'true' ]]; then
+    printf '     deployment-owned rg-%s-connectivity and rg-%s-%s-demo\n' "${prefix}" "${prefix}" "${archetype}"
+  fi
   if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
     printf '  %da. Delete the demo-created monitoring resource group %s (deployCentralLogAnalytics=true and no existing workspace supplied).\n' "$((step_number - 1))" "${monitoring_resource_group}"
   fi
@@ -129,9 +147,7 @@ print_plan() {
     printf '\nNOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group %s in subscription %s is protected and will never be deleted by this script, even if its name collides with a group above.\n' \
       "${existing_workspace_resource_group}" "${existing_workspace_subscription}"
   fi
-  printf '  %d. Delete deployment-owned policy exemptions, remediating assignments and their role mappings, then all other demo policy assignments.\n' "${step_number}"
-  step_number=$((step_number + 1))
-  printf '  %d. Delete deployment-owned custom initiatives and policy definitions after their assignments.\n' "${step_number}"
+  printf '  %d. deployment-owned custom initiatives and policy definitions are deleted after assignments.\n' "${step_number}"
   step_number=$((step_number + 1))
   printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
   step_number=$((step_number + 1))
@@ -165,30 +181,35 @@ delete_role_mapping() {
 delete_policy_assignment() {
   local assignment_name="$1"
   local scope="$2"
-  local principal_id role_assignment_id
+  local destination_scope="${3:-}"
+  local principal_id role_assignment_id role_scope
   principal_id="$(az policy assignment show --name "${assignment_name}" --scope "${scope}" --query identity.principalId --output tsv 2>/dev/null || true)"
   if [[ -n "${principal_id}" && "${principal_id}" != 'null' ]]; then
-    while IFS= read -r role_assignment_id; do
-      if [[ -n "${role_assignment_id}" ]]; then
-        az role assignment delete --ids "${role_assignment_id}" 2>/dev/null || true
-      fi
-    done < <(az role assignment list --assignee "${principal_id}" --scope "${scope}" --query '[].id' --output tsv 2>/dev/null || true)
+    for role_scope in "${scope}" "${destination_scope}"; do
+      [[ -n "${role_scope}" ]] || continue
+      while IFS= read -r role_assignment_id; do
+        [[ -n "${role_assignment_id}" ]] && az role assignment delete --ids "${role_assignment_id}" 2>/dev/null || true
+      done < <(az role assignment list --assignee "${principal_id}" --scope "${role_scope}" --query '[].id' --output tsv 2>/dev/null || true)
+    done
   fi
   az policy assignment delete --name "${assignment_name}" --scope "${scope}" 2>/dev/null || true
 }
 
 delete_policy_exemptions() {
   while IFS= read -r exemption; do
-    local exemption_name assignment_id lower_assignment_id exemption_scope marker marker_suffix scope_length
+    local exemption_name scope_type management_group subscription resource_group exemption_scope
     exemption_name="$(printf '%s' "${exemption}" | jq -r '.exemptionName // empty')"
-    assignment_id="$(printf '%s' "${exemption}" | jq -r '.policyAssignmentId // empty')"
-    [[ -n "${exemption_name}" && -n "${assignment_id}" ]] || continue
-    lower_assignment_id="$(printf '%s' "${assignment_id}" | tr '[:upper:]' '[:lower:]')"
-    marker='/providers/microsoft.authorization/policyassignments/'
-    marker_suffix="${lower_assignment_id#*"${marker}"}"
-    [[ "${marker_suffix}" != "${lower_assignment_id}" ]] || continue
-    scope_length=$((${#assignment_id} - ${#marker} - ${#marker_suffix}))
-    exemption_scope="${assignment_id:0:${scope_length}}"
+    scope_type="$(printf '%s' "${exemption}" | jq -r '.exemptionScopeType // empty')"
+    management_group="$(printf '%s' "${exemption}" | jq -r '.managementGroupName // empty')"
+    subscription="$(printf '%s' "${exemption}" | jq -r '.subscriptionId // empty')"
+    resource_group="$(printf '%s' "${exemption}" | jq -r '.resourceGroupName // empty')"
+    case "${scope_type}" in
+      managementGroup) exemption_scope="/providers/Microsoft.Management/managementGroups/${management_group}" ;;
+      subscription) exemption_scope="/subscriptions/${subscription}" ;;
+      resourceGroup) exemption_scope="/subscriptions/${subscription}/resourceGroups/${resource_group}" ;;
+      *) continue ;;
+    esac
+    [[ -n "${exemption_name}" && "${exemption_scope}" != */managementGroups/ && "${exemption_scope}" != */subscriptions/ && "${exemption_scope}" != */resourceGroups/ ]] || continue
     az policy exemption delete --name "${exemption_name}" --scope "${exemption_scope}" 2>/dev/null || true
   done < <(jq -c '.parameters.policyExemptions.value // [] | .[]' "${PARAMETER_FILE}")
 }
@@ -205,7 +226,7 @@ delete_demo_policy_assignments() {
       demo-inherit-rg-tags demo-mcsb-baseline demo-cis-foundations \
       demo-nist-800-53-r5 demo-backup-posture demo-vault-diagnostics \
       demo-activity-logs demo-resource-diags; do
-      delete_policy_assignment "${assignment_name}" "${scope}"
+      delete_policy_assignment "${assignment_name}" "${scope}" "${workspace_scope}"
     done
   done
   if [[ "${critical_enabled}" == 'true' ]]; then
@@ -214,6 +235,16 @@ delete_demo_policy_assignments() {
       delete_policy_assignment "${assignment_name}" "${critical_scope}"
     done
   fi
+  if [[ "${firewall_route_guardrails_enabled}" == 'true' ]]; then
+    delete_policy_assignment 'demo-firewall-routes' "${workload_scope}" "${workspace_scope}"
+    if [[ "${critical_enabled}" == 'true' ]]; then
+      delete_policy_assignment 'demo-critical-fw-routes' "${critical_scope}" "${workspace_scope}"
+    fi
+  fi
+  local backup_index
+  while IFS= read -r backup_index; do
+    delete_policy_assignment "demo-vm-backup-${backup_index}" "${landing_zones_scope}" "${workspace_scope}"
+  done < <(jq -r '.parameters.approvedBackupVaults.value // [] | keys[]' "${PARAMETER_FILE}")
 }
 
 print_plan
@@ -240,8 +271,20 @@ read -r typed_confirmation
   exit 2
 }
 
-delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"
-delete_resource_group_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
+delete_policy_exemptions
+if [[ "${role_assignments_enabled}" == 'true' ]]; then
+  delete_role_mapping "${governance_group}" 'Management Group Contributor' "${demo_root_scope}"
+  delete_role_mapping "${governance_group}" 'Resource Policy Contributor' "${demo_root_scope}"
+  delete_role_mapping "${auditors_group}" 'Reader' "${demo_root_scope}"
+  delete_role_mapping "${network_group}" 'Network Contributor' "${connectivity_scope}"
+  delete_role_mapping "${workload_group}" 'Contributor' "${subscription_workload_scope}"
+fi
+delete_demo_policy_assignments
+
+if [[ "${evidence_resources_enabled}" == 'true' ]]; then
+  delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"
+  delete_resource_group_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
+fi
 # Only delete the monitoring resource group when this repository created it (no conflicting
 # existing workspace was supplied). A supplied existing workspace/resource group is never
 # owned by this demo and must never be deleted here, even by name collision.
@@ -251,8 +294,10 @@ fi
 if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
   delete_resource_group_if_not_protected "${workload_subscription}" "${backup_resource_group}"
 fi
-wait_for_resource_group_deletion_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"
-wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
+if [[ "${evidence_resources_enabled}" == 'true' ]]; then
+  wait_for_resource_group_deletion_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"
+  wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
+fi
 if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
   wait_for_resource_group_deletion_if_not_protected "${connectivity_subscription}" "${monitoring_resource_group}"
 fi
@@ -260,22 +305,12 @@ if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
   wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "${backup_resource_group}"
 fi
 
-if [[ "${role_assignments_enabled}" == 'true' ]]; then
-  delete_role_mapping "${governance_group}" 'Management Group Contributor' "${demo_root_scope}"
-  delete_role_mapping "${governance_group}" 'Resource Policy Contributor' "${demo_root_scope}"
-  delete_role_mapping "${auditors_group}" 'Reader' "${demo_root_scope}"
-  delete_role_mapping "${network_group}" 'Network Contributor' "${connectivity_scope}"
-  delete_role_mapping "${workload_group}" 'Contributor' "${subscription_workload_scope}"
-fi
-
-delete_policy_exemptions
 delete_policy_assignment 'demo-require-rg-tags' "${landing_zones_scope}"
 delete_policy_assignment 'demo-require-rg-tags' "${workload_scope}"
 delete_policy_assignment 'demo-audit-platform-tags' "${platform_scope}"
 delete_policy_assignment 'demo-block-expensive' "${demo_root_scope}"
 delete_policy_assignment 'demo-audit-public-ip' "${demo_root_scope}"
 delete_policy_assignment 'demo-allowed-us-locs' "${demo_root_scope}"
-delete_demo_policy_assignments
 
 for policy_name in \
   "${prefix}-allowed-us-locations" \
