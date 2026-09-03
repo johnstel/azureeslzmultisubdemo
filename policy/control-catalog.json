@@ -2276,13 +2276,10 @@
       "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-DEPLOY-01",
-        "REQ-DEPLOY-02",
-        "REQ-DEPLOY-04",
         "REQ-TAG-05",
         "REQ-TAG-06",
         "REQ-NET-01",
         "REQ-NET-02",
-        "REQ-NET-03",
         "REQ-NET-04",
         "REQ-NET-05",
         "REQ-NET-06",
@@ -2292,16 +2289,26 @@
         "REQ-DATA-04",
         "REQ-DATA-05",
         "REQ-DATA-06",
+        "REQ-DATA-07",
+        "REQ-DATA-08",
+        "REQ-DATA-10",
+        "REQ-DATA-11",
+        "REQ-DATA-12",
+        "REQ-DATA-13",
         "REQ-LOG-01",
         "REQ-DEF-06",
         "REQ-DEF-07",
         "REQ-DEF-08",
         "REQ-BKP-01",
-        "REQ-BKP-02"
+        "REQ-BKP-04",
+        "REQ-BKP-05",
+        "REQ-BKP-06",
+        "REQ-BKP-08",
+        "REQ-BKP-09"
       ],
       "enforcementPhase": "manual-evidence",
       "evidenceSource": "Compiled ARM template, custom policy-set definition and assignment at the Critical Infrastructure management-group scope, plus policy compliance state and role-assignment evidence (issue #22).",
-      "notes": "Implemented in main.bicep as a custom initiative and an opt-in remediating assignment (`enableNercCipTechnicalOverlay`) scoped only to the Critical Infrastructure branch. The assignment uses a SystemAssigned identity and verifies Monitoring Contributor at assignment scope for Activity Log remediation; workspace-destination Log Analytics Contributor is granted separately at the effective workspace resource-group scope via modules/workspace-remediation-rbac.bicep. `definitionId` remains null because the custom policy-set definition ID is deployment-derived from namePrefix and exposed by module outputs rather than a static built-in GUID. The overlay composes explicit members including REQ-LOG-01 and REQ-DEF-06/07/08; broader v2 REQ-LOG-02 diagnostics coverage remains outside this overlay's composed reference set. Assignment alone does not establish NERC CIP compliance."
+      "notes": "Implemented in main.bicep as a custom initiative and an opt-in remediating assignment (`enableNercCipTechnicalOverlay`) scoped only to the Critical Infrastructure branch. The assignment uses a SystemAssigned identity and verifies Monitoring Contributor at assignment scope for Activity Log remediation; workspace-destination Log Analytics Contributor is granted separately at the effective workspace resource-group scope via modules/workspace-remediation-rbac.bicep. `definitionId` remains null because the custom policy-set definition ID is deployment-derived from namePrefix and exposed by module outputs rather than a static built-in GUID. The dependencies list is the exact REQ-level projection of every composed `policyDefinitionReferenceId` in `nercCipTechnicalOverlayInitiative` (issue #22), including explicit data-protection members REQ-DATA-07/08/10/11/12/13 and backup posture members REQ-BKP-04/05/06/08/09. Broader v2 controls not composed by that initiative (for example REQ-LOG-02 diagnostics breadth, REQ-DEPLOY-02/04, REQ-NET-03, REQ-BKP-02) remain relevant elsewhere but are intentionally not listed as overlay members here. Assignment alone does not establish NERC CIP compliance."
     },
     {
       "id": "REQ-CIP-02",

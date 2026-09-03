@@ -3464,6 +3464,12 @@ for required_mapping in \
   'REQ-ID-06 CIEM findings'; do
   rg -q -F "${required_mapping}" "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
 done
+rg -q -F 'optional Defender plan signals from REQ-DEF-02/03/04' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q -F 'Microsoft Sentinel onboarding/analytics/incident workflow evidence' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+if rg -q -F 'REQ-DEF-04 Sentinel onboarding controls' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"; then
+  printf 'ERROR: NERC matrix still claims REQ-DEF-04 as a Sentinel onboarding control.\n' >&2
+  exit 1
+fi
 rg -q 'service-principal/access-review governance dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
 if rg -q 'technical control-matrix dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"; then
   printf 'ERROR: NERC matrix still labels issue #21 as the technical control-matrix dependency.\n' >&2
@@ -3481,10 +3487,38 @@ jq -e '
     "749f88d5-cbae-40b8-bcfc-e573ddc772fa",
     "92aaf0da-9dab-42b6-94a3-d43ce8d16293"
   ] and
-  ($cip.dependencies | index("REQ-LOG-01")) != null and
-  ($cip.dependencies | index("REQ-DEF-07")) != null and
-  ($cip.dependencies | index("REQ-DEF-08")) != null and
-  ($cip.dependencies | index("REQ-LOG-02")) == null and
+  ($cip.dependencies | sort) == [
+    "REQ-BKP-01",
+    "REQ-BKP-04",
+    "REQ-BKP-05",
+    "REQ-BKP-06",
+    "REQ-BKP-08",
+    "REQ-BKP-09",
+    "REQ-DATA-01",
+    "REQ-DATA-02",
+    "REQ-DATA-03",
+    "REQ-DATA-04",
+    "REQ-DATA-05",
+    "REQ-DATA-06",
+    "REQ-DATA-07",
+    "REQ-DATA-08",
+    "REQ-DATA-10",
+    "REQ-DATA-11",
+    "REQ-DATA-12",
+    "REQ-DATA-13",
+    "REQ-DEF-06",
+    "REQ-DEF-07",
+    "REQ-DEF-08",
+    "REQ-DEPLOY-01",
+    "REQ-LOG-01",
+    "REQ-NET-01",
+    "REQ-NET-02",
+    "REQ-NET-04",
+    "REQ-NET-05",
+    "REQ-NET-06",
+    "REQ-TAG-05",
+    "REQ-TAG-06"
+  ] and
   ($cip.evidenceSource | contains("does not itself create any policy resource") | not) and
   ($cip.notes | contains("No policyDefinition/policySetDefinition exists yet") | not)
 ' "${PROJECT_DIR}/policy/control-catalog.json" >/dev/null || {

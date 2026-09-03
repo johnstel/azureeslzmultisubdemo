@@ -4030,6 +4030,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             'REQ-ID-04 PIM-ready time-bound privileged access',
             'REQ-ID-05 privileged-access inventory and Owner-count review',
             'REQ-ID-06 CIEM findings',
+            'optional Defender plan signals from REQ-DEF-02/03/04',
+            'Microsoft Sentinel onboarding/analytics/incident workflow evidence',
             'service-principal/access-review governance dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21',
             'learn.microsoft.com/en-us/azure/compliance/offerings/offering-nerc',
             'learn.microsoft.com/en-us/azure/compliance/offerings/offering-nerc#shared-responsibility-in-the-cloud',
@@ -4040,7 +4042,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
     foreach ($staleSnippet in @(
-            'technical control-matrix dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21')) {
+            'technical control-matrix dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21',
+            'REQ-DEF-04 Sentinel onboarding controls')) {
         if ($nercMatrixText -match [regex]::Escape($staleSnippet)) {
             Stop-Test "The NERC CIP matrix still contains stale text: $staleSnippet"
         }
@@ -4060,6 +4063,38 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test 'Expected exactly one REQ-CIP-01 record in policy/control-catalog.json.'
     }
     $cipOverlayRoles = @($cipOverlay[0].roleDefinitionIds | Sort-Object)
+    $cipOverlayExpectedDependencies = @(
+        'REQ-BKP-01',
+        'REQ-BKP-04',
+        'REQ-BKP-05',
+        'REQ-BKP-06',
+        'REQ-BKP-08',
+        'REQ-BKP-09',
+        'REQ-DATA-01',
+        'REQ-DATA-02',
+        'REQ-DATA-03',
+        'REQ-DATA-04',
+        'REQ-DATA-05',
+        'REQ-DATA-06',
+        'REQ-DATA-07',
+        'REQ-DATA-08',
+        'REQ-DATA-10',
+        'REQ-DATA-11',
+        'REQ-DATA-12',
+        'REQ-DATA-13',
+        'REQ-DEF-06',
+        'REQ-DEF-07',
+        'REQ-DEF-08',
+        'REQ-DEPLOY-01',
+        'REQ-LOG-01',
+        'REQ-NET-01',
+        'REQ-NET-02',
+        'REQ-NET-04',
+        'REQ-NET-05',
+        'REQ-NET-06',
+        'REQ-TAG-05',
+        'REQ-TAG-06'
+    ) | Sort-Object
     if ($cipOverlay[0].mechanism.displayName -ne 'Demo - NERC CIP technical overlay (critical only)' -or
         $cipOverlay[0].mechanism.verificationMethod -ne 'in-repository-custom-definition' -or
         $cipOverlay[0].remediationIdentityRequired -ne $true -or
@@ -4067,10 +4102,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
                 '749f88d5-cbae-40b8-bcfc-e573ddc772fa',
                 '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
             )) -or
-        -not (@($cipOverlay[0].dependencies) -contains 'REQ-LOG-01') -or
-        -not (@($cipOverlay[0].dependencies) -contains 'REQ-DEF-07') -or
-        -not (@($cipOverlay[0].dependencies) -contains 'REQ-DEF-08') -or
-        @($cipOverlay[0].dependencies) -contains 'REQ-LOG-02' -or
+        (Compare-Object @($cipOverlay[0].dependencies | Sort-Object) $cipOverlayExpectedDependencies) -or
         ([string]$cipOverlay[0].evidenceSource).Contains('does not itself create any policy resource') -or
         ([string]$cipOverlay[0].notes).Contains('No policyDefinition/policySetDefinition exists yet')) {
         Stop-Test 'REQ-CIP-01 in policy/control-catalog.json must reflect the implemented overlay identity and remediation evidence model.'
