@@ -157,12 +157,12 @@ print_plan() {
     else "     disabled/not-owned invalid exemption \(.exemptionName // "")" end' "${PARAMETER_FILE}"
   step_number=$((step_number + 1))
   printf '  %d. deployment-owned assignments and remediating identity role mappings:\n' "${step_number}"
+  [[ "${role_assignments_enabled}" == true ]] && printf '     deployment-owned ordinary RBAC mappings at %s, %s, and %s\n' "${demo_root_scope}" "${connectivity_scope}" "${subscription_workload_scope}" || printf '     disabled/not-owned ordinary RBAC mappings\n'
   printf '     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-activity-logs, demo-resource-diags at %s\n' "${demo_root_scope}"
   printf '     deployment-owned demo-deploy-restrictions at %s\n' "${demo_root_scope}"
   printf '     deployment-owned demo-audit-platform-tags at %s\n' "${platform_scope}"
   printf '     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at %s\n' "${landing_zones_scope}"
   printf '     deployment-owned demo-network-ingress, demo-private-access at %s\n' "${workload_scope}"
-  [[ "${role_assignments_enabled}" == true ]] && printf '     deployment-owned ordinary RBAC mappings at %s, %s, and %s\n' "${demo_root_scope}" "${connectivity_scope}" "${subscription_workload_scope}" || printf '     disabled/not-owned ordinary RBAC mappings\n'
   [[ "$(jq -r '.parameters.enableDefenderCspm.value // false' "${PARAMETER_FILE}")" == true ]] && defender_cspm_effect='DeployIfNotExists' || defender_cspm_effect='Disabled'
   [[ "$(jq -r '.parameters.enableDefenderForServers.value // false' "${PARAMETER_FILE}")" == true ]] && defender_servers_effect='DeployIfNotExists' || defender_servers_effect='Disabled'
   [[ "$(jq -r '.parameters.enableDefenderForStorage.value // false' "${PARAMETER_FILE}")" == true ]] && defender_storage_effect='DeployIfNotExists' || defender_storage_effect='Disabled'

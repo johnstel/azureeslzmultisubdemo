@@ -234,13 +234,18 @@ foreach ($exemption in $policyExemptions) {
     }
 }
 Write-Host '  2. deployment-owned assignments and remediating identity role mappings:'
+if ($roleAssignmentsEnabled) { Write-Host "     deployment-owned ordinary RBAC mappings at $demoRootScope, $connectivityScope, and $subscriptionWorkloadScope" }
+else { Write-Host '     disabled/not-owned ordinary RBAC mappings' }
 Write-Host "     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-activity-logs, demo-resource-diags at $demoRootScope"
 Write-Host "     deployment-owned demo-deploy-restrictions at $demoRootScope"
 Write-Host "     deployment-owned demo-audit-platform-tags at $platformScope"
 Write-Host "     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at $landingZonesScope"
 Write-Host "     deployment-owned demo-network-ingress, demo-private-access at $workloadScope"
-if ($roleAssignmentsEnabled) { Write-Host "     deployment-owned ordinary RBAC mappings at $demoRootScope, $connectivityScope, and $subscriptionWorkloadScope" }
-else { Write-Host '     disabled/not-owned ordinary RBAC mappings' }
+$defenderCspmEffect = if (Get-OptionalBoolValue 'enableDefenderCspm' $false) { 'DeployIfNotExists' } else { 'Disabled' }
+$defenderServersEffect = if (Get-OptionalBoolValue 'enableDefenderForServers' $false) { 'DeployIfNotExists' } else { 'Disabled' }
+$defenderStorageEffect = if (Get-OptionalBoolValue 'enableDefenderForStorage' $false) { 'DeployIfNotExists' } else { 'Disabled' }
+Write-Host "     deployment-owned demo-defender-cspm at $demoRootScope (effect: $defenderCspmEffect)"
+Write-Host "     deployment-owned demo-defender-servers at $landingZonesScope (effect: $defenderServersEffect); demo-defender-storage at $landingZonesScope (effect: $defenderStorageEffect)"
 foreach ($optionalAssignment in @(
     @('enableMicrosoftCloudSecurityBenchmark', 'demo-mcsb-baseline', $demoRootScope),
     @('enableCisAzureFoundationsBenchmark', 'demo-cis-foundations', $demoRootScope),
@@ -250,11 +255,6 @@ foreach ($optionalAssignment in @(
     if (Get-OptionalBoolValue $optionalAssignment[0] $false) { Write-Host "     deployment-owned $($optionalAssignment[1]) at $($optionalAssignment[2])" }
     else { Write-Host "     disabled/not-owned $($optionalAssignment[1])" }
 }
-$defenderCspmEffect = if (Get-OptionalBoolValue 'enableDefenderCspm' $false) { 'DeployIfNotExists' } else { 'Disabled' }
-$defenderServersEffect = if (Get-OptionalBoolValue 'enableDefenderForServers' $false) { 'DeployIfNotExists' } else { 'Disabled' }
-$defenderStorageEffect = if (Get-OptionalBoolValue 'enableDefenderForStorage' $false) { 'DeployIfNotExists' } else { 'Disabled' }
-Write-Host "     deployment-owned demo-defender-cspm at $demoRootScope (effect: $defenderCspmEffect)"
-Write-Host "     deployment-owned demo-defender-servers at $landingZonesScope (effect: $defenderServersEffect); demo-defender-storage at $landingZonesScope (effect: $defenderStorageEffect)"
 if (Get-OptionalBoolValue 'enableVaultDiagnostics' $false) { Write-Host "     deployment-owned demo-vault-diagnostics at $landingZonesScope" }
 else { Write-Host '     disabled/not-owned demo-vault-diagnostics' }
 if ($criticalEnabled) {
@@ -381,8 +381,7 @@ function Remove-DemoPolicyAssignments {
     $ownedAssignments = @(
         @('demo-allowed-us-locs', $demoRootScope), @('demo-audit-public-ip', $demoRootScope),
         @('demo-block-expensive', $demoRootScope), @('demo-defender-cspm', $demoRootScope),
-        @('demo-deploy-restrictions', $demoRootScope),
-        @('demo-activity-logs', $demoRootScope),
+        @('demo-activity-logs', $demoRootScope), @('demo-deploy-restrictions', $demoRootScope),
         @('demo-resource-diags', $demoRootScope), @('demo-audit-platform-tags', $platformScope),
         @('demo-data-protection', $landingZonesScope), @('demo-require-rg-tags', $landingZonesScope),
         @('demo-defender-servers', $landingZonesScope), @('demo-defender-storage', $landingZonesScope),

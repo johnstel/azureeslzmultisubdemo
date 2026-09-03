@@ -165,8 +165,209 @@ EOF
   printf 'Offline parity suite passed.\n'
 }
 
+run_teardown_offline_fixture() {
+  local fixture_dir="${TEMP_DIR}/teardown-fixture"
+  mkdir -p "${fixture_dir}"
+  local mock_dir="${fixture_dir}/mock-bin"
+  mkdir -p "${mock_dir}"
+
+  cat > "${mock_dir}/az" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${MOCK_AZ_LOG:-}" ]]; then
+  printf '%s\n' "az $*" >> "${MOCK_AZ_LOG}"
+fi
+
+[[ $# -gt 0 ]] || exit 0
+case "${1}" in
+  group)
+    case "${2:-}" in
+      exists)
+        case "$*" in
+          *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf 'true\n'; exit 0 ;;
+          *) printf 'false\n'; exit 0 ;;
+        esac
+        ;;
+      show)
+        case "$*" in
+          *"rg-demo-monitoring"*) printf '%s\n' 'demo'; exit 0 ;;
+          *"rg-demo-connectivity"*) printf '%s\n' 'demo'; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf '%s\n' 'demo'; exit 0 ;;
+          *) printf '%s\n' ''; exit 0 ;;
+        esac
+        ;;
+      wait)
+        exit 0
+        ;;
+    esac
+    ;;
+  policy)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "show" ]]; then
+      case "$*" in
+        *"demo-nerc-cip-technical"*) printf '%s\n' 'nerc-assignment-principal'; exit 0 ;;
+      esac
+      printf '%s\n' 'null'; exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    if [[ "${2:-}" == "set-definition" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    if [[ "${2:-}" == "definition" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    ;;
+  role)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "list" ]]; then
+      if [[ "$*" == *"nerc-assignment-principal"* && "$*" == *"ws-protected"* ]]; then
+        printf '%s\n' 'NERC-ROLE-ASSIGNMENT-ID'
+        exit 0
+      fi
+      printf '%s\n' ''
+      exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    ;;
+  account)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "${mock_dir}/az"
+
+  local parameter_file="${fixture_dir}/teardown.parameters.json"
+  cat > "${parameter_file}" <<'JSON'
+{
+  "parameters": {
+    "tenantRootManagementGroupId": { "value": "tenant-root" },
+    "namePrefix": { "value": "demo" },
+    "workloadArchetype": { "value": "workloads" },
+    "connectivitySubscriptionId": { "value": "11111111-1111-1111-1111-111111111111" },
+    "workloadSubscriptionId": { "value": "22222222-2222-2222-2222-222222222222" },
+    "governanceAdminsGroupObjectId": { "value": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    "networkOperatorsGroupObjectId": { "value": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+    "workloadContributorsGroupObjectId": { "value": "cccccccc-cccc-cccc-cccc-cccccccccccc" },
+    "readOnlyAuditorsGroupObjectId": { "value": "dddddddd-dddd-dddd-dddd-dddddddddddd" },
+    "deployCentralLogAnalytics": { "value": false },
+    "deployRecoveryServicesVault": { "value": false },
+    "deployRoleAssignments": { "value": true },
+    "deployEvidenceResources": { "value": true },
+    "enableFirewallRouteGuardrails": { "value": false },
+    "enableCriticalInfrastructure": { "value": true },
+    "criticalInfrastructureSubscriptionIds": { "value": ["55555555-5555-5555-5555-555555555555"] },
+    "enableNercCipTechnicalOverlay": { "value": true },
+    "existingLogAnalyticsWorkspaceResourceId": {
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-monitoring/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
+    },
+    "policyExemptions": { "value": [] },
+    "approvedBackupVaults": { "value": [] }
+  }
+}
+JSON
+
+  local good_log="${fixture_dir}/good.log"
+  : > "${good_log}"
+  if PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${good_log}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+    bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1; then
+    :
+  else
+    printf 'ERROR: Bash teardown fixture unexpectedly failed with valid confirmation.\n' >&2
+    return 1
+  fi
+
+  python3 - "${good_log}" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+lines = [re.sub(r'\s+', ' ', line.strip()) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+role_delete = None
+policy_delete = None
+for idx, line in enumerate(lines):
+    if line == 'az role assignment delete --ids NERC-ROLE-ASSIGNMENT-ID' and role_delete is None:
+        role_delete = idx
+    if line == 'az policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/demo-criticalinfra' and policy_delete is None:
+        policy_delete = idx
+    if role_delete is not None and policy_delete is not None:
+        break
+if role_delete is None or policy_delete is None:
+    raise SystemExit('missing NERC destructive sequence in Bash teardown fixture')
+if role_delete + 1 != policy_delete:
+    raise SystemExit(f'Bash teardown fixture expected NERC role delete immediately before NERC assignment delete; got {role_delete} and {policy_delete}')
+for idx, line in enumerate(lines):
+    if 'az group delete' in line and '--name rg-demo-monitoring' in line:
+        raise SystemExit(f'Bash teardown fixture deleted protected monitoring resource group: {line}')
+    if 'az group wait' in line and '--name rg-demo-monitoring' in line:
+        raise SystemExit(f'Bash teardown fixture waited on protected monitoring resource group: {line}')
+PY
+
+  if command -v pwsh >/dev/null 2>&1; then
+    local powershell_log="${fixture_dir}/powershell.log"
+    : > "${powershell_log}"
+    if ! PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${powershell_log}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+      pwsh -NoLogo -NoProfile -Command \
+        "function global:Read-Host { param([string]\$Prompt) 'demo' }; & '${PROJECT_DIR}/scripts/teardown.ps1' -ParameterFile '${parameter_file}' -Execute" >/dev/null 2>&1; then
+      printf 'ERROR: PowerShell teardown fixture unexpectedly failed with valid confirmation.\n' >&2
+      return 1
+    fi
+    [[ -s "${powershell_log}" ]] || {
+      printf 'ERROR: PowerShell teardown fixture emitted no Azure CLI calls.\n' >&2
+      return 1
+    }
+    python3 - "${good_log}" "${powershell_log}" <<'PY'
+import pathlib, re, sys
+def destructive(path):
+    return [
+        re.sub(r'\s+', ' ', line.strip())
+        for line in pathlib.Path(path).read_text(encoding='utf-8').splitlines()
+        if re.match(r'az (policy exemption delete|role assignment delete|policy assignment delete|group delete|group wait|policy set-definition delete|policy definition delete|account management-group (subscription add|delete))', line)
+    ]
+bash, powershell = map(destructive, sys.argv[1:])
+if bash != powershell:
+    raise SystemExit('Bash and PowerShell teardown destructive-call sequences differ:\nBash: %r\nPowerShell: %r' % (bash, powershell))
+PY
+  fi
+
+  for case_name in missing-env bad-confirm; do
+    local log_file="${fixture_dir}/${case_name}.log"
+    : > "${log_file}"
+    if [[ "${case_name}" == 'missing-env' ]]; then
+      if env -u ESLZ_TEARDOWN_CONFIRMATION PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${log_file}" \
+        bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1; then
+        printf 'ERROR: Bash teardown fixture should fail without ESLZ_TEARDOWN_CONFIRMATION.\n' >&2
+        return 1
+      fi
+    else
+      if PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${log_file}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+        bash -c 'printf "%s\\n" "wrong-demo-root" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1; then
+        printf 'ERROR: Bash teardown fixture should fail with a wrong typed confirmation.\n' >&2
+        return 1
+      fi
+    fi
+
+    python3 - "${log_file}" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding='utf-8') if path.exists() else ''
+if re.search(r'az (group delete|group wait|role assignment delete|policy assignment delete|policy definition delete|account management-group delete)', text):
+    raise SystemExit(f'Bash teardown fixture emitted destructive calls when it should have been blocked: {text}')
+PY
+  done
+
+  printf 'Bash teardown offline fixture passed.\n'
+}
+
 if [[ "${ESLZ_OFFLINE_TESTS:-0}" == '1' ]]; then
   run_offline_parity_suite
+  run_teardown_offline_fixture
   exit 0
 fi
 command -v az >/dev/null 2>&1 || {

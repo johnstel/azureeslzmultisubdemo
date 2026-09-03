@@ -162,8 +162,211 @@ function Invoke-OfflineParitySuite {
     }
 }
 
+function Invoke-TeardownOfflineFixture {
+    $fixtureDir = Join-Path $TempDir 'teardown-fixture'
+    New-Item -ItemType Directory -Path $fixtureDir -Force | Out-Null
+    $parameterPath = Join-Path $fixtureDir 'teardown.parameters.json'
+    $parameterJson = @'
+{
+  "parameters": {
+    "tenantRootManagementGroupId": { "value": "tenant-root" },
+    "namePrefix": { "value": "demo" },
+    "workloadArchetype": { "value": "workloads" },
+    "connectivitySubscriptionId": { "value": "11111111-1111-1111-1111-111111111111" },
+    "workloadSubscriptionId": { "value": "22222222-2222-2222-2222-222222222222" },
+    "governanceAdminsGroupObjectId": { "value": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    "networkOperatorsGroupObjectId": { "value": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+    "workloadContributorsGroupObjectId": { "value": "cccccccc-cccc-cccc-cccc-cccccccccccc" },
+    "readOnlyAuditorsGroupObjectId": { "value": "dddddddd-dddd-dddd-dddd-dddddddddddd" },
+    "deployCentralLogAnalytics": { "value": false },
+    "deployRecoveryServicesVault": { "value": false },
+    "deployRoleAssignments": { "value": true },
+    "deployEvidenceResources": { "value": true },
+    "enableFirewallRouteGuardrails": { "value": false },
+    "enableCriticalInfrastructure": { "value": true },
+    "criticalInfrastructureSubscriptionIds": { "value": ["55555555-5555-5555-5555-555555555555"] },
+    "enableNercCipTechnicalOverlay": { "value": true },
+    "existingLogAnalyticsWorkspaceResourceId": {
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-monitoring/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
+    },
+    "policyExemptions": { "value": [] },
+    "approvedBackupVaults": { "value": [] }
+  }
+}
+'@
+    Set-Content -LiteralPath $parameterPath -Value $parameterJson -Encoding utf8
+
+    $mockDir = Join-Path $fixtureDir 'mock-bin'
+    New-Item -ItemType Directory -Path $mockDir -Force | Out-Null
+    $mockAzPath = Join-Path $mockDir 'az'
+    $mockAzScript = @'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${MOCK_AZ_LOG:-}" ]]; then
+  printf '%s\n' "az $*" >> "${MOCK_AZ_LOG}"
+fi
+[[ $# -gt 0 ]] || exit 0
+case "${1}" in
+  group)
+    case "${2:-}" in
+      exists)
+        case "$*" in
+          *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf 'true\n'; exit 0 ;;
+          *) printf 'false\n'; exit 0 ;;
+        esac
+        ;;
+      show)
+        case "$*" in
+          *"rg-demo-monitoring"*) printf '%s\n' 'demo'; exit 0 ;;
+          *"rg-demo-connectivity"*) printf '%s\n' 'demo'; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf '%s\n' 'demo'; exit 0 ;;
+          *) printf '%s\n' ''; exit 0 ;;
+        esac
+        ;;
+      wait)
+        exit 0
+        ;;
+    esac
+    ;;
+  policy)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "show" ]]; then
+      case "$*" in
+        *"demo-nerc-cip-technical"*) printf '%s\n' 'nerc-assignment-principal'; exit 0 ;;
+      esac
+      printf '%s\n' 'null'; exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then exit 0; fi
+    if [[ "${2:-}" == "set-definition" && "${3:-}" == "delete" ]]; then exit 0; fi
+    if [[ "${2:-}" == "definition" && "${3:-}" == "delete" ]]; then exit 0; fi
+    ;;
+  role)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "list" ]]; then
+      if [[ "$*" == *"nerc-assignment-principal"* && "$*" == *"ws-protected"* ]]; then
+        printf '%s\n' 'NERC-ROLE-ASSIGNMENT-ID'
+        exit 0
+      fi
+      printf '%s\n' ''
+      exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then exit 0; fi
+    ;;
+  account)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+exit 0
+'@
+    Set-Content -LiteralPath $mockAzPath -Value $mockAzScript -Encoding utf8
+    & bash -c "chmod +x '$mockAzPath'"
+
+    $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($null -eq $pwshCommand) {
+        Write-Host 'PowerShell teardown offline fixture skipped because pwsh is unavailable.'
+        return
+    }
+    $scriptPath = Join-Path $ProjectDir 'scripts/teardown.ps1'
+
+    $goodLog = Join-Path $fixtureDir 'good.log'
+    $previousPath = $env:PATH
+    $previousMockLog = $env:MOCK_AZ_LOG
+    $previousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+    try {
+        $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$previousPath"
+        $env:MOCK_AZ_LOG = $goodLog
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        $scriptLiteral = $scriptPath.Replace("'", "''")
+        $paramLiteral = $parameterPath.Replace("'", "''")
+        $goodCommand = @"
+function global:Read-Host {
+    param([string]`$Prompt)
+    'demo'
+}
+& '$scriptLiteral' -ParameterFile '$paramLiteral' -Execute
+"@
+        $goodOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $goodCommand 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "PowerShell teardown fixture unexpectedly failed with valid confirmation. Output: $($goodOutput -join ' ')"
+        }
+    }
+    finally {
+        $env:PATH = $previousPath
+        if ($null -eq $previousMockLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $previousMockLog }
+        if ($null -eq $previousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $previousConfirmation }
+    }
+
+    $lines = @(Get-Content -LiteralPath $goodLog -ErrorAction SilentlyContinue | Where-Object { $_ -like 'az *' })
+    $roleDeleteIndex = -1
+    $policyDeleteIndex = -1
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -eq 'az role assignment delete --ids NERC-ROLE-ASSIGNMENT-ID' -and $roleDeleteIndex -lt 0) { $roleDeleteIndex = $index }
+        if ($lines[$index] -eq 'az policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/demo-criticalinfra' -and $policyDeleteIndex -lt 0) { $policyDeleteIndex = $index }
+        if ($roleDeleteIndex -ge 0 -and $policyDeleteIndex -ge 0) { break }
+    }
+    if ($roleDeleteIndex -lt 0 -or $policyDeleteIndex -lt 0 -or ($roleDeleteIndex + 1) -ne $policyDeleteIndex) {
+        throw "PowerShell teardown fixture expected NERC role delete immediately before NERC assignment delete. Log: $($lines -join ' | ')"
+    }
+    foreach ($line in $lines) {
+        if ($line -match 'az group delete .*rg-demo-monitoring' -or $line -match 'az group wait .*rg-demo-monitoring') {
+            throw "PowerShell teardown fixture attempted to delete or wait on the protected monitoring resource group: $line"
+        }
+    }
+
+    foreach ($case in @(
+        @{ Name = 'missing-env'; Confirmation = $null; Input = 'demo' },
+        @{ Name = 'wrong-confirm'; Confirmation = 'DELETE-ESLZ-DEMO'; Input = 'wrong-demo-root' }
+    )) {
+        $caseLog = Join-Path $fixtureDir "$($case.Name).log"
+        Remove-Item -LiteralPath $caseLog -ErrorAction SilentlyContinue
+        $casePreviousPath = $env:PATH
+        $casePreviousMockLog = $env:MOCK_AZ_LOG
+        $casePreviousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+        $caseExitCode = 0
+        try {
+            $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$casePreviousPath"
+            $env:MOCK_AZ_LOG = $caseLog
+            if ($null -eq $case.Confirmation) {
+                Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:ESLZ_TEARDOWN_CONFIRMATION = $case.Confirmation
+            }
+            $scriptLiteral = $scriptPath.Replace("'", "''")
+            $paramLiteral = $parameterPath.Replace("'", "''")
+            $caseCommand = @"
+function global:Read-Host {
+    param([string]`$Prompt)
+    '$($case.Input.Replace("'", "''"))'
+}
+& '$scriptLiteral' -ParameterFile '$paramLiteral' -Execute
+"@
+            $null = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $caseCommand 2>&1
+            $caseExitCode = $LASTEXITCODE
+        }
+        finally {
+            $env:PATH = $casePreviousPath
+            if ($null -eq $casePreviousMockLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $casePreviousMockLog }
+            if ($null -eq $casePreviousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $casePreviousConfirmation }
+        }
+        if ($caseExitCode -eq 0) {
+            throw "PowerShell teardown fixture should fail for blocked confirmation: $($case.Name)"
+        }
+        $blockedText = if (Test-Path -LiteralPath $caseLog) { Get-Content -LiteralPath $caseLog -Raw } else { '' }
+        if ($blockedText -match 'az (group delete|group wait|role assignment delete|policy assignment delete|policy definition delete|account management-group delete)') {
+            throw "PowerShell teardown fixture emitted destructive calls for blocked confirmation: $($case.Name)"
+        }
+    }
+
+    Write-Host 'PowerShell teardown offline fixture passed.'
+}
+
 if ($env:ESLZ_OFFLINE_TESTS -eq '1') {
     Invoke-OfflineParitySuite
+    Invoke-TeardownOfflineFixture
     return
 }
 
