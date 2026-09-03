@@ -34,7 +34,9 @@ is_resource_id() {
   local value="$1"
   local provider="$2"
   local type="$3"
-  [[ "${value}" =~ ^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/[:space:]]+/providers/${provider}/${type}/[^/[:space:]]+$ ]]
+  local escaped_provider="${provider//./\\.}"
+  local escaped_type="${type//./\\.}"
+  [[ "${value}" =~ ^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/[:space:]]+/providers/${escaped_provider}/${escaped_type}/[^/[:space:]]+$ ]]
 }
 
 validate_resource_id_parameter() {
