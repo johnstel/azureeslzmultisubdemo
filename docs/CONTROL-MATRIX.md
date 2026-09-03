@@ -158,7 +158,7 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 | ID | Customer requirement | Scope | Classification | Mechanism | Built-in ID | Version | Effects | Enforcement phase |
 |---|---|---|---|---|---|---|---|---|
 | REQ-CIP-01 | Compose an opt-in, stricter technical control overlay for subscriptions under the Critical Infrastructure management-group branch. | critical-infrastructure | shared-service-architecture | Demo - NERC CIP technical overlay (to be composed from existing verified controls) (built-in: No) | `—` | — | Audit, Deny, DeployIfNotExists, Disabled | manual-evidence |
-| REQ-CIP-02 | Document the responsibility and evidence matrix for NERC CIP technical requirements not fully covered by Azure Policy. | critical-infrastructure | manual-evidence | NERC CIP responsibility and evidence matrix (docs/NERC-CIP-MATRIX.md, to be authored) (built-in: No) | `—` | — | n/a | manual-evidence |
+| REQ-CIP-02 | Document the responsibility and evidence matrix for NERC CIP technical requirements not fully covered by Azure Policy. | critical-infrastructure | manual-evidence | NERC CIP responsibility and evidence matrix (docs/NERC-CIP-MATRIX.md) (built-in: No) | `—` | — | n/a | manual-evidence |
 
 ## Overlap notes (avoid duplicate enforcement)
 

@@ -4009,6 +4009,22 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
+    $nercMatrixPath = Join-Path $ProjectDir 'docs/NERC-CIP-MATRIX.md'
+    if (-not (Test-Path -LiteralPath $nercMatrixPath -PathType Leaf)) {
+        Stop-Test 'Missing NERC CIP responsibility and evidence matrix.'
+    }
+    $nercMatrixText = Get-Content -LiteralPath $nercMatrixPath -Raw
+    foreach ($requiredSnippet in @(
+            'registered entity remains responsible',
+            'Required customer applicability decision',
+            'Audit-readiness checklist',
+            'offering-nerc-cip',
+            'issues/22')) {
+        if ($nercMatrixText -notmatch [regex]::Escape($requiredSnippet)) {
+            Stop-Test "The NERC CIP matrix is missing required content: $requiredSnippet"
+        }
+    }
+
     Write-Host ''
     Write-Host 'All Windows PowerShell validation and safety tests passed.'
 }

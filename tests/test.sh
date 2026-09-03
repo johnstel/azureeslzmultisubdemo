@@ -3446,5 +3446,10 @@ rg -q 'Defender CSPM CIEM' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
 rg -q 'Evidence retention' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
 rg -q 'Subscription Owner-count review' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
 rg -q 'Remediation decision workflow' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'registered entity remains responsible' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q 'Required customer applicability decision' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q 'Audit-readiness checklist' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q 'offering-nerc-cip' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q 'issues/22' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
 
 printf '\nAll local validation and safety tests passed.\n'

@@ -2306,7 +2306,7 @@
       "mechanism": {
         "kind": "documentation",
         "builtIn": false,
-        "displayName": "NERC CIP responsibility and evidence matrix (docs/NERC-CIP-MATRIX.md, to be authored)",
+        "displayName": "NERC CIP responsibility and evidence matrix (docs/NERC-CIP-MATRIX.md)",
         "sourceUrl": "https://learn.microsoft.com/en-us/compliance/regulatory/offering-nerc-cip",
         "verifiedOn": "2026-08-31",
         "verificationMethod": "documentation-pattern"
