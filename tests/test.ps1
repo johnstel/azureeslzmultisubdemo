@@ -2198,10 +2198,14 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
     $env:AZ_CALL_LOG = $azCallLog
     $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
-    'eslz-demo' | & pwsh -NoLogo -NoProfile -File $wrapperScript -ParameterFile $whitespaceOnlyParameterFile -ExpectedMockDir $mockBinDir -TeardownScript $ps1Script | Out-Null
+    $whitespaceOutput = 'eslz-demo' | & pwsh -NoLogo -NoProfile -File $wrapperScript -ParameterFile $whitespaceOnlyParameterFile -ExpectedMockDir $mockBinDir -TeardownScript $ps1Script 2>&1
+    $whitespaceExitCode = $LASTEXITCODE
     $env:PATH = $originalPath
     Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
     Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+    if ($whitespaceExitCode -ne 0) {
+        Stop-Test "teardown.ps1 whitespace fixture failed: $whitespaceOutput"
+    }
     if ((Get-Content -LiteralPath $azCallLog -Raw) -match 'rg-eslz-demo-monitoring') {
         Stop-Test 'teardown.ps1 must not delete monitoring resources for a whitespace-only supplied workspace value.'
     }
