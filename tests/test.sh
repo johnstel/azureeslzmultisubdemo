@@ -568,9 +568,20 @@ jq -e '
   .outputs.tagInheritanceRemediation.value.enabled == "[parameters(\u0027enableTagInheritance\u0027)]" and
   ([.. | objects | select(.type? == "Microsoft.PolicyInsights/remediations")] | length) == 0 and
   .outputs.tagInheritanceRemediation.value.remediationStarted == false and
-  (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
+  ($connectivityEvidence.properties.template.variables.commonTags == {
+    "CostCenter": "Demo", "ApplicationName": "Connectivity Evidence", "Owner": "Platform Team",
+    "Environment": "Sandbox", "DataClassification": "Non-sensitive", "SSP-ID": "Demo",
+    "Purpose": "Landing Zone Evidence"
+  }) and
+  (first($connectivityEvidence.properties.template.resources[] |
+    select(.type == "Microsoft.Resources/resourceGroups")).tags.ESLZLifecycleOwner ==
+    "[parameters(\u0027namePrefix\u0027)]") and
   (first($workloadEvidence.properties.template.resources[] |
-    select(.type == "Microsoft.Resources/resourceGroups")).tags | keys | sort) == ($requiredTags | sort)
+    select(.type == "Microsoft.Resources/resourceGroups")).tags == {
+      "CostCenter": "Demo", "ApplicationName": "Landing Zone Demo", "Owner": "Workload Team",
+      "Environment": "Sandbox", "DataClassification": "Non-sensitive", "SSP-ID": "Demo",
+      "ESLZLifecycleOwner": "[parameters(\u0027namePrefix\u0027)]"
+    })
 ' "${TEMP_DIR}/main.json" >/dev/null || {
   printf 'ERROR: Required resource-group tag controls, remediation safety, or evidence tags are invalid.\n' >&2
   exit 1

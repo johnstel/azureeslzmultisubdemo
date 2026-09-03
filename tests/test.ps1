@@ -704,6 +704,16 @@ try {
             Stop-Test "Noncompliance message for $($nonComplianceMessage.policyDefinitionReferenceId) does not match its required tag."
         }
     }
+    $expectedEvidenceTags = @{
+        'connectivity-evidence' = @{
+            CostCenter = 'Demo'; ApplicationName = 'Connectivity Evidence'; Owner = 'Platform Team'
+            Environment = 'Sandbox'; DataClassification = 'Non-sensitive'; 'SSP-ID' = 'Demo'
+        }
+        'workload-evidence' = @{
+            CostCenter = 'Demo'; ApplicationName = 'Landing Zone Demo'; Owner = 'Workload Team'
+            Environment = 'Sandbox'; DataClassification = 'Non-sensitive'; 'SSP-ID' = 'Demo'
+        }
+    }
     foreach ($evidenceDeploymentName in @('connectivity-evidence', 'workload-evidence')) {
         $evidenceDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
             param($node)
@@ -713,16 +723,21 @@ try {
         if ($null -eq $evidenceDeployment) {
             Stop-Test "$evidenceDeploymentName deployment is missing."
         }
-        if ($evidenceDeploymentName -eq 'connectivity-evidence') {
-            $evidenceTags = $evidenceDeployment.properties.template.variables.commonTags
+        $resourceGroupTags = @($evidenceDeployment.properties.template.resources |
+            Where-Object { $_.type -eq 'Microsoft.Resources/resourceGroups' })[0].tags
+        $evidenceTags = if ($evidenceDeploymentName -eq 'connectivity-evidence') {
+            $evidenceDeployment.properties.template.variables.commonTags
         } else {
-            $evidenceTags = @($evidenceDeployment.properties.template.resources |
-                Where-Object { $_.type -eq 'Microsoft.Resources/resourceGroups' })[0].tags
+            $resourceGroupTags
         }
         foreach ($requiredTag in $requiredTags) {
-            if (-not $evidenceTags.PSObject.Properties[$requiredTag]) {
-                Stop-Test "$evidenceDeploymentName resource group is missing the exact $requiredTag tag."
+            if (-not $evidenceTags.PSObject.Properties[$requiredTag] -or
+                $evidenceTags.PSObject.Properties[$requiredTag].Value -cne $expectedEvidenceTags[$evidenceDeploymentName][$requiredTag]) {
+                Stop-Test "$evidenceDeploymentName resource group has an invalid $requiredTag tag."
             }
+        }
+        if ($resourceGroupTags.ESLZLifecycleOwner -cne "[parameters('namePrefix')]") {
+            Stop-Test "$evidenceDeploymentName resource group must bind ESLZLifecycleOwner to namePrefix."
         }
     }
     $inheritanceInitiative = Find-JsonObjects -Node $compiledJson -Predicate {
