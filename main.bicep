@@ -13,6 +13,33 @@ func isResourceGroupName(value string) bool => !empty(value) && length(value) <=
 func isLogAnalyticsWorkspaceName(value string) bool => length(value) >= 4 && length(value) <= 63 && value == trim(value) && !startsWith(value, '-') && !endsWith(value, '-') && empty(stripAlphaNumeric(replace(value, '-', '')))
 func isResourceId(value string, resourceType string) bool => length(split(value, '/')) == 9 && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && !empty(trim(split(value, '/')[4])) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.network' && toLower(split(value, '/')[7]) == toLower(resourceType) && !empty(trim(split(value, '/')[8])) && value == trim(value)
 func isWorkspaceResourceId(value string) bool => length(split(value, '/')) == 9 && hasCanonicalArmIdSegments(value) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceGroupName(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && isLogAnalyticsWorkspaceName(split(value, '/')[8])
+func isResourceNameSegment(value string) bool => !empty(value) && value == trim(value) && empty(filter(['<', '>', '%', '&', '\\', '?', '#', '+', ':', '"', '|', '*', ';', ' '], forbiddenCharacter => contains(value, forbiddenCharacter)))
+func isRecoveryServicesVaultId(value string) bool => value == trim(value) && length(split(value, '/')) == 9 && empty(split(value, '/')[0]) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceNameSegment(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.recoveryservices' && toLower(split(value, '/')[7]) == 'vaults' && isResourceNameSegment(split(value, '/')[8])
+func isLogAnalyticsWorkspaceId(value string) bool => value == trim(value) && length(split(value, '/')) == 9 && empty(split(value, '/')[0]) && toLower(split(value, '/')[1]) == 'subscriptions' && isGuid(split(value, '/')[2]) && toLower(split(value, '/')[3]) == 'resourcegroups' && isResourceNameSegment(split(value, '/')[4]) && toLower(split(value, '/')[5]) == 'providers' && toLower(split(value, '/')[6]) == 'microsoft.operationalinsights' && toLower(split(value, '/')[7]) == 'workspaces' && isResourceNameSegment(split(value, '/')[8])
+func isBackupPolicyIdOfVault(value string, vaultResourceId string) bool => value == trim(value) && length(split(value, '/')) == 11 && isRecoveryServicesVaultId(vaultResourceId) && startsWith(toLower(value), '${toLower(vaultResourceId)}/backuppolicies/') && toLower(split(value, '/')[9]) == 'backuppolicies' && isResourceNameSegment(split(value, '/')[10])
+
+@sealed()
+type approvedBackupVault = {
+  @description('Workload or application name that this approved vault and backup policy serve.')
+  @minLength(1)
+  workload: string
+
+  @description('Region of the approved vault. Must be one of approvedVaultRegions and must match the region of the virtual machines it protects.')
+  @minLength(1)
+  region: string
+
+  @description('Resource ID of the approved existing Recovery Services vault. This template never creates, replaces, or deletes it.')
+  @minLength(1)
+  vaultResourceId: string
+
+  @description('Resource ID of the approved existing backup policy inside the same vault.')
+  @minLength(1)
+  backupPolicyResourceId: string
+
+  @description('Inclusion tag values that mark virtual machines protected by this vault and policy.')
+  @minLength(1)
+  inclusionTagValues: string[]
+}
 
 @description('Azure region used only to store tenant deployment metadata.')
 param deploymentLocation string = 'eastus'
@@ -256,6 +283,68 @@ var validatedFirewallRouteInputs = enableFirewallRouteGuardrails && !firewallRou
   ? fail('approvedFirewallResourceId must be an Azure Firewall resource ID, approvedFirewallPrivateIp must be an IPv4 address, and approvedRouteTableResourceIds and approvedRouteTablePrefixes must contain non-empty, valid, case-insensitively unique route-table IDs and IPv4 CIDRs when enableFirewallRouteGuardrails is true.')
   : true
 
+// The built-in that configures virtual machine backup (REQ-BKP-02) targets virtual machines by
+// location plus inclusion tag value, and its remediation deployment is placed in the subscription
+// and resource group parsed from the supplied backupPolicyId. Approved vault records are therefore
+// validated as a composite workload/region mapping with non-overlapping region/tag targeting, and a
+// vault outside the governed subscriptions (a central backup subscription) is allowed only behind
+// allowCrossSubscriptionBackupVaults, instead of assuming one centralized vault for the whole tenant.
+var normalizedApprovedVaultRegions = [for approvedVaultRegion in approvedVaultRegions: toLower(trim(approvedVaultRegion))]
+var invalidApprovedVaultRegions = filter(normalizedApprovedVaultRegions, approvedVaultRegion => empty(approvedVaultRegion) || approvedVaultRegion == 'global')
+var backupEligibleSubscriptionIds = [for backupEligibleSubscriptionId in concat([workloadSubscriptionId], enableCriticalInfrastructure ? criticalInfrastructureSubscriptionIds : []): toLower(trim(backupEligibleSubscriptionId))]
+var invalidApprovedBackupVaults = filter(approvedBackupVaults, approvedVault => empty(trim(approvedVault.workload)) || !contains(normalizedApprovedVaultRegions, toLower(trim(approvedVault.region))) || !isRecoveryServicesVaultId(approvedVault.vaultResourceId) || !isBackupPolicyIdOfVault(approvedVault.backupPolicyResourceId, approvedVault.vaultResourceId) || empty(approvedVault.inclusionTagValues) || !empty(filter(approvedVault.inclusionTagValues, inclusionTagValue => empty(trim(inclusionTagValue)))))
+var crossSubscriptionApprovedBackupVaults = filter(approvedBackupVaults, approvedVault => isRecoveryServicesVaultId(approvedVault.vaultResourceId) && !contains(backupEligibleSubscriptionIds, toLower(split(approvedVault.vaultResourceId, '/')[2])))
+var approvedBackupVaultKeys = [for approvedVault in approvedBackupVaults: '${toLower(trim(approvedVault.workload))}|${toLower(trim(approvedVault.region))}']
+var approvedBackupVaultTargetKeyGroups = [for approvedVault in approvedBackupVaults: map(approvedVault.inclusionTagValues, inclusionTagValue => '${toLower(trim(approvedVault.region))}|${toLower(trim(inclusionTagValue))}')]
+var approvedBackupVaultTargetKeys = flatten(approvedBackupVaultTargetKeyGroups)
+var approvedBackupVaultResourceIds = [for approvedVault in approvedBackupVaults: toLower(trim(approvedVault.vaultResourceId))]
+var approvedBackupVaultResourceIdRegionKeys = [for approvedVault in approvedBackupVaults: '${toLower(trim(approvedVault.vaultResourceId))}|${toLower(trim(approvedVault.region))}']
+var validatedApprovedBackupVaults = !empty(invalidApprovedVaultRegions) || length(normalizedApprovedVaultRegions) != length(union(normalizedApprovedVaultRegions, []))
+  ? fail('approvedVaultRegions must contain non-empty, non-global, case-insensitively unique Azure regions.')
+  : !empty(invalidApprovedBackupVaults)
+    ? fail('Each approvedBackupVaults entry must name a workload, use an approved vault region, reference a canonical absolute Recovery Services vault resource ID, reference a backup policy inside that same vault, and list at least one non-empty inclusion tag value.')
+    : !allowCrossSubscriptionBackupVaults && !empty(crossSubscriptionApprovedBackupVaults)
+      ? fail('approvedBackupVaults entries reference a Recovery Services vault outside the workload and critical-infrastructure subscriptions. Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription and grant the assignment identity Backup Contributor there.')
+      : length(approvedBackupVaultKeys) != length(union(approvedBackupVaultKeys, []))
+        ? fail('approvedBackupVaults must use case-insensitively unique workload and region pairs; a workload may appear once per region and a region may host several workloads.')
+        : length(approvedBackupVaultTargetKeys) != length(union(approvedBackupVaultTargetKeys, []))
+          ? fail('approvedBackupVaults entries in the same region must not share an inclusion tag value, because the backup built-in targets virtual machines by location and inclusion tag value only.')
+          : length(union(approvedBackupVaultResourceIdRegionKeys, [])) != length(union(approvedBackupVaultResourceIds, []))
+            ? fail('Each approvedBackupVaults vault resource ID must map to exactly one region, because a Recovery Services vault is a single-region resource and the backup built-in protects only virtual machines colocated with the vault; use a separate vault per region.')
+            : approvedBackupVaults
+var vmBackupRemediationInputsValid = !empty(validatedApprovedBackupVaults) && !empty(trim(vmBackupInclusionTagName)) && !empty(trim(backupRetentionStandardId))
+var validatedVmBackupRemediation = enableVmBackupRemediation && !vmBackupRemediationInputsValid
+  ? fail('enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs, a non-empty vmBackupInclusionTagName, and a documented backupRetentionStandardId.')
+  : true
+var vaultDiagnosticsWorkspaceConfigured = deployCentralLogAnalytics || !empty(trim(existingLogAnalyticsWorkspaceResourceId))
+var validatedVaultDiagnostics = enableVaultDiagnostics && !vaultDiagnosticsWorkspaceConfigured
+  ? fail('enableVaultDiagnostics requires deployCentralLogAnalytics to be true or a non-empty existingLogAnalyticsWorkspaceResourceId.')
+  : true
+// The vault diagnostics assignment identity receives Log Analytics Contributor at the assigned
+// landing zones scope, which does not cover the effective workspace when that workspace lives in
+// the sibling connectivity subscription or in a customer-supplied subscription. The workspace
+// resource ID is therefore recomputed from parameters only (module outputs cannot be used as a
+// deployment scope) so an explicitly gated, least-privilege role assignment can be created at the
+// workspace itself.
+var centralLogAnalyticsWorkspaceResourceId = '/subscriptions/${connectivitySubscriptionId}/resourceGroups/rg-${namePrefix}-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-${namePrefix}-central'
+var vaultDiagnosticsWorkspaceResourceId = deployCentralLogAnalytics ? centralLogAnalyticsWorkspaceResourceId : existingLogAnalyticsWorkspaceResourceId
+var vaultDiagnosticsWorkspaceIdValid = isLogAnalyticsWorkspaceId(vaultDiagnosticsWorkspaceResourceId)
+var vaultDiagnosticsWorkspaceIdParts = split(vaultDiagnosticsWorkspaceIdValid ? vaultDiagnosticsWorkspaceResourceId : '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.OperationalInsights/workspaces/placeholder', '/')
+var validatedVaultDiagnosticsWorkspaceAccess = grantVaultDiagnosticsWorkspaceAccess && !enableVaultDiagnostics
+  ? fail('grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true, because the role assignment binds the diagnostics assignment identity that only exists when vault diagnostics are assigned.')
+  : grantVaultDiagnosticsWorkspaceAccess && vaultDiagnosticsEffect != 'DeployIfNotExists'
+    ? fail('grantVaultDiagnosticsWorkspaceAccess requires vaultDiagnosticsEffect to be DeployIfNotExists, because an AuditIfNotExists or Disabled assignment only reports and must never receive a managed identity or a role assignment.')
+    : grantVaultDiagnosticsWorkspaceAccess && !vaultDiagnosticsWorkspaceIdValid
+      ? fail('grantVaultDiagnosticsWorkspaceAccess requires a canonical absolute effective Log Analytics workspace resource ID of the form /subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.OperationalInsights/workspaces/<name> with no surrounding whitespace, so supply existingLogAnalyticsWorkspaceResourceId or set deployCentralLogAnalytics to true.')
+      : true
+var validatedRecoveryServicesVaultCreation = deployRecoveryServicesVault && !empty(approvedBackupVaults)
+  ? fail('deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied; approved existing vault and backup policy IDs are the preferred integration path.')
+  : deployRecoveryServicesVault && (empty(normalizedApprovedVaultRegions) || !contains(normalizedApprovedVaultRegions, toLower(trim(recoveryServicesVaultLocation))))
+    ? fail('recoveryServicesVaultLocation must be one of approvedVaultRegions when a customer-owned vault is created, and approvedVaultRegions must not be empty, so no metered vault is created in an unapproved region.')
+    : deployRecoveryServicesVault && empty(trim(backupRetentionStandardId))
+      ? fail('deployRecoveryServicesVault requires a documented backupRetentionStandardId so the metered customer-owned vault records an approved retention standard instead of an undocumented default.')
+      : true
+
 @description('Assign the stable Microsoft cloud security benchmark (MCSB) initiative at the demo root. Enabled by default for the customer-control profile. The separate Microsoft cloud security benchmark v2 preview initiative is never assigned by this template.')
 param enableMicrosoftCloudSecurityBenchmark bool = true
 
@@ -264,6 +353,156 @@ param enableCisAzureFoundationsBenchmark bool = false
 
 @description('Set true to add the optional NIST SP 800-53 Rev. 5 overlay at the demo root. This initiative contains four fixed Guest Configuration DeployIfNotExists/Modify members, so the assignment needs a system-assigned identity with the Contributor role; assignment alone does not establish NIST compliance.')
 param enableNistSp80053Rev5 bool = false
+
+@description('Effect for the virtual machine backup coverage audit (REQ-BKP-01). AuditIfNotExists reports uncovered virtual machines without configuring any backup.')
+@allowed([
+  'AuditIfNotExists'
+  'Disabled'
+])
+param vmBackupCoveragePolicyEffect string = 'AuditIfNotExists'
+
+@description('Effect for the Recovery Services vault public-network-access control (REQ-BKP-04). Keep Audit until private endpoints are in place.')
+@allowed([
+  'Audit'
+  'Deny'
+  'Disabled'
+])
+param vaultPublicNetworkPolicyEffect string = 'Audit'
+
+@description('Effect for the Recovery Services vault customer-managed-key control (REQ-BKP-05). Keep Audit until a customer-managed key is available.')
+@allowed([
+  'Audit'
+  'Deny'
+  'Disabled'
+])
+param vaultEncryptionPolicyEffect string = 'Audit'
+
+@description('Set true to also require infrastructure double encryption on vaults evaluated by the customer-managed-key control.')
+param vaultDoubleEncryptionRequired bool = false
+
+@description('Effect for the Recovery Services vault immutability control (REQ-BKP-06).')
+@allowed([
+  'Audit'
+  'Disabled'
+])
+param vaultImmutabilityPolicyEffect string = 'Audit'
+
+@description('Set true to report only vaults whose immutability is locked (irreversible). Set false to also treat unlocked immutability as compliant. Soft delete is audited separately by REQ-BKP-08.')
+param vaultCheckLockedImmutabilityOnly bool = true
+
+@description('Effect for the Recovery Services vault soft-delete control (REQ-BKP-08). Audit reports vaults whose soft delete is not enabled; this template never changes an existing vault setting.')
+@allowed([
+  'Audit'
+  'Disabled'
+])
+param vaultSoftDeletePolicyEffect string = 'Audit'
+
+@description('Set true to report only vaults whose soft delete is AlwaysOn (irreversible). False, the safe default, treats Enabled and AlwaysOn as compliant.')
+param vaultCheckAlwaysOnSoftDeleteOnly bool = false
+
+@description('Effect for the Recovery Services vault multi-user authorization (MUA) control (REQ-BKP-09). MUA uses a customer-owned Resource Guard, so this control stays audit-only.')
+@allowed([
+  'Audit'
+  'Disabled'
+])
+param vaultMultiUserAuthorizationPolicyEffect string = 'Audit'
+
+@description('Customer-approved regions in which backup vaults may be placed. The configure-backup built-in matches virtual machines whose location equals the vault region, so placement is approved per region rather than assuming a single centralized vault.')
+param approvedVaultRegions array = []
+
+@description('Customer-owned identifier of the documented backup retention standard, for example a change record or SSP control ID. No universal retention period is defined for every workload; this records which standard applies.')
+param backupRetentionStandardId string = ''
+
+@description('Approved existing vault and backup-policy integration records by workload and region. Existing vault and policy IDs are the preferred integration path and are required before virtual machine backup remediation can be enabled.')
+param approvedBackupVaults approvedBackupVault[] = []
+
+@description('Set true to approve approvedBackupVaults entries whose vault lives outside the workload and critical-infrastructure subscriptions, such as a central backup subscription. The configure-backup built-in deploys the protected item into the vault subscription, so the assignment identity must hold Backup Contributor there.')
+param allowCrossSubscriptionBackupVaults bool = false
+
+@description('Set true only after supplying approvedBackupVaults, approvedVaultRegions, a retention standard ID, and an inclusion tag name. This assigns the configure-backup built-in with a remediating identity. This template starts no remediation task, but a DeployIfNotExists effect combined with denyPolicyEnforcementMode Default also protects matching virtual machines automatically on create or update, which is metered.')
+param enableVmBackupRemediation bool = false
+
+@description('Effect for the configure-backup control (REQ-BKP-02). AuditIfNotExists keeps the opt-in assignment reporting-only. DeployIfNotExists allows a manually started remediation of existing virtual machines and, when denyPolicyEnforcementMode is Default, automatic protection of matching virtual machines on create or update.')
+@allowed([
+  'AuditIfNotExists'
+  'DeployIfNotExists'
+  'Disabled'
+])
+param vmBackupConfigurationEffect string = 'AuditIfNotExists'
+
+@description('Tag name that marks virtual machines eligible for backup configuration. Required when enableVmBackupRemediation is true.')
+param vmBackupInclusionTagName string = ''
+
+@description('Set true to assign Recovery Services vault diagnostic settings to the effective central monitoring workspace. Requires deployCentralLogAnalytics or an existing workspace resource ID.')
+param enableVaultDiagnostics bool = false
+
+@description('Effect for the vault diagnostic-settings control (REQ-BKP-07). AuditIfNotExists reports missing vault diagnostics; DeployIfNotExists allows remediation.')
+@allowed([
+  'AuditIfNotExists'
+  'DeployIfNotExists'
+  'Disabled'
+])
+param vaultDiagnosticsEffect string = 'AuditIfNotExists'
+
+@description('Set true to grant the vault diagnostics assignment identity Log Analytics Contributor at the effective central Log Analytics workspace scope. The landing zones grant does not cover a workspace in the connectivity or a customer subscription, so a DeployIfNotExists remediation would fail without it. Off by default so no role assignment is created.')
+param grantVaultDiagnosticsWorkspaceAccess bool = false
+
+@description('Set true only to create a metered, customer-owned Recovery Services vault and backup policy in the workload subscription. Leave false (default) and integrate an approved existing vault instead.')
+param deployRecoveryServicesVault bool = false
+
+@description('Region for an optional customer-owned vault. Must be an approved vault region when approvedVaultRegions is supplied. Ignored when deployRecoveryServicesVault is false.')
+@allowed([
+  'centralus'
+  'eastus'
+  'eastus2'
+  'northcentralus'
+  'southcentralus'
+  'westcentralus'
+  'westus'
+  'westus2'
+  'westus3'
+])
+param recoveryServicesVaultLocation string = 'eastus2'
+
+@description('Immutability state for an optional customer-owned vault. Locked is irreversible; Unlocked is the reversible default.')
+@allowed([
+  'Disabled'
+  'Unlocked'
+  'Locked'
+])
+param vaultImmutabilityState string = 'Unlocked'
+
+@description('Soft-delete state for an optional customer-owned vault. AlwaysON cannot be reversed.')
+@allowed([
+  'Enabled'
+  'AlwaysON'
+])
+param vaultSoftDeleteState string = 'Enabled'
+
+@description('Soft-delete retention period in days for an optional customer-owned vault.')
+@minValue(14)
+@maxValue(180)
+param vaultSoftDeleteRetentionInDays int = 14
+
+@description('Daily recovery point retention in days for an optional customer-owned backup policy. Longer retention increases backup storage cost.')
+@minValue(7)
+@maxValue(9999)
+param backupDailyRetentionInDays int = 30
+
+@description('Weekly recovery point retention in weeks for an optional customer-owned backup policy. 0 disables weekly retention.')
+@minValue(0)
+@maxValue(5163)
+param backupWeeklyRetentionInWeeks int = 0
+
+@description('Monthly recovery point retention in months for an optional customer-owned backup policy. 0 disables monthly retention.')
+@minValue(0)
+@maxValue(1188)
+param backupMonthlyRetentionInMonths int = 0
+
+@description('Yearly recovery point retention in years for an optional customer-owned backup policy. 0 disables yearly retention.')
+@minValue(0)
+@maxValue(99)
+param backupYearlyRetentionInYears int = 0
 
 @description('Effect for the Activity Log export assignment. Keep Disabled until the effective workspace input and rollout are approved.')
 @allowed([
@@ -373,7 +612,6 @@ var resourceDiagnosticsPolicySetDefinitionId = resourceDiagnosticsCategoryGroup 
   : resourceDiagnosticsAuditPolicySetDefinitionId
 var contributorRoleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var monitoringContributorRoleDefinitionId = '749f88d5-cbae-40b8-bcfc-e573ddc772fa'
-var logAnalyticsContributorRoleDefinitionId = '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
 var placeholderWorkspaceResourceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.OperationalInsights/workspaces/placeholder'
 var existingWorkspaceResourceIdParts = split(!empty(existingLogAnalyticsWorkspaceResourceId) ? existingLogAnalyticsWorkspaceResourceId : placeholderWorkspaceResourceId, '/')
 var effectiveMonitoringWorkspaceResourceId = centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
@@ -390,6 +628,42 @@ var deployResourceDiagnosticsRemediationRoleAssignments = deployRoleAssignments 
 var loggingWorkspaceSubscriptionId = deployCentralLogAnalytics ? connectivitySubscriptionId : existingWorkspaceResourceIdParts[2]
 var loggingWorkspaceResourceGroupName = deployCentralLogAnalytics ? 'rg-${namePrefix}-monitoring' : existingWorkspaceResourceIdParts[4]
 var loggingWorkspaceName = deployCentralLogAnalytics ? 'log-${namePrefix}-central' : existingWorkspaceResourceIdParts[8]
+var vmBackupCoveragePolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '013e242c-8828-4970-87b3-ab247555486d'
+)
+var vaultPublicNetworkPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '9ebbbba3-4d65-4da9-bb67-b22cfaaff090'
+)
+var vaultEncryptionPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '2e94d99a-8a36-4563-bc77-810d8893b671'
+)
+var vaultImmutabilityPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  'd6f6f560-14b7-49a4-9fc8-d2c3a9807868'
+)
+var vaultSoftDeletePolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '31b8092a-36b8-434b-9af7-5ec844364148'
+)
+var vaultMultiUserAuthorizationPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  'c7031eab-0fc0-4cd9-acd0-4497bd66d91a'
+)
+var configureVmBackupPolicyDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policyDefinitions',
+  '345fa903-145c-4fe1-8bcd-93ec2adccde8'
+)
+var resourceDiagnosticsToLogAnalyticsPolicySetDefinitionId = tenantResourceId(
+  'Microsoft.Authorization/policySetDefinitions',
+  '0884adba-2312-4468-abeb-5422caed1038'
+)
+var virtualMachineContributorRoleDefinitionId = '9980e02c-c2be-4d73-94e8-173b1dc7cf3c'
+var backupContributorRoleDefinitionId = '5e467623-bb1f-42f4-a55d-6e525e11384b'
+var logAnalyticsContributorRoleDefinitionId = '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
+
 
 module hierarchy 'modules/hierarchy.bicep' = {
   name: 'hierarchy-${uniqueString(namePrefix)}'
@@ -1596,6 +1870,452 @@ module nistSp80053Rev5Assignment 'modules/remediating-policy-assignment.bicep' =
   ]
 }
 
+module backupPostureInitiative 'modules/policy-initiative.bicep' = {
+  name: 'backup-posture-initiative'
+  scope: managementGroup(demoRootManagementGroupId)
+  params: {
+    initiativeName: '${namePrefix}-backup-posture'
+    initiativeDisplayName: 'Demo - backup coverage and vault posture'
+    initiativeDescription: 'Audits virtual machine backup coverage and Recovery Services vault public access, encryption, immutability, soft delete, and multi-user authorization posture. Auditing alone creates no vault and configures no backup.'
+    initiativeCategory: 'Backup'
+    initiativeVersion: '1.0.0'
+    initiativeParameters: {
+      vmBackupCoverageEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Virtual machine backup coverage effect'
+          description: 'AuditIfNotExists reports virtual machines without Azure Backup coverage.'
+        }
+        allowedValues: [
+          'AuditIfNotExists'
+          'Disabled'
+        ]
+        defaultValue: 'AuditIfNotExists'
+      }
+      vaultPublicNetworkAccessEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Vault public network access effect'
+          description: 'Audit is the safe default. Select Deny only after private endpoints are in place.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      vaultEncryptionEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Vault customer-managed key effect'
+          description: 'Audit is the safe default. Select Deny only after a customer-managed key is available.'
+        }
+        allowedValues: [
+          'Audit'
+          'Deny'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      vaultDoubleEncryption: {
+        type: 'Boolean'
+        metadata: {
+          displayName: 'Require vault infrastructure double encryption'
+        }
+        allowedValues: [
+          true
+          false
+        ]
+        defaultValue: false
+      }
+      vaultImmutabilityEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Vault immutability effect'
+        }
+        allowedValues: [
+          'Audit'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      vaultCheckLockedImmutabilityOnly: {
+        type: 'Boolean'
+        metadata: {
+          displayName: 'Report only locked vault immutability'
+        }
+        allowedValues: [
+          true
+          false
+        ]
+        defaultValue: true
+      }
+      vaultSoftDeleteEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Vault soft delete effect'
+          description: 'Audit reports Recovery Services vaults whose soft delete is not enabled.'
+        }
+        allowedValues: [
+          'Audit'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+      vaultCheckAlwaysOnSoftDeleteOnly: {
+        type: 'Boolean'
+        metadata: {
+          displayName: 'Report only always-on vault soft delete'
+        }
+        allowedValues: [
+          true
+          false
+        ]
+        defaultValue: false
+      }
+      vaultMultiUserAuthorizationEffect: {
+        type: 'String'
+        metadata: {
+          displayName: 'Vault multi-user authorization effect'
+          description: 'Audit reports Recovery Services vaults without multi-user authorization (Resource Guard).'
+        }
+        allowedValues: [
+          'Audit'
+          'Disabled'
+        ]
+        defaultValue: 'Audit'
+      }
+    }
+    policyDefinitionGroups: [
+      {
+        name: 'backup-coverage'
+        displayName: 'Backup coverage'
+        category: 'Backup'
+        description: 'Virtual machine backup coverage across landing-zone workloads.'
+      }
+      {
+        name: 'vault-posture'
+        displayName: 'Vault posture'
+        category: 'Backup'
+        description: 'Recovery Services vault private access, encryption, immutability, soft delete, and multi-user authorization posture.'
+      }
+    ]
+    policyDefinitionReferences: [
+      {
+        policyDefinitionId: vmBackupCoveragePolicyDefinitionId
+        definitionVersion: '3.*.*'
+        policyDefinitionReferenceId: 'vm-backup-coverage'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vmBackupCoverageEffect\')]'
+          }
+        }
+        groupNames: [
+          'backup-coverage'
+        ]
+      }
+      {
+        policyDefinitionId: vaultPublicNetworkPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'vault-public-network-access'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultPublicNetworkAccessEffect\')]'
+          }
+        }
+        groupNames: [
+          'vault-posture'
+        ]
+      }
+      {
+        policyDefinitionId: vaultEncryptionPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'vault-customer-managed-key'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultEncryptionEffect\')]'
+          }
+          enableDoubleEncryption: {
+            value: '[parameters(\'vaultDoubleEncryption\')]'
+          }
+        }
+        groupNames: [
+          'vault-posture'
+        ]
+      }
+      {
+        policyDefinitionId: vaultImmutabilityPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'vault-immutability'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultImmutabilityEffect\')]'
+          }
+          checkLockedImmutabilityOnly: {
+            value: '[parameters(\'vaultCheckLockedImmutabilityOnly\')]'
+          }
+        }
+        groupNames: [
+          'vault-posture'
+        ]
+      }
+      {
+        policyDefinitionId: vaultSoftDeletePolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'vault-soft-delete'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultSoftDeleteEffect\')]'
+          }
+          checkAlwaysOnSoftDeleteOnly: {
+            value: '[parameters(\'vaultCheckAlwaysOnSoftDeleteOnly\')]'
+          }
+        }
+        groupNames: [
+          'vault-posture'
+        ]
+      }
+      {
+        policyDefinitionId: vaultMultiUserAuthorizationPolicyDefinitionId
+        definitionVersion: '1.*.*'
+        policyDefinitionReferenceId: 'vault-multi-user-authorization'
+        parameters: {
+          effect: {
+            value: '[parameters(\'vaultMultiUserAuthorizationEffect\')]'
+          }
+        }
+        groupNames: [
+          'vault-posture'
+        ]
+      }
+    ]
+  }
+}
+
+module backupPostureAssignment 'modules/policy-assignment.bicep' = {
+  name: 'assign-backup-posture'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-backup-posture'
+    displayName: 'Demo - backup coverage and vault posture'
+    description: 'Audits landing-zone virtual machine backup coverage and Recovery Services vault posture. This assignment never creates a vault or configures backup.'
+    policyDefinitionId: backupPostureInitiative.outputs.policySetDefinitionId
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      vmBackupCoverageEffect: {
+        value: vmBackupCoveragePolicyEffect
+      }
+      vaultPublicNetworkAccessEffect: {
+        value: vaultPublicNetworkPolicyEffect
+      }
+      vaultEncryptionEffect: {
+        value: vaultEncryptionPolicyEffect
+      }
+      vaultDoubleEncryption: {
+        value: vaultDoubleEncryptionRequired
+      }
+      vaultImmutabilityEffect: {
+        value: vaultImmutabilityPolicyEffect
+      }
+      vaultCheckLockedImmutabilityOnly: {
+        value: vaultCheckLockedImmutabilityOnly
+      }
+      vaultSoftDeleteEffect: {
+        value: vaultSoftDeletePolicyEffect
+      }
+      vaultCheckAlwaysOnSoftDeleteOnly: {
+        value: vaultCheckAlwaysOnSoftDeleteOnly
+      }
+      vaultMultiUserAuthorizationEffect: {
+        value: vaultMultiUserAuthorizationPolicyEffect
+      }
+    }
+    nonComplianceMessages: [
+      {
+        message: 'Virtual machines must be protected by Azure Backup using an approved vault and backup policy.'
+        policyDefinitionReferenceId: 'vm-backup-coverage'
+      }
+      {
+        message: 'Recovery Services vaults must set publicNetworkAccess to Disabled. This audit evaluates the vault setting only and does not prove that private endpoints or private DNS are in place.'
+        policyDefinitionReferenceId: 'vault-public-network-access'
+      }
+      {
+        message: 'Recovery Services vaults must encrypt backup data with a customer-managed key.'
+        policyDefinitionReferenceId: 'vault-customer-managed-key'
+      }
+      {
+        message: 'Recovery Services vaults must enable immutability to protect backup data from early deletion.'
+        policyDefinitionReferenceId: 'vault-immutability'
+      }
+      {
+        message: 'Recovery Services vaults must enable soft delete so deleted backup data can be recovered.'
+        policyDefinitionReferenceId: 'vault-soft-delete'
+      }
+      {
+        message: 'Recovery Services vaults must enable multi-user authorization with a customer-owned Resource Guard.'
+        policyDefinitionReferenceId: 'vault-multi-user-authorization'
+      }
+    ]
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module vmBackupConfigurationAssignments 'modules/remediating-policy-assignment.bicep' = [
+  for (approvedVault, approvedVaultIndex) in validatedApprovedBackupVaults: if (vmBackupRemediationActive) {
+    name: 'assign-vm-backup-${approvedVaultIndex}'
+    scope: managementGroup(landingZonesManagementGroupId)
+    params: {
+      assignmentName: 'demo-vm-backup-${approvedVaultIndex}'
+      displayName: 'Demo - configure backup (${approvedVault.workload})'
+      description: 'Configures backup for tagged virtual machines in ${approvedVault.region} to the approved existing vault and backup policy for ${approvedVault.workload}. This template starts no remediation task, but with effect DeployIfNotExists and enforcementMode Default the assignment also protects newly created or updated matching virtual machines automatically, which is a metered backup cost.'
+      policyDefinitionId: configureVmBackupPolicyDefinitionId
+      definitionVersion: '9.*.*'
+      location: deploymentLocation
+      identity: {
+        type: 'SystemAssigned'
+      }
+      verifiedRoleDefinitionIds: [
+        virtualMachineContributorRoleDefinitionId
+        backupContributorRoleDefinitionId
+      ]
+      enforcementMode: denyPolicyEnforcementMode
+      parameters: {
+        effect: {
+          value: vmBackupConfigurationEffect
+        }
+        vaultLocation: {
+          value: approvedVault.region
+        }
+        inclusionTagName: {
+          value: vmBackupInclusionTagName
+        }
+        inclusionTagValue: {
+          value: approvedVault.inclusionTagValues
+        }
+        backupPolicyId: {
+          value: approvedVault.backupPolicyResourceId
+        }
+      }
+    }
+    dependsOn: [
+      hierarchy
+    ]
+  }
+]
+
+// The vault diagnostics control keeps least privilege by effect: an AuditIfNotExists or Disabled
+// assignment only reports, so it is created without a managed identity and without any role
+// assignment. Only the explicit DeployIfNotExists effect uses the remediating assignment that
+// attaches an identity and grants Log Analytics Contributor.
+module vaultDiagnosticsAuditAssignment 'modules/policy-assignment.bicep' = if (vaultDiagnosticsAuditActive) {
+  name: 'assign-vault-diagnostics-audit'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-vault-diagnostics'
+    displayName: 'Demo - Recovery Services vault diagnostics'
+    description: 'Reports Recovery Services vaults without diagnostic settings that send logs to the effective central Log Analytics workspace. This assignment has no identity and deploys nothing.'
+    policyDefinitionId: resourceDiagnosticsToLogAnalyticsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: vaultDiagnosticsEffect
+      }
+      logAnalytics: {
+        value: centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
+      }
+      resourceTypeList: {
+        value: [
+          'microsoft.recoveryservices/vaults'
+        ]
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module vaultDiagnosticsAssignment 'modules/remediating-policy-assignment.bicep' = if (vaultDiagnosticsRemediationActive) {
+  name: 'assign-vault-diagnostics'
+  scope: managementGroup(landingZonesManagementGroupId)
+  params: {
+    assignmentName: 'demo-vault-diagnostics'
+    displayName: 'Demo - Recovery Services vault diagnostics'
+    description: 'Sends Recovery Services vault logs to the effective central Log Analytics workspace. Remediation tasks are not started by this template.'
+    policyDefinitionId: resourceDiagnosticsToLogAnalyticsPolicySetDefinitionId
+    definitionVersion: '1.*.*'
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    enforcementMode: denyPolicyEnforcementMode
+    parameters: {
+      effect: {
+        value: vaultDiagnosticsEffect
+      }
+      logAnalytics: {
+        value: centralMonitoring.outputs.effectiveLogAnalyticsWorkspaceResourceId
+      }
+      resourceTypeList: {
+        value: [
+          'microsoft.recoveryservices/vaults'
+        ]
+      }
+    }
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
+module vaultDiagnosticsWorkspaceRbac 'modules/workspace-diagnostics-rbac.bicep' = if (vaultDiagnosticsWorkspaceAccessActive) {
+  name: 'vault-diagnostics-workspace-rbac'
+  scope: resourceGroup(vaultDiagnosticsWorkspaceIdParts[2], vaultDiagnosticsWorkspaceIdParts[4])
+  params: {
+    principalId: vaultDiagnosticsRemediationActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
+    roleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    workspaceName: vaultDiagnosticsWorkspaceIdParts[8]
+  }
+}
+
+module customerOwnedBackupVault 'modules/backup-vault.bicep' = if (customerOwnedVaultActive) {
+  name: 'customer-owned-backup-vault'
+  scope: subscription(workloadSubscriptionId)
+  params: {
+    deployRecoveryServicesVault: deployRecoveryServicesVault
+    namePrefix: namePrefix
+    location: recoveryServicesVaultLocation
+    tags: {
+      ApplicationName: 'Landing Zone Demo'
+      Environment: 'Sandbox'
+      Owner: 'Workload Team'
+      CostCenter: 'Demo'
+      DataClassification: 'Non-sensitive'
+      'SSP-ID': 'Demo'
+      BackupRetentionStandard: empty(trim(backupRetentionStandardId)) ? 'Undocumented' : trim(backupRetentionStandardId)
+    }
+    immutabilityState: vaultImmutabilityState
+    softDeleteState: vaultSoftDeleteState
+    softDeleteRetentionInDays: vaultSoftDeleteRetentionInDays
+    dailyRetentionInDays: backupDailyRetentionInDays
+    weeklyRetentionInWeeks: backupWeeklyRetentionInWeeks
+    monthlyRetentionInMonths: backupMonthlyRetentionInMonths
+    yearlyRetentionInYears: backupYearlyRetentionInYears
+  }
+  dependsOn: [
+    hierarchy
+  ]
+}
+
 module activityLogExportAssignment 'modules/policy-assignment.bicep' = if (!activityLogRemediationDeployRequested) {
   name: 'assign-activity-logs'
   scope: managementGroup(demoRootManagementGroupId)
@@ -1847,6 +2567,13 @@ module centralMonitoring 'modules/central-monitoring.bicep' = {
   ]
 }
 
+var vmBackupRemediationActive = enableVmBackupRemediation && validatedVmBackupRemediation
+var vaultDiagnosticsActive = enableVaultDiagnostics && validatedVaultDiagnostics
+var customerOwnedVaultActive = deployRecoveryServicesVault && validatedRecoveryServicesVaultCreation
+var vaultDiagnosticsRemediationActive = vaultDiagnosticsActive && vaultDiagnosticsEffect == 'DeployIfNotExists'
+var vaultDiagnosticsAuditActive = vaultDiagnosticsActive && vaultDiagnosticsEffect != 'DeployIfNotExists'
+var vaultDiagnosticsWorkspaceAccessActive = grantVaultDiagnosticsWorkspaceAccess && vaultDiagnosticsRemediationActive && validatedVaultDiagnosticsWorkspaceAccess
+
 output hierarchy object = {
   demoRoot: demoRootManagementGroupId
   platform: platformManagementGroupId
@@ -1889,6 +2616,8 @@ output loggingAssignments object = {
     policySetDefinitionId: resourceDiagnosticsPolicySetDefinitionId
   }
 }
+
+
 output defenderCspmPolicyAssignmentId string = defenderCspmAssignment.outputs.policyAssignmentId
 output defenderCspmIdentityPrincipalId string = defenderCspmAssignment.outputs.identityPrincipalId
 output defenderForServersPolicyAssignmentId string = defenderForServersAssignment.outputs.policyAssignmentId
@@ -1902,4 +2631,86 @@ output tagInheritanceRemediation object = {
   policyAssignmentId: tagInheritanceAssignment.?outputs.?policyAssignmentId ?? ''
   policyDefinitionReferenceIds: tagInheritanceInitiative.outputs.policyDefinitionReferenceIds
   remediationStarted: false
+}
+
+@description('Backup governance posture. Safe defaults create no vault, configure no backup, and start no remediation.')
+output backupGovernance object = {
+  vmBackupCoverageEffect: vmBackupCoveragePolicyEffect
+  vaultPublicNetworkAccessEffect: vaultPublicNetworkPolicyEffect
+  vaultEncryptionEffect: vaultEncryptionPolicyEffect
+  vaultDoubleEncryptionRequired: vaultDoubleEncryptionRequired
+  vaultImmutabilityEffect: vaultImmutabilityPolicyEffect
+  vaultCheckLockedImmutabilityOnly: vaultCheckLockedImmutabilityOnly
+  vaultSoftDeleteEffect: vaultSoftDeletePolicyEffect
+  vaultCheckAlwaysOnSoftDeleteOnly: vaultCheckAlwaysOnSoftDeleteOnly
+  vaultMultiUserAuthorizationEffect: vaultMultiUserAuthorizationPolicyEffect
+  approvedVaultRegions: normalizedApprovedVaultRegions
+  crossSubscriptionVaultsApproved: allowCrossSubscriptionBackupVaults
+  approvedVaultCount: length(validatedApprovedBackupVaults)
+  backupRetentionStandardId: backupRetentionStandardId
+  vmBackupRemediationEnabled: vmBackupRemediationActive
+  vmBackupConfigurationEffect: enableVmBackupRemediation ? vmBackupConfigurationEffect : 'Disabled'
+  vaultDiagnosticsEnabled: vaultDiagnosticsActive
+  customerOwnedVaultRequested: customerOwnedVaultActive
+}
+
+@description('Documented workload-to-vault placement mapping used as the integration target for virtual machine backup configuration.')
+output backupWorkloadToVaultMapping array = [
+  for approvedVault in validatedApprovedBackupVaults: {
+    workload: approvedVault.workload
+    region: approvedVault.region
+    vaultResourceId: approvedVault.vaultResourceId
+    backupPolicyResourceId: approvedVault.backupPolicyResourceId
+  }
+]
+
+@description('Remediating assignment identities and role assignments available for a manually started remediation. This template never starts a remediation task, but a DeployIfNotExists effect under enforcementMode Default also protects matching virtual machines automatically on create or update, and creates vault diagnostic settings automatically on vault create or update.')
+output backupRemediation object = {
+  remediationTasksStarted: false
+  vmBackupEnforcementMode: denyPolicyEnforcementMode
+  vmBackupAutomaticProtectionOnResourceWrite: vmBackupRemediationActive && vmBackupConfigurationEffect == 'DeployIfNotExists' && denyPolicyEnforcementMode == 'Default'
+  vmBackupRoleDefinitionIds: [
+    virtualMachineContributorRoleDefinitionId
+    backupContributorRoleDefinitionId
+  ]
+  vaultDiagnosticsAssignmentId: vaultDiagnosticsRemediationActive
+    ? vaultDiagnosticsAssignment!.outputs.policyAssignmentId
+    : vaultDiagnosticsAuditActive ? vaultDiagnosticsAuditAssignment!.outputs.policyAssignmentId : ''
+  vaultDiagnosticsIdentityAttached: vaultDiagnosticsRemediationActive
+  vaultDiagnosticsRoleDefinitionIds: vaultDiagnosticsRemediationActive
+    ? [
+        logAnalyticsContributorRoleDefinitionId
+      ]
+    : []
+  vaultDiagnosticsEnforcementMode: denyPolicyEnforcementMode
+  vaultDiagnosticsAutomaticSettingsOnResourceWrite: vaultDiagnosticsRemediationActive && denyPolicyEnforcementMode == 'Default'
+  vaultDiagnosticsPrincipalId: vaultDiagnosticsRemediationActive ? vaultDiagnosticsAssignment!.outputs.identityPrincipalId : ''
+  vaultDiagnosticsWorkspaceResourceId: vaultDiagnosticsActive ? vaultDiagnosticsWorkspaceResourceId : ''
+  vaultDiagnosticsWorkspaceAccessGranted: vaultDiagnosticsWorkspaceAccessActive
+  vaultDiagnosticsWorkspaceRoleAssignmentIds: vaultDiagnosticsWorkspaceAccessActive
+    ? vaultDiagnosticsWorkspaceRbac!.outputs.roleAssignmentIds
+    : []
+  remediationLocation: deploymentLocation
+}
+
+@description('Policy assignment IDs of the opt-in virtual machine backup remediating assignments. Remediation tasks must be started manually against these assignments.')
+output backupVmRemediationAssignmentIds array = [
+  for (approvedVault, approvedVaultIndex) in validatedApprovedBackupVaults: vmBackupRemediationActive
+    ? vmBackupConfigurationAssignments[approvedVaultIndex]!.outputs.policyAssignmentId
+    : ''
+]
+
+@description('Managed identity principal IDs of the opt-in virtual machine backup remediating assignments.')
+output backupVmRemediationPrincipalIds array = [
+  for (approvedVault, approvedVaultIndex) in validatedApprovedBackupVaults: vmBackupRemediationActive
+    ? vmBackupConfigurationAssignments[approvedVaultIndex]!.outputs.identityPrincipalId
+    : ''
+]
+
+@description('Customer-owned vault created by this deployment, or empty values when the preferred existing-vault integration path is used.')
+output customerOwnedBackupVault object = {
+  vaultCreated: customerOwnedVaultActive
+  vaultResourceId: customerOwnedVaultActive ? customerOwnedBackupVault!.outputs.vaultResourceId : ''
+  backupPolicyResourceId: customerOwnedVaultActive ? customerOwnedBackupVault!.outputs.backupPolicyResourceId : ''
+  retentionPosture: customerOwnedVaultActive ? customerOwnedBackupVault!.outputs.vaultRetentionPosture : {}
 }

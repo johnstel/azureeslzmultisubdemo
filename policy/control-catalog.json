@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "catalogVersion": "1.2.0",
-  "generatedOn": "2026-09-01",
+  "catalogVersion": "1.4.0",
+  "generatedOn": "2026-09-02",
   "purpose": "Authoritative v2 mapping from each customer requirement to its implementation mechanism (Azure Policy built-in/custom definition or initiative, Entra/PIM artifact, Defender CSPM/CIEM feature, shared-service architecture pattern, or manual evidence process) before v2 policy code is expanded. Sourced from public Microsoft Learn and the Azure/azure-policy GitHub repository; no tenant credentials were used.",
   "sourceIssue": "https://github.com/johnstel/azureeslzmultisubdemo/issues/3",
   "classificationValues": [
@@ -25,7 +25,7 @@
     "REQ-DEF-01 (\"Configure Microsoft Defender for Cloud plans\") is an all-or-nothing initiative: it exposes no assignment-time parameters, so assigning it enables all 12 member Defender plans immediately with no per-plan opt-out. It is **not safe** for this repository's audit-first/no-cost demo default profile and is documented for completeness only. Each plan must instead be independently enabled via its own verified, individually assignable policy definition (REQ-DEF-02 through REQ-DEF-04), which does expose its own `effect` parameter (`DeployIfNotExists`/`Disabled`) that can be explicitly overridden at assignment time. REQ-DEF-01's `roleDefinitionIds` remains a complete verified union (Owner + Security Admin) across all 12 members (`rolesVaryByMember: true`) for reference only.",
     "REQ-LOG-02's `roleDefinitionIds` was exhaustively verified across all 140 members to be Log Analytics Contributor only (`rolesVaryByMember: false`).",
     "REQ-DEF-06 is a no-cost audit signal from the free, configurable Foundational CSPM tier. It does not deploy a vulnerability scanner or enable any paid Defender plan.",
-    "REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship.",
+    "REQ-BKP-03 is a customer-input record; REQ-BKP-04 through REQ-BKP-06 and REQ-BKP-08 through REQ-BKP-09 are audit-only; and REQ-BKP-07 remediation remains explicit opt-in. Safe defaults create no vault, backup policy, diagnostic setting, private endpoint, encryption key, or protection relationship.",
     "Customer-managed key (CMK) controls (REQ-DATA-08, REQ-DATA-09, REQ-DATA-13) are service-specific and audit-first, never a blanket deny across every Azure service. Using a CMK adds customer-owned dependencies that Azure Policy cannot satisfy: a managed identity with get/wrapKey/unwrapKey access to the key, a key rotation process, key availability (a deleted, disabled, expired, or purged key makes the encrypted data unreadable), soft delete and purge protection for recovery (REQ-DATA-05 and REQ-DATA-06; purge protection must never be disabled once enabled), and private-network reachability of the vault when public network access is restricted (REQ-DATA-11 audits vault network configuration and REQ-NET-04/REQ-NET-05 audit private-link readiness; none of them deploy a private endpoint, DNS zone, key, or identity)."
   ],
   "controls": [
@@ -2021,10 +2021,9 @@
         "n/a"
       ],
       "requiredParameters": [
-        "recoveryServicesVaultResourceId",
-        "backupRetentionStandardId",
+        "approvedBackupVaults",
         "approvedVaultRegions",
-        "workloadToVaultMapping"
+        "backupRetentionStandardId"
       ],
       "roleDefinitionIds": [],
       "remediationIdentityRequired": false,
@@ -2032,8 +2031,8 @@
         "REQ-BKP-02"
       ],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Documented vault/backup-policy resource IDs, approved region list, and workload-to-vault mapping supplied by the customer and consumed as REQ-BKP-02's assignment parameters; no default value or placeholder is invented here.",
-      "notes": "REQ-BKP-02's built-in enforces vault/policy selection at assignment time via vaultLocation and backupPolicyId, but does not itself document which vault(s), region(s), or retention standard are customer-approved, nor which workloads map to which vault; those decisions are architecture inputs owned by the customer and tracked explicitly here per issue #19's 'existing vault/policy IDs are the preferred integration path' guidance. No single Azure Policy built-in enforces retention-standard or region/workload-placement correctness, so this record is classified shared-service-architecture rather than azure-policy."
+      "evidenceSource": "Documented vault/backup-policy resource IDs, approved region list, and workload-to-vault mapping supplied by the customer through the approvedBackupVaults, approvedVaultRegions, and backupRetentionStandardId template parameters and consumed as REQ-BKP-02's assignment parameters; no default value or placeholder is invented here.",
+      "notes": "REQ-BKP-02's built-in enforces vault/policy selection at assignment time via vaultLocation and backupPolicyId, but does not itself document which vault(s), region(s), or retention standard are customer-approved, nor which workloads map to which vault; those decisions are architecture inputs owned by the customer and tracked explicitly here per issue #19's 'existing vault/policy IDs are the preferred integration path' guidance. The template interface for this record is the approvedBackupVaults array (workload, region, vaultResourceId, backupPolicyResourceId, inclusionTagValues), the approvedVaultRegions allow-list, and backupRetentionStandardId; each vault resource ID must map to exactly one region because a Recovery Services vault is single-region. No single Azure Policy built-in enforces retention-standard or region/workload-placement correctness, so this record is classified shared-service-architecture rather than azure-policy."
     },
     {
       "id": "REQ-BKP-04",
@@ -2068,7 +2067,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state.",
-      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. Private connectivity itself (private endpoints) is a customer-supplied networking input, not created by this audit-only policy."
+      "notes": "Defaults Audit; Deny is supported for a stricter profile but is not enabled by safe defaults. This policy evaluates the vault's publicNetworkAccess property only; it does not evaluate or prove private endpoints, private DNS, or end-to-end private connectivity, which remain customer-supplied networking inputs."
     },
     {
       "id": "REQ-BKP-05",
@@ -2139,7 +2138,7 @@
       ],
       "enforcementPhase": "audit-only",
       "evidenceSource": "Compiled ARM template + policy compliance state.",
-      "notes": "Defaults Audit with checkLockedImmutabilityOnly=true (locked immutability only). Vault soft delete is a separate vault-level setting that Microsoft enables by default for Recovery Services vaults and is not currently exposed as its own dedicated Azure Policy built-in in the public Azure/azure-policy repository (confirmed by search); its default-on status is tracked here as a manual-evidence note rather than claimed as an audited policy control."
+      "notes": "Defaults Audit with checkLockedImmutabilityOnly=true (locked immutability only). Vault soft delete is audited separately by REQ-BKP-08 using its own dedicated built-in; immutability and soft delete are complementary vault-protection settings."
     },
     {
       "id": "REQ-BKP-07",
@@ -2179,6 +2178,71 @@
       "enforcementPhase": "deployifnotexists-opt-in",
       "evidenceSource": "Compiled ARM template, assignment identity block, and remediation task output (not started by safe defaults).",
       "notes": "Re-declared under the backup domain (rather than only relying on REQ-LOG-02's generic ~140-member coverage claim) specifically because issue #19 requires vault diagnostics to be an explicit, individually verified requirement, not an assumption riding on the initiative's broad scope."
+    },
+    {
+      "id": "REQ-BKP-08",
+      "domain": "backup",
+      "customerRequirement": "Audit that soft delete is enabled on Recovery Services vaults so deleted backup data stays recoverable (issue #19 vault protection).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Soft delete must be enabled for Recovery Services Vaults.",
+        "definitionId": "31b8092a-36b8-434b-9af7-5ec844364148",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-09-02",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/AzBackupRecoveryServicesVault_SoftDelete_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect",
+        "checkAlwaysOnSoftDeleteOnly"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Audit-only. checkAlwaysOnSoftDeleteOnly defaults to false in this repository (Enabled and AlwaysOn are both compliant) because AlwaysOn is irreversible; the built-in's own default is true. This template never changes soft delete on an existing vault."
+    },
+    {
+      "id": "REQ-BKP-09",
+      "domain": "backup",
+      "customerRequirement": "Audit that multi-user authorization (MUA) is enabled on Recovery Services vaults so privileged backup operations require a Resource Guard approval (issue #19 vault protection).",
+      "scope": "landingzones",
+      "classification": "azure-policy",
+      "mechanism": {
+        "kind": "policyDefinition",
+        "builtIn": true,
+        "displayName": "Multi-User Authorization (MUA) must be enabled for Recovery Services Vaults.",
+        "definitionId": "c7031eab-0fc0-4cd9-acd0-4497bd66d91a",
+        "majorVersion": "1",
+        "verifiedVersion": "1.0.1",
+        "verifiedOn": "2026-09-02",
+        "sourceUrl": "https://raw.githubusercontent.com/Azure/azure-policy/master/built-in-policies/policyDefinitions/Backup/AzBackupRecoveryServicesVault_MUA_Audit.json",
+        "verificationMethod": "raw-json",
+        "category": "Backup"
+      },
+      "supportedEffects": [
+        "Audit",
+        "Disabled"
+      ],
+      "requiredParameters": [
+        "effect"
+      ],
+      "roleDefinitionIds": [],
+      "remediationIdentityRequired": false,
+      "dependencies": [],
+      "enforcementPhase": "audit-only",
+      "evidenceSource": "Compiled ARM template + policy compliance state.",
+      "notes": "Audit-only. MUA depends on a customer-owned Resource Guard, ideally in a separate subscription and tenant-managed directory, which this template never creates; the control reports vault posture only."
     },
     {
       "id": "REQ-CIP-01",

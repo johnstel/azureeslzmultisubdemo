@@ -21,7 +21,7 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '1/27 Validate repository versioning and branch guidance...\n'
+printf '1/28 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -32,7 +32,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/27 Build the complete tenant template and validate policy assignment shapes...\n'
+printf '2/28 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -115,7 +115,7 @@ jq -e '
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/27 Validate the ARM parameter template...\n'
+printf '3/28 Validate the ARM parameter template...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -207,24 +207,26 @@ powershell_create_line="$(rg -n -F 'Start-AzPolicyRemediation `' "${powershell_r
   && "${powershell_revalidation_line}" -lt "${powershell_create_line}" ]] \
   || { printf 'ERROR: PowerShell tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
 
-printf '4/27 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/28 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/27 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...\n'
+printf '5/28 Confirm no paid always-on resource types are declared outside the opt-in central monitoring, logging destination RBAC, and backup vault modules...\n'
 find_prohibited_paid_declarations() {
   jq -r '
     def prohibited:
-      test("^Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$"; "i");
+      test("^Microsoft\\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|RecoveryServices/vaults|Storage/storageAccounts)$"; "i");
     def declarations:
       if type == "object" then
         . as $resource
         | if $resource.type? == "Microsoft.Resources/deployments"
-            and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel", "activity-log-workspace-destination-rbac", "resource-diagnostics-workspace-destination-rbac"))
+            and ($resource.name? | IN("central-monitoring", "central-monitoring-workspace", "central-monitoring-sentinel", "activity-log-workspace-destination-rbac", "resource-diagnostics-workspace-destination-rbac", "customer-owned-backup-vault"))
           then empty
+          elif ($resource.existing? == true)
+          then (.[] | declarations)
           elif (($resource.type? | type) == "string") and $resource.apiVersion? and ($resource.type | prohibited)
           then $resource.type
           else .[] | declarations
@@ -248,13 +250,13 @@ az bicep build \
   exit 1
 }
 
-printf '6/27 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/28 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/27 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+printf '7/28 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 4 ]] || {
   printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
@@ -720,7 +722,7 @@ rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/27 Confirm region policy and workload network guardrails are safe by default...\n'
+printf '8/28 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -963,7 +965,7 @@ for case in fixture["cases"]:
         raise SystemExit(f"ERROR: Firewall route semantic case failed: {case['name']}")
 PYEOF
 
-printf '9/27 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/28 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -996,7 +998,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/27 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...\n'
+printf '10/28 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...\n'
 rg -q "^param enableDefenderCspm bool = false$" "${PROJECT_DIR}/main.bicep"
 rg -q "^param enableDefenderForServers bool = false$" "${PROJECT_DIR}/main.bicep"
 rg -q "^param enableDefenderForStorage bool = false$" "${PROJECT_DIR}/main.bicep"
@@ -1223,7 +1225,7 @@ jq -e '
 rg -q '"REQ-DEF-09"' "${PROJECT_DIR}/policy/control-catalog.json"
 rg -q "Foundational CSPM" "${PROJECT_DIR}/README.md"
 
-printf '11/27 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '11/28 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -1239,7 +1241,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '12/27 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '12/28 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -1263,7 +1265,7 @@ landingzones_delete_line_ps1="$(rg -n '\$managementGroups \+= "\$prefix-landingz
   exit 1
 }
 
-printf '13/27 Confirm central monitoring defaults create no metered resources...\n'
+printf '13/28 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -1273,23 +1275,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "14/27 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "14/28 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '15/27 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '15/28 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '16/27 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '16/28 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '17/27 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '17/28 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -1312,7 +1314,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '18/27 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '18/28 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -1360,7 +1362,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-printf '19/27 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '19/28 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
@@ -1431,19 +1433,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '20/27 Validate reusable initiative composition...\n'
+printf '20/28 Validate reusable initiative composition...\n'
 "${SCRIPT_DIR}/validate-initiative-composition.sh"
 
-printf '21/27 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '21/28 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '22/27 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '22/28 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '23/27 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '23/28 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '24/27 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '24/28 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
@@ -1875,7 +1877,7 @@ rm -f "${CASE_INSENSITIVE_IMG}"
 
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
-printf '25/27 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
+printf '25/28 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
 control_catalog="${PROJECT_DIR}/policy/control-catalog.json"
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
@@ -1978,7 +1980,7 @@ jq -e '
   exit 1
 }
 
-printf '26/27 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
+printf '26/28 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
 rg -q -F "func hasCanonicalArmIdSegments" "${PROJECT_DIR}/main.bicep"
 rg -q "func hasDisallowedResourceGroupAsciiChars" "${PROJECT_DIR}/main.bicep"
 rg -q "func isResourceGroupName\\(value string\\) bool => .*length\\(value\\) <= 90.*!hasDisallowedResourceGroupAsciiChars\\(value\\)" "${PROJECT_DIR}/main.bicep"
@@ -2450,7 +2452,7 @@ if covered_category_modes != {"audit", "allLogs"}:
 if ("Disabled", "Disabled") not in covered_effect_states or ("DeployIfNotExists", "DeployIfNotExists") not in covered_effect_states:
     raise SystemExit("ERROR: Logging matrix must include both disabled and enabled remediation effect combinations.")
 PYEOF
-printf '27/27 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
+printf '27/28 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
 jq -e '
   .parameters.dataProtectionPolicyEffect.defaultValue == "Audit" and
   .parameters.dataProtectionPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and
@@ -2667,5 +2669,288 @@ jq -e '
   exit 1
 }
 jq -e '.parameters.dataProtectionPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
+
+printf '28/28 Confirm backup coverage and vault posture controls stay audit-first and dependency-gated...\n'
+jq -e --slurpfile catalog "${control_catalog}" '
+  def deployment($name):
+    first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
+  def control($id):
+    first($catalog[0].controls[] | select(.id == $id));
+  def definition_id($id; $kind):
+    "[tenantResourceId(\u0027Microsoft.Authorization/\($kind)\u0027, \u0027\(control($id).mechanism.definitionId)\u0027)]";
+  def pinned_version($id):
+    "\(control($id).mechanism.majorVersion).*.*";
+  deployment("backup-posture-initiative") as $initiative |
+  deployment("assign-backup-posture") as $posture |
+  first(.. | objects | select(.copy?.name? == "vmBackupConfigurationAssignments")) as $vmBackup |
+  deployment("assign-vault-diagnostics") as $diagnostics |
+  deployment("customer-owned-backup-vault") as $vault |
+  deployment("vault-diagnostics-workspace-rbac") as $workspaceRbac |
+  deployment("assign-vault-diagnostics-audit") as $diagnosticsAudit |
+  ($initiative.properties.parameters.policyDefinitionReferences.value
+    | map({key: .policyDefinitionReferenceId, value: .}) | from_entries) as $references |
+  .parameters.enableVmBackupRemediation.defaultValue == false and
+  .parameters.enableVaultDiagnostics.defaultValue == false and
+  .parameters.deployRecoveryServicesVault.defaultValue == false and
+  .parameters.allowCrossSubscriptionBackupVaults.defaultValue == false and
+  .parameters.grantVaultDiagnosticsWorkspaceAccess.defaultValue == false and
+  .parameters.approvedBackupVaults.defaultValue == [] and
+  .parameters.approvedVaultRegions.defaultValue == [] and
+  .parameters.backupRetentionStandardId.defaultValue == "" and
+  .parameters.vmBackupInclusionTagName.defaultValue == "" and
+  .parameters.vmBackupCoveragePolicyEffect.defaultValue == "AuditIfNotExists" and
+  .parameters.vmBackupConfigurationEffect.defaultValue == "AuditIfNotExists" and
+  .parameters.vaultDiagnosticsEffect.defaultValue == "AuditIfNotExists" and
+  .parameters.vaultPublicNetworkPolicyEffect.defaultValue == "Audit" and
+  .parameters.vaultEncryptionPolicyEffect.defaultValue == "Audit" and
+  .parameters.vaultImmutabilityPolicyEffect.defaultValue == "Audit" and
+  .parameters.vaultSoftDeletePolicyEffect.defaultValue == "Audit" and
+  .parameters.vaultMultiUserAuthorizationPolicyEffect.defaultValue == "Audit" and
+  .parameters.vaultDoubleEncryptionRequired.defaultValue == false and
+  .parameters.vaultCheckLockedImmutabilityOnly.defaultValue == true and
+  .parameters.vaultCheckAlwaysOnSoftDeleteOnly.defaultValue == false and
+  .parameters.vaultImmutabilityState.defaultValue == "Unlocked" and
+  .parameters.vaultSoftDeleteState.defaultValue == "Enabled" and
+  .parameters.denyPolicyEnforcementMode.defaultValue == "DoNotEnforce" and
+  .variables.vmBackupCoveragePolicyDefinitionId == definition_id("REQ-BKP-01"; "policyDefinitions") and
+  .variables.configureVmBackupPolicyDefinitionId == definition_id("REQ-BKP-02"; "policyDefinitions") and
+  .variables.vaultPublicNetworkPolicyDefinitionId == definition_id("REQ-BKP-04"; "policyDefinitions") and
+  .variables.vaultEncryptionPolicyDefinitionId == definition_id("REQ-BKP-05"; "policyDefinitions") and
+  .variables.vaultImmutabilityPolicyDefinitionId == definition_id("REQ-BKP-06"; "policyDefinitions") and
+  .variables.vaultSoftDeletePolicyDefinitionId == definition_id("REQ-BKP-08"; "policyDefinitions") and
+  .variables.vaultMultiUserAuthorizationPolicyDefinitionId ==
+    definition_id("REQ-BKP-09"; "policyDefinitions") and
+  .variables.resourceDiagnosticsToLogAnalyticsPolicySetDefinitionId ==
+    definition_id("REQ-BKP-07"; "policySetDefinitions") and
+  $references["vm-backup-coverage"].definitionVersion == pinned_version("REQ-BKP-01") and
+  $references["vault-public-network-access"].definitionVersion == pinned_version("REQ-BKP-04") and
+  $references["vault-customer-managed-key"].definitionVersion == pinned_version("REQ-BKP-05") and
+  $references["vault-immutability"].definitionVersion == pinned_version("REQ-BKP-06") and
+  $references["vault-soft-delete"].definitionVersion == pinned_version("REQ-BKP-08") and
+  $references["vault-multi-user-authorization"].definitionVersion == pinned_version("REQ-BKP-09") and
+  ($references["vault-soft-delete"].parameters | keys) == ["checkAlwaysOnSoftDeleteOnly", "effect"] and
+  ($references["vault-soft-delete"].parameters.effect.value
+    | contains("vaultSoftDeleteEffect")) and
+  ($references["vault-multi-user-authorization"].parameters | keys) == ["effect"] and
+  ($initiative.scope | contains("demoRootManagementGroupId")) and
+  ($posture.scope | contains("landingZonesManagementGroupId")) and
+  ($posture | has("condition") | not) and
+  ($posture.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
+    ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) and
+  (first($posture.properties.parameters.nonComplianceMessages.value[]
+    | select(.policyDefinitionReferenceId == "vault-public-network-access") | .message)
+    | contains("publicNetworkAccess") and contains("does not prove")) and
+  .variables.vmBackupRemediationActive ==
+    "[and(parameters(\u0027enableVmBackupRemediation\u0027), variables(\u0027validatedVmBackupRemediation\u0027))]" and
+  .variables.vaultDiagnosticsActive ==
+    "[and(parameters(\u0027enableVaultDiagnostics\u0027), variables(\u0027validatedVaultDiagnostics\u0027))]" and
+  .variables.customerOwnedVaultActive ==
+    "[and(parameters(\u0027deployRecoveryServicesVault\u0027), variables(\u0027validatedRecoveryServicesVaultCreation\u0027))]" and
+  $vmBackup.condition == "[variables(\u0027vmBackupRemediationActive\u0027)]" and
+  $vmBackup.copy.count == "[length(variables(\u0027validatedApprovedBackupVaults\u0027))]" and
+  ($vmBackup.scope | contains("landingZonesManagementGroupId")) and
+  $vmBackup.properties.parameters.definitionVersion.value == pinned_version("REQ-BKP-02") and
+  $vmBackup.properties.parameters.identity.value == {type: "SystemAssigned"} and
+  $vmBackup.properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
+  $vmBackup.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  $vmBackup.properties.parameters.verifiedRoleDefinitionIds.value == [
+    "[variables(\u0027virtualMachineContributorRoleDefinitionId\u0027)]",
+    "[variables(\u0027backupContributorRoleDefinitionId\u0027)]"
+  ] and
+  [.variables.virtualMachineContributorRoleDefinitionId, .variables.backupContributorRoleDefinitionId] ==
+    control("REQ-BKP-02").roleDefinitionIds and
+  $vmBackup.properties.parameters.parameters.value.backupPolicyId.value ==
+    "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].backupPolicyResourceId]" and
+  $vmBackup.properties.parameters.parameters.value.vaultLocation.value ==
+    "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].region]" and
+  $vmBackup.properties.parameters.parameters.value.inclusionTagValue.value ==
+    "[variables(\u0027validatedApprovedBackupVaults\u0027)[copyIndex()].inclusionTagValues]" and
+  .variables.vaultDiagnosticsRemediationActive ==
+    "[and(variables(\u0027vaultDiagnosticsActive\u0027), equals(parameters(\u0027vaultDiagnosticsEffect\u0027), \u0027DeployIfNotExists\u0027))]" and
+  .variables.vaultDiagnosticsAuditActive ==
+    "[and(variables(\u0027vaultDiagnosticsActive\u0027), not(equals(parameters(\u0027vaultDiagnosticsEffect\u0027), \u0027DeployIfNotExists\u0027)))]" and
+  .variables.vaultDiagnosticsWorkspaceAccessActive ==
+    "[and(and(parameters(\u0027grantVaultDiagnosticsWorkspaceAccess\u0027), variables(\u0027vaultDiagnosticsRemediationActive\u0027)), variables(\u0027validatedVaultDiagnosticsWorkspaceAccess\u0027))]" and
+  $diagnostics.condition == "[variables(\u0027vaultDiagnosticsRemediationActive\u0027)]" and
+  $diagnosticsAudit.condition == "[variables(\u0027vaultDiagnosticsAuditActive\u0027)]" and
+  ($diagnosticsAudit.scope | contains("landingZonesManagementGroupId")) and
+  ($diagnosticsAudit.properties.parameters | has("identity") | not) and
+  ($diagnosticsAudit.properties.parameters | has("verifiedRoleDefinitionIds") | not) and
+  ([$diagnosticsAudit.properties.template.resources[]
+    | select(has("identity"))] | length) == 0 and
+  ([$diagnosticsAudit.properties.template.resources[]
+    | select(.type? == "Microsoft.Authorization/roleAssignments")] | length) == 0 and
+  $diagnosticsAudit.properties.parameters.definitionVersion.value == pinned_version("REQ-BKP-07") and
+  $diagnosticsAudit.properties.parameters.parameters.value.resourceTypeList.value ==
+    ["microsoft.recoveryservices/vaults"] and
+  ($diagnostics.scope | contains("landingZonesManagementGroupId")) and
+  $diagnostics.properties.parameters.definitionVersion.value == pinned_version("REQ-BKP-07") and
+  $diagnostics.properties.parameters.parameters.value.resourceTypeList.value ==
+    ["microsoft.recoveryservices/vaults"] and
+  ($diagnostics.properties.parameters.parameters.value.logAnalytics.value | contains("centralMonitoring")) and
+  .variables.logAnalyticsContributorRoleDefinitionId == (control("REQ-BKP-07").roleDefinitionIds | first) and
+  $workspaceRbac.condition == "[variables(\u0027vaultDiagnosticsWorkspaceAccessActive\u0027)]" and
+  $workspaceRbac.subscriptionId ==
+    "[variables(\u0027vaultDiagnosticsWorkspaceIdParts\u0027)[2]]" and
+  $workspaceRbac.resourceGroup ==
+    "[variables(\u0027vaultDiagnosticsWorkspaceIdParts\u0027)[4]]" and
+  $workspaceRbac.properties.parameters.roleDefinitionIds.value ==
+    ["[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  ([$workspaceRbac.properties.template.resources[]
+    | select(.type? == "Microsoft.Authorization/roleAssignments")
+    | select(.properties.principalType == "ServicePrincipal")] | length) == 1 and
+  $vault.condition == "[variables(\u0027customerOwnedVaultActive\u0027)]" and
+  $vault.subscriptionId == "[parameters(\u0027workloadSubscriptionId\u0027)]" and
+  (.variables.validatedApprovedBackupVaults | contains("fail(")) and
+  (.variables.validatedApprovedBackupVaults | contains("allowCrossSubscriptionBackupVaults")) and
+  (.variables.validatedApprovedBackupVaults | contains("approvedBackupVaultKeys")) and
+  (.variables.validatedApprovedBackupVaults | contains("approvedBackupVaultTargetKeys")) and
+  (.variables.crossSubscriptionApprovedBackupVaults | contains("backupEligibleSubscriptionIds")) and
+  (.variables.validatedVmBackupRemediation | contains("fail(")) and
+  (.variables.validatedVaultDiagnostics | contains("fail(")) and
+  (.variables.validatedRecoveryServicesVaultCreation | contains("fail(")) and
+  (.variables.validatedRecoveryServicesVaultCreation | contains("backupRetentionStandardId")) and
+  (.variables.validatedRecoveryServicesVaultCreation | contains("approvedVaultRegions")) and
+  (.variables.vmBackupRemediationInputsValid | contains("vmBackupInclusionTagName")) and
+  (.variables.vmBackupRemediationInputsValid | contains("backupRetentionStandardId")) and
+  ([.. | objects | select(.type? == "Microsoft.PolicyInsights/remediations")] | length) == 0 and
+  .outputs.backupRemediation.value.remediationTasksStarted == false and
+  .outputs.backupRemediation.value.vmBackupEnforcementMode ==
+    "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  (.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite
+    | contains("DeployIfNotExists") and contains("Default")) and
+  .outputs.backupGovernance.value.crossSubscriptionVaultsApproved ==
+    "[parameters(\u0027allowCrossSubscriptionBackupVaults\u0027)]" and
+  .outputs.backupRemediation.value.vaultDiagnosticsEnforcementMode ==
+    "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
+  (.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite
+    | contains("vaultDiagnosticsRemediationActive") and contains("Default")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsPrincipalId | contains("identityPrincipalId")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceAccessGranted
+    | contains("vaultDiagnosticsWorkspaceAccessActive")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceRoleAssignmentIds
+    | contains("roleAssignmentIds")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsIdentityAttached
+    | contains("vaultDiagnosticsRemediationActive")) and
+  (.outputs.backupRemediation.value.vaultDiagnosticsRoleDefinitionIds
+    | contains("vaultDiagnosticsRemediationActive")) and
+  (.variables.validatedVaultDiagnosticsWorkspaceAccess
+    | contains("vaultDiagnosticsEffect") and contains("vaultDiagnosticsWorkspaceIdValid")) and
+  (.variables.vaultDiagnosticsWorkspaceIdValid
+    | contains("isLogAnalyticsWorkspaceId")) and
+  (.functions[0].members.isLogAnalyticsWorkspaceId.output.value
+    | contains("\u0027subscriptions\u0027") and contains("\u0027resourcegroups\u0027")
+      and contains("\u0027providers\u0027") and contains("\u0027microsoft.operationalinsights\u0027")
+      and contains("\u0027workspaces\u0027") and contains("trim(") and contains("isGuid")
+      and contains("isResourceNameSegment"))
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: Backup coverage and vault posture controls do not match the verified control catalog or safe defaults.\n' >&2
+  exit 1
+}
+for backup_validation_message in \
+  'enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs' \
+  'deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied' \
+  'enableVaultDiagnostics requires deployCentralLogAnalytics to be true' \
+  'recoveryServicesVaultLocation must be one of approvedVaultRegions' \
+  'deployRecoveryServicesVault requires a documented backupRetentionStandardId' \
+  'Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription' \
+  'must use case-insensitively unique workload and region pairs' \
+  'must not share an inclusion tag value' \
+  'must map to exactly one region' \
+  'grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true' \
+  'grantVaultDiagnosticsWorkspaceAccess requires a canonical absolute effective Log Analytics workspace resource ID' \
+  'grantVaultDiagnosticsWorkspaceAccess requires vaultDiagnosticsEffect to be DeployIfNotExists'; do
+  rg -q "${backup_validation_message}" "${PROJECT_DIR}/main.bicep" || {
+    printf 'ERROR: Backup input validation is missing: %s\n' "${backup_validation_message}" >&2
+    exit 1
+  }
+done
+rg -q 'no dedicated Azure Policy built-in' "${PROJECT_DIR}/policy/control-catalog.json" && {
+  printf 'ERROR: The catalog still claims that vault soft delete has no dedicated Azure Policy built-in.\n' >&2
+  exit 1
+}
+printf '    Confirm the backup negative fixtures stay bound to the exact compiled guard expressions...\n'
+jq -e --slurpfile fixture "${PROJECT_DIR}/tests/fixtures/backup-vault-placement-cases.json" '
+  . as $template |
+  $fixture[0] as $fx |
+  (($template.variables.copy // []) | map({key: .name, value: .input}) | from_entries) as $copies |
+  ($fx.compiledGuardExpressions | to_entries | all(.value == $template.variables[.key])) and
+  ($fx.compiledGuardCopyExpressions | to_entries | all(.value == $copies[.key])) and
+  ($fx.compiledGuardFunctions | to_entries
+    | all(.value == $template.functions[0].members[.key].output.value)) and
+  ($fx.guardCases | length) >= 32 and
+  (($fx.guardCases | map(select(.guardVariable == "validatedVaultDiagnosticsWorkspaceAccess")) | length) >= 13) and
+  all($fx.guardCases[];
+    . as $case
+    | $fx.compiledGuardExpressions[$case.guardVariable] as $guard
+    | ($guard != null)
+      and ($guard | contains($case.rejectionMessage))
+      and all($case.requiredExpressions[]; . as $needle | $guard | contains($needle))) and
+  (($fx.guardCases | map(.guardVariable) | unique | length) >= 4) and
+  ($fx.acceptedCases | length) >= 2 and
+  all($fx.acceptedCases[];
+    (.entries | map({id: (.vaultResourceId | ascii_downcase), region: (.region | ascii_downcase)})) as $pairs
+    | ($pairs | map(.id) | unique | length) == ($pairs | unique | length))
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: The backup guard fixtures no longer match the exact compiled guard expressions in main.bicep.\n' >&2
+  exit 1
+}
+printf '    Confirm the optional customer-owned vault path stays metered, tagged, and off by default...\n'
+az bicep build \
+  --file "${PROJECT_DIR}/modules/backup-vault.bicep" \
+  --outfile "${TEMP_DIR}/backup-vault.json" >/dev/null
+jq -e '
+  .parameters.deployRecoveryServicesVault.defaultValue == false and
+  .parameters.publicNetworkAccess.defaultValue == "Disabled" and
+  .parameters.storageRedundancy.defaultValue == "LocallyRedundant" and
+  .parameters.immutabilityState.defaultValue == "Unlocked" and
+  .parameters.dailyRetentionInDays.minValue == 7 and
+  (.variables.vaultTags | contains("Metered")) and
+  (.variables.vaultTags | contains("Customer-owned")) and
+  (first(.. | objects | select(.type? == "Microsoft.Resources/resourceGroups")).condition |
+    contains("createVault")) and
+  (first(.. | objects | select(.name? == "customer-owned-backup-vault")).condition |
+    contains("createVault")) and
+  ([.. | objects | select(.type? == "Microsoft.RecoveryServices/vaults")] | length) == 1 and
+  ([.. | objects | select(.type? == "Microsoft.RecoveryServices/vaults/backupPolicies")] | length) == 1 and
+  ([.. | objects |
+    select(.type? == "Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems")]
+    | length) == 0
+' "${TEMP_DIR}/backup-vault.json" >/dev/null || {
+  printf 'ERROR: The optional customer-owned vault module must stay opt-in, private, tagged as metered, and free of protected items.\n' >&2
+  exit 1
+}
+printf '    Confirm the approved existing-vault integration path compiles...\n'
+backup_vault_prefix='/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults'
+backup_vault_eastus2="${backup_vault_prefix}/rsv-workload-eastus2"
+backup_vault_centralus="${backup_vault_prefix}/rsv-workload-centralus"
+backup_params="${TEMP_DIR}/backup-existing-vault.bicepparam"
+sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \
+  -e "s|^param approvedVaultRegions = .*\$|param approvedVaultRegions = ['eastus2', 'centralus']|" \
+  -e "s|^param backupRetentionStandardId = .*\$|param backupRetentionStandardId = 'RETENTION-STD-001'|" \
+  -e "s|^param vmBackupInclusionTagName = .*\$|param vmBackupInclusionTagName = 'BackupPolicy'|" \
+  -e "s|^param enableVmBackupRemediation = .*\$|param enableVmBackupRemediation = true|" \
+  -e "s|^param approvedBackupVaults = .*\$|param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '${backup_vault_eastus2}', backupPolicyResourceId: '${backup_vault_eastus2}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}, {workload: 'corp', region: 'centralus', vaultResourceId: '${backup_vault_centralus}', backupPolicyResourceId: '${backup_vault_centralus}/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}]|" \
+  "${PROJECT_DIR}/parameters/main.template.bicepparam" > "${backup_params}"
+az bicep build-params --file "${backup_params}" --outfile "${backup_params}.json" >/dev/null
+jq -e --arg vaultPrefix "${backup_vault_prefix}" '
+  .parameters.enableVmBackupRemediation.value == true and
+  .parameters.deployRecoveryServicesVault.value == false and
+  .parameters.allowCrossSubscriptionBackupVaults.value == false and
+  .parameters.grantVaultDiagnosticsWorkspaceAccess.value == false and
+  .parameters.approvedVaultRegions.value == ["eastus2", "centralus"] and
+  (.parameters.approvedBackupVaults.value | length) == 2 and
+  (.parameters.approvedBackupVaults.value | map(.workload) | unique) == ["corp"] and
+  (.parameters.approvedBackupVaults.value | map(.region) | sort) == ["centralus", "eastus2"] and
+  (.parameters.approvedBackupVaults.value | map(.vaultResourceId) | unique | length) == 2 and
+  (.parameters.approvedBackupVaults.value
+    | all(.backupPolicyResourceId | startswith($vaultPrefix + "/"))) and
+  (.parameters.approvedBackupVaults.value
+    | all((.vaultResourceId + "/backupPolicies/") as $vaultPath
+      | .backupPolicyResourceId | startswith($vaultPath)))
+' "${backup_params}.json" >/dev/null || {
+  printf 'ERROR: The approved existing-vault integration path did not compile to the expected parameter values.\n' >&2
+  exit 1
+}
 
 printf '\nAll local validation and safety tests passed.\n'

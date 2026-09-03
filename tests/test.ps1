@@ -63,11 +63,13 @@ function Find-ProhibitedPaidDeclarations {
         $apiVersionProperty = $Node.PSObject.Properties['apiVersion']
         $nameProperty = $Node.PSObject.Properties['name']
         if ($typeProperty -and $typeProperty.Value -eq 'Microsoft.Resources/deployments' -and
-            $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel', 'activity-log-workspace-destination-rbac', 'resource-diagnostics-workspace-destination-rbac')) {
+            $nameProperty -and $nameProperty.Value -in @('central-monitoring', 'central-monitoring-workspace', 'central-monitoring-sentinel', 'activity-log-workspace-destination-rbac', 'resource-diagnostics-workspace-destination-rbac', 'customer-owned-backup-vault')) {
             return $results
         }
-        $prohibitedPattern = '^Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|Storage/storageAccounts)$'
-        if ($typeProperty -and $apiVersionProperty -and $typeProperty.Value -match $prohibitedPattern) {
+        $existingProperty = $Node.PSObject.Properties['existing']
+        $isExistingReference = ($null -ne $existingProperty -and $existingProperty.Value -eq $true)
+        $prohibitedPattern = '^Microsoft\.(Compute/virtualMachines|OperationalInsights/workspaces|Network/(azureFirewalls|bastionHosts|natGateways|publicIPAddresses|virtualNetworkGateways)|RecoveryServices/vaults|Storage/storageAccounts)$'
+        if (-not $isExistingReference -and $typeProperty -and $apiVersionProperty -and $typeProperty.Value -match $prohibitedPattern) {
             $results += $typeProperty.Value
         }
         foreach ($property in $Node.PSObject.Properties) {
@@ -87,7 +89,7 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
-    Write-Host '1/27 Validate repository versioning and branch guidance...'
+    Write-Host '1/28 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -105,7 +107,7 @@ try {
         }
     }
 
-    Write-Host '2/27 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/28 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -266,7 +268,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/27 Validate both parameter templates...'
+    Write-Host '3/28 Validate both parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -409,7 +411,7 @@ try {
     if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
         $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
     }
-    Write-Host '4/27 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/28 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -419,7 +421,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/27 Confirm no paid always-on resource types are declared outside the opt-in central monitoring module...'
+    Write-Host '5/28 Confirm no paid always-on resource types are declared outside the opt-in central monitoring, logging destination RBAC, and backup vault modules...'
     if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
         Stop-Test 'A prohibited evidence resource type is declared.'
     }
@@ -433,14 +435,14 @@ try {
         Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/27 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/28 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/27 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/28 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -940,7 +942,7 @@ exit $LASTEXITCODE
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
 
-    Write-Host '8/27 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/28 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -1246,7 +1248,7 @@ exit $LASTEXITCODE
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '9/27 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/28 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -1286,7 +1288,7 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/27 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
+    Write-Host '10/28 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     if ($mainBicepText -notmatch '(?m)^param enableDefenderCspm bool = false$') {
         Stop-Test 'enableDefenderCspm parameter must default to false.'
@@ -1538,7 +1540,7 @@ exit $LASTEXITCODE
         Stop-Test 'README.md must document Foundational CSPM.'
     }
 
-    Write-Host '11/27 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '11/28 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -1566,7 +1568,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '12/27 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '12/28 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -1588,7 +1590,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '13/27 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '13/28 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -1609,7 +1611,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/27 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '14/28 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -1621,7 +1623,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '15/27 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '15/28 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -1629,7 +1631,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '16/27 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '16/28 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -1641,7 +1643,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '17/27 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '17/28 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -1658,7 +1660,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '18/27 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '18/28 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -1761,7 +1763,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '19/27 Parse every PowerShell lifecycle and test script...'
+    Write-Host '19/28 Parse every PowerShell lifecycle and test script...'
     & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
@@ -1780,13 +1782,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '20/27 Validate reusable initiative composition...'
+    Write-Host '20/28 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '21/27 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '21/28 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '22/27 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '22/28 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -1796,10 +1798,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '23/27 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '23/28 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '24/27 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '24/28 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'
@@ -2427,7 +2429,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 
-    Write-Host '25/27 Confirm security benchmark assignments trace to the control catalog and stay optional...'
+    Write-Host '25/28 Confirm security benchmark assignments trace to the control catalog and stay optional...'
     $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
     $armParameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $benchmarkAssignments = @(
@@ -2564,7 +2566,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '26/27 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
+    Write-Host '26/28 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
     if (-not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func hasCanonicalArmIdSegments' -Quiet) -or
         -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func hasDisallowedResourceGroupAsciiChars' -Quiet) -or
         -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func isResourceGroupName\(value string\) bool => .*length\(value\) <= 90.*!hasDisallowedResourceGroupAsciiChars\(value\)' -Quiet) -or
@@ -3012,7 +3014,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test 'Logging matrix coverage must include both fully disabled and fully remediation-enabled effect combinations.'
     }
 
-    Write-Host '27/27 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
+    Write-Host '27/28 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
     if ($compiledJson.parameters.dataProtectionPolicyEffect.defaultValue -ne 'Audit' -or
         (Compare-Object @($compiledJson.parameters.dataProtectionPolicyEffect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
         Stop-Test 'Compiled dataProtectionPolicyEffect must allow Audit, Deny, and Disabled and default to Audit.'
@@ -3236,6 +3238,364 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             $dataProtectionResource.type -match '^Microsoft\.(ManagedIdentity|KeyVault|Storage|Network|OperationalInsights)/') {
             Stop-Test "The data-protection controls must not declare $($dataProtectionResource.type)."
         }
+    }
+
+    Write-Host '28/28 Confirm backup coverage and vault posture controls stay audit-first and dependency-gated...'
+    $backupDefaults = @{
+        enableVmBackupRemediation          = $false
+        enableVaultDiagnostics             = $false
+        deployRecoveryServicesVault        = $false
+        allowCrossSubscriptionBackupVaults = $false
+        grantVaultDiagnosticsWorkspaceAccess = $false
+        backupRetentionStandardId          = ''
+        vmBackupInclusionTagName           = ''
+        vmBackupCoveragePolicyEffect       = 'AuditIfNotExists'
+        vmBackupConfigurationEffect        = 'AuditIfNotExists'
+        vaultDiagnosticsEffect             = 'AuditIfNotExists'
+        vaultPublicNetworkPolicyEffect     = 'Audit'
+        vaultEncryptionPolicyEffect        = 'Audit'
+        vaultImmutabilityPolicyEffect      = 'Audit'
+        vaultSoftDeletePolicyEffect        = 'Audit'
+        vaultMultiUserAuthorizationPolicyEffect = 'Audit'
+        vaultDoubleEncryptionRequired      = $false
+        vaultCheckLockedImmutabilityOnly   = $true
+        vaultCheckAlwaysOnSoftDeleteOnly   = $false
+        vaultImmutabilityState             = 'Unlocked'
+        vaultSoftDeleteState               = 'Enabled'
+        denyPolicyEnforcementMode          = 'DoNotEnforce'
+    }
+    foreach ($backupParameterName in $backupDefaults.Keys) {
+        if ($compiledJson.parameters.$backupParameterName.defaultValue -ne $backupDefaults[$backupParameterName]) {
+            Stop-Test "$backupParameterName must keep the audit-first safe default $($backupDefaults[$backupParameterName])."
+        }
+    }
+    foreach ($backupListParameter in @('approvedBackupVaults', 'approvedVaultRegions')) {
+        if (@($compiledJson.parameters.$backupListParameter.defaultValue).Count -ne 0) {
+            Stop-Test "$backupListParameter must default to an empty list so no backup is configured."
+        }
+    }
+    $backupControls = @(
+        @{ ControlId = 'REQ-BKP-01'; VariableName = 'vmBackupCoveragePolicyDefinitionId'; Kind = 'policyDefinitions' },
+        @{ ControlId = 'REQ-BKP-02'; VariableName = 'configureVmBackupPolicyDefinitionId'; Kind = 'policyDefinitions' },
+        @{ ControlId = 'REQ-BKP-04'; VariableName = 'vaultPublicNetworkPolicyDefinitionId'; Kind = 'policyDefinitions' },
+        @{ ControlId = 'REQ-BKP-05'; VariableName = 'vaultEncryptionPolicyDefinitionId'; Kind = 'policyDefinitions' },
+        @{ ControlId = 'REQ-BKP-06'; VariableName = 'vaultImmutabilityPolicyDefinitionId'; Kind = 'policyDefinitions' },
+        @{ ControlId = 'REQ-BKP-08'; VariableName = 'vaultSoftDeletePolicyDefinitionId'; Kind = 'policyDefinitions' },
+        @{ ControlId = 'REQ-BKP-09'; VariableName = 'vaultMultiUserAuthorizationPolicyDefinitionId'; Kind = 'policyDefinitions' },
+        @{ ControlId = 'REQ-BKP-07'; VariableName = 'resourceDiagnosticsToLogAnalyticsPolicySetDefinitionId'; Kind = 'policySetDefinitions' }
+    )
+    $backupMajorVersions = @{}
+    foreach ($backupControl in $backupControls) {
+        $control = $controlCatalog.controls | Where-Object { $_.id -eq $backupControl.ControlId } | Select-Object -First 1
+        if (-not $control) { Stop-Test "Control catalog is missing $($backupControl.ControlId)." }
+        $expectedId = "[tenantResourceId('Microsoft.Authorization/$($backupControl.Kind)', '$($control.mechanism.definitionId)')]"
+        if ($compiledJson.variables.($backupControl.VariableName) -ne $expectedId) {
+            Stop-Test "$($backupControl.VariableName) must trace to the verified $($backupControl.ControlId) built-in."
+        }
+        $backupMajorVersions[$backupControl.ControlId] = "$($control.mechanism.majorVersion).*.*"
+    }
+    $backupInitiative = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'backup-posture-initiative'
+    } | Select-Object -First 1
+    $backupPostureAssignment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-backup-posture'
+    } | Select-Object -First 1
+    if (-not $backupInitiative -or -not $backupPostureAssignment) {
+        Stop-Test 'Backup posture initiative and assignment must exist.'
+    }
+    $backupReferences = @($backupInitiative.properties.parameters.policyDefinitionReferences.value)
+    $expectedBackupReferenceVersions = @{
+        'vm-backup-coverage'             = $backupMajorVersions['REQ-BKP-01']
+        'vault-public-network-access'    = $backupMajorVersions['REQ-BKP-04']
+        'vault-customer-managed-key'     = $backupMajorVersions['REQ-BKP-05']
+        'vault-immutability'             = $backupMajorVersions['REQ-BKP-06']
+        'vault-soft-delete'              = $backupMajorVersions['REQ-BKP-08']
+        'vault-multi-user-authorization' = $backupMajorVersions['REQ-BKP-09']
+    }
+    foreach ($referenceId in $expectedBackupReferenceVersions.Keys) {
+        $reference = $backupReferences | Where-Object { $_.policyDefinitionReferenceId -eq $referenceId } | Select-Object -First 1
+        if (-not $reference -or $reference.definitionVersion -ne $expectedBackupReferenceVersions[$referenceId]) {
+            Stop-Test "Backup initiative reference $referenceId must be pinned to the cataloged major version."
+        }
+    }
+    $softDeleteReference = $backupReferences | Where-Object { $_.policyDefinitionReferenceId -eq 'vault-soft-delete' } | Select-Object -First 1
+    if (Compare-Object @($softDeleteReference.parameters.PSObject.Properties.Name | Microsoft.PowerShell.Utility\Sort-Object) `
+            @('checkAlwaysOnSoftDeleteOnly', 'effect') -SyncWindow 0) {
+        Stop-Test 'The vault soft-delete reference must supply the built-in effect and checkAlwaysOnSoftDeleteOnly parameters.'
+    }
+    if ($backupPostureAssignment.scope -notmatch 'landingZonesManagementGroupId' -or
+        $backupPostureAssignment.PSObject.Properties['condition']) {
+        Stop-Test 'The backup posture audit must always be assigned at the landing zones scope.'
+    }
+    $publicNetworkMessage = [string](@($backupPostureAssignment.properties.parameters.nonComplianceMessages.value |
+        Where-Object { $_.policyDefinitionReferenceId -eq 'vault-public-network-access' })[0].message)
+    if ($publicNetworkMessage -notmatch 'publicNetworkAccess' -or $publicNetworkMessage -notmatch 'does not prove') {
+        Stop-Test 'The public-network-access message must claim only what the built-in evaluates.'
+    }
+    $expectedActiveConditions = @{
+        vmBackupRemediationActive = "[and(parameters('enableVmBackupRemediation'), variables('validatedVmBackupRemediation'))]"
+        vaultDiagnosticsActive    = "[and(parameters('enableVaultDiagnostics'), variables('validatedVaultDiagnostics'))]"
+        customerOwnedVaultActive  = "[and(parameters('deployRecoveryServicesVault'), variables('validatedRecoveryServicesVaultCreation'))]"
+        vaultDiagnosticsRemediationActive = "[and(variables('vaultDiagnosticsActive'), equals(parameters('vaultDiagnosticsEffect'), 'DeployIfNotExists'))]"
+        vaultDiagnosticsAuditActive = "[and(variables('vaultDiagnosticsActive'), not(equals(parameters('vaultDiagnosticsEffect'), 'DeployIfNotExists')))]"
+        vaultDiagnosticsWorkspaceAccessActive = "[and(and(parameters('grantVaultDiagnosticsWorkspaceAccess'), variables('vaultDiagnosticsRemediationActive')), variables('validatedVaultDiagnosticsWorkspaceAccess'))]"
+        vaultDiagnosticsWorkspaceIdValid = "[__bicep.isLogAnalyticsWorkspaceId(variables('vaultDiagnosticsWorkspaceResourceId'))]"
+    }
+    foreach ($activeVariable in $expectedActiveConditions.Keys) {
+        if ($compiledJson.variables.$activeVariable -ne $expectedActiveConditions[$activeVariable]) {
+            Stop-Test "$activeVariable must compile to the exact opt-in and validation condition."
+        }
+    }
+    $vmBackupAssignments = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['copy'] -and $node.copy.PSObject.Properties['name'] -and
+        $node.copy.name -eq 'vmBackupConfigurationAssignments'
+    } | Select-Object -First 1
+    if (-not $vmBackupAssignments -or
+        $vmBackupAssignments.condition -ne "[variables('vmBackupRemediationActive')]" -or
+        $vmBackupAssignments.copy.count -ne "[length(variables('validatedApprovedBackupVaults'))]" -or
+        $vmBackupAssignments.scope -notmatch 'landingZonesManagementGroupId' -or
+        $vmBackupAssignments.properties.parameters.definitionVersion.value -ne $backupMajorVersions['REQ-BKP-02'] -or
+        $vmBackupAssignments.properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        $vmBackupAssignments.properties.parameters.parameters.value.backupPolicyId.value -ne
+            "[variables('validatedApprovedBackupVaults')[copyIndex()].backupPolicyResourceId]" -or
+        $vmBackupAssignments.properties.parameters.parameters.value.vaultLocation.value -ne
+            "[variables('validatedApprovedBackupVaults')[copyIndex()].region]" -or
+        $vmBackupAssignments.properties.parameters.parameters.value.inclusionTagValue.value -ne
+            "[variables('validatedApprovedBackupVaults')[copyIndex()].inclusionTagValues]") {
+        Stop-Test 'VM backup remediation must stay opt-in, per approved vault, and pinned to the cataloged built-in.'
+    }
+    $vmBackupControl = $controlCatalog.controls | Where-Object { $_.id -eq 'REQ-BKP-02' } | Select-Object -First 1
+    if (Compare-Object @(
+            $compiledJson.variables.virtualMachineContributorRoleDefinitionId,
+            $compiledJson.variables.backupContributorRoleDefinitionId
+        ) @($vmBackupControl.roleDefinitionIds) -SyncWindow 0) {
+        Stop-Test 'VM backup remediation roles must match the verified control catalog role definition IDs.'
+    }
+    $vaultDiagnosticsAssignment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-vault-diagnostics'
+    } | Select-Object -First 1
+    if (-not $vaultDiagnosticsAssignment -or
+        $vaultDiagnosticsAssignment.condition -ne "[variables('vaultDiagnosticsRemediationActive')]" -or
+        (Compare-Object @($vaultDiagnosticsAssignment.properties.parameters.parameters.value.resourceTypeList.value) `
+            @('microsoft.recoveryservices/vaults') -SyncWindow 0) -or
+        ([string]$vaultDiagnosticsAssignment.properties.parameters.parameters.value.logAnalytics.value) -notmatch 'centralMonitoring') {
+        Stop-Test 'Vault diagnostics remediation must stay opt-in, vault-scoped, and bound to the central workspace.'
+    }
+    $vaultDiagnosticsAuditAssignment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'assign-vault-diagnostics-audit'
+    } | Select-Object -First 1
+    $auditAssignmentResources = @(
+        $vaultDiagnosticsAuditAssignment.properties.template.resources.PSObject.Properties.Value
+    )
+    if (-not $vaultDiagnosticsAuditAssignment -or
+        $vaultDiagnosticsAuditAssignment.condition -ne "[variables('vaultDiagnosticsAuditActive')]" -or
+        $vaultDiagnosticsAuditAssignment.scope -notmatch 'landingZonesManagementGroupId' -or
+        $vaultDiagnosticsAuditAssignment.properties.parameters.PSObject.Properties['identity'] -or
+        $vaultDiagnosticsAuditAssignment.properties.parameters.PSObject.Properties['verifiedRoleDefinitionIds'] -or
+        @($auditAssignmentResources | Where-Object { $_.PSObject.Properties['identity'] }).Count -ne 0 -or
+        @($auditAssignmentResources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' }).Count -ne 0 -or
+        $vaultDiagnosticsAuditAssignment.properties.parameters.definitionVersion.value -ne $backupMajorVersions['REQ-BKP-07'] -or
+        (Compare-Object @($vaultDiagnosticsAuditAssignment.properties.parameters.parameters.value.resourceTypeList.value) `
+            @('microsoft.recoveryservices/vaults') -SyncWindow 0)) {
+        Stop-Test 'An audit-only or disabled vault diagnostics assignment must have no identity and grant no role.'
+    }
+    $workspaceIdFunction = [string]$compiledJson.functions[0].members.isLogAnalyticsWorkspaceId.output.value
+    foreach ($requiredWorkspaceIdCheck in @(
+        "'subscriptions'", "'resourcegroups'", "'providers'",
+        "'microsoft.operationalinsights'", "'workspaces'", 'trim(', 'isGuid', 'isResourceNameSegment'
+    )) {
+        if (-not $workspaceIdFunction.Contains($requiredWorkspaceIdCheck)) {
+            Stop-Test "The workspace resource-ID guard must enforce $requiredWorkspaceIdCheck."
+        }
+    }
+    $workspaceRbacDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'vault-diagnostics-workspace-rbac'
+    } | Select-Object -First 1
+    $workspaceRoleAssignments = @(
+        $workspaceRbacDeployment.properties.template.resources.PSObject.Properties.Value |
+        Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and $_.properties.principalType -eq 'ServicePrincipal' }
+    )
+    if (-not $workspaceRbacDeployment -or
+        $workspaceRbacDeployment.condition -ne "[variables('vaultDiagnosticsWorkspaceAccessActive')]" -or
+        $workspaceRbacDeployment.subscriptionId -ne "[variables('vaultDiagnosticsWorkspaceIdParts')[2]]" -or
+        $workspaceRbacDeployment.resourceGroup -ne "[variables('vaultDiagnosticsWorkspaceIdParts')[4]]" -or
+        (Compare-Object @($workspaceRbacDeployment.properties.parameters.roleDefinitionIds.value) `
+            @("[variables('logAnalyticsContributorRoleDefinitionId')]") -SyncWindow 0) -or
+        $workspaceRoleAssignments.Count -ne 1) {
+        Stop-Test 'The gated workspace role assignment must stay opt-in and grant only the verified diagnostics role at the workspace scope.'
+    }
+    $customerOwnedVault = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['name'] -and $node.name -eq 'customer-owned-backup-vault'
+    } | Select-Object -First 1
+    if (-not $customerOwnedVault -or $customerOwnedVault.condition -ne "[variables('customerOwnedVaultActive')]") {
+        Stop-Test 'The optional customer-owned vault deployment must stay behind an explicit switch.'
+    }
+    $backupGuardExpectations = @{
+        validatedApprovedBackupVaults        = @('fail(', 'allowCrossSubscriptionBackupVaults', 'approvedBackupVaultKeys', 'approvedBackupVaultTargetKeys')
+        validatedVmBackupRemediation         = @('fail(')
+        validatedVaultDiagnostics            = @('fail(')
+        validatedRecoveryServicesVaultCreation = @('fail(', 'backupRetentionStandardId', 'approvedVaultRegions')
+        vmBackupRemediationInputsValid       = @('vmBackupInclusionTagName', 'backupRetentionStandardId')
+        crossSubscriptionApprovedBackupVaults = @('backupEligibleSubscriptionIds')
+    }
+    foreach ($backupGuardVariable in $backupGuardExpectations.Keys) {
+        foreach ($expectedFragment in $backupGuardExpectations[$backupGuardVariable]) {
+            if (-not ([string]$compiledJson.variables.$backupGuardVariable).Contains($expectedFragment)) {
+                Stop-Test "$backupGuardVariable must validate $expectedFragment before backup governance is enabled."
+            }
+        }
+    }
+    $backupRemediationResources = Find-JsonObjects -Node $compiledJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.PolicyInsights/remediations'
+    }
+    if (@($backupRemediationResources).Count -ne 0 -or
+        $compiledJson.outputs.backupRemediation.value.remediationTasksStarted -ne $false -or
+        $compiledJson.outputs.backupRemediation.value.vmBackupEnforcementMode -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite) -notmatch 'DeployIfNotExists' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vmBackupAutomaticProtectionOnResourceWrite) -notmatch 'Default' -or
+        $compiledJson.outputs.backupRemediation.value.vaultDiagnosticsEnforcementMode -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'vaultDiagnosticsRemediationActive' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsAutomaticSettingsOnResourceWrite) -notmatch 'Default' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsPrincipalId) -notmatch 'identityPrincipalId' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceAccessGranted) -notmatch 'vaultDiagnosticsWorkspaceAccessActive' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsWorkspaceRoleAssignmentIds) -notmatch 'roleAssignmentIds' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsIdentityAttached) -notmatch 'vaultDiagnosticsRemediationActive' -or
+        ([string]$compiledJson.outputs.backupRemediation.value.vaultDiagnosticsRoleDefinitionIds) -notmatch 'vaultDiagnosticsRemediationActive') {
+        Stop-Test 'Backup governance must never start remediation tasks and must report automatic DeployIfNotExists protection and diagnostics cost impact.'
+    }
+    foreach ($backupValidationMessage in @(
+        'enableVmBackupRemediation requires approvedBackupVaults entries with valid vault and backup policy IDs',
+        'deployRecoveryServicesVault must stay false when approvedBackupVaults records are supplied',
+        'enableVaultDiagnostics requires deployCentralLogAnalytics to be true',
+        'recoveryServicesVaultLocation must be one of approvedVaultRegions',
+        'deployRecoveryServicesVault requires a documented backupRetentionStandardId',
+        'Set allowCrossSubscriptionBackupVaults to true to approve that central backup subscription',
+        'must use case-insensitively unique workload and region pairs',
+        'must not share an inclusion tag value',
+        'must map to exactly one region',
+        'grantVaultDiagnosticsWorkspaceAccess requires enableVaultDiagnostics to be true',
+        'grantVaultDiagnosticsWorkspaceAccess requires a canonical absolute effective Log Analytics workspace resource ID',
+        'grantVaultDiagnosticsWorkspaceAccess requires vaultDiagnosticsEffect to be DeployIfNotExists')) {
+        if (-not $mainBicepText.Contains($backupValidationMessage)) {
+            Stop-Test "Backup input validation is missing: $backupValidationMessage"
+        }
+    }
+    $controlCatalogText = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw
+    if ($controlCatalogText.Contains('no dedicated Azure Policy built-in')) {
+        Stop-Test 'The catalog still claims that vault soft delete has no dedicated Azure Policy built-in.'
+    }
+    $backupGuardFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/backup-vault-placement-cases.json') -Raw | ConvertFrom-Json
+    $compiledCopyExpressions = @{}
+    foreach ($copyVariable in @($compiledJson.variables.copy)) {
+        $compiledCopyExpressions[$copyVariable.name] = $copyVariable.input
+    }
+    foreach ($guardExpression in $backupGuardFixture.compiledGuardExpressions.PSObject.Properties) {
+        if ($compiledJson.variables.($guardExpression.Name) -ne $guardExpression.Value) {
+            Stop-Test "Compiled guard variable $($guardExpression.Name) no longer matches the bound fixture expression."
+        }
+    }
+    foreach ($guardCopyExpression in $backupGuardFixture.compiledGuardCopyExpressions.PSObject.Properties) {
+        if ($compiledCopyExpressions[$guardCopyExpression.Name] -ne $guardCopyExpression.Value) {
+            Stop-Test "Compiled guard copy variable $($guardCopyExpression.Name) no longer matches the bound fixture expression."
+        }
+    }
+    foreach ($guardFunction in $backupGuardFixture.compiledGuardFunctions.PSObject.Properties) {
+        if ($compiledJson.functions[0].members.($guardFunction.Name).output.value -ne $guardFunction.Value) {
+            Stop-Test "Compiled guard function $($guardFunction.Name) no longer matches the bound fixture expression."
+        }
+    }
+    $backupGuardCases = @($backupGuardFixture.guardCases)
+    if ($backupGuardCases.Count -lt 32 -or
+        @($backupGuardCases | Where-Object {
+            $_.guardVariable -eq 'validatedVaultDiagnosticsWorkspaceAccess'
+        }).Count -lt 13 -or
+        @($backupGuardCases | ForEach-Object { $_.guardVariable } | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -lt 4) {
+        Stop-Test 'The backup guard fixture must keep covering every dependency guard with negative cases.'
+    }
+    foreach ($backupGuardCase in $backupGuardCases) {
+        $boundGuard = [string]$backupGuardFixture.compiledGuardExpressions.($backupGuardCase.guardVariable)
+        if ([string]::IsNullOrEmpty($boundGuard) -or -not $boundGuard.Contains([string]$backupGuardCase.rejectionMessage)) {
+            Stop-Test "Backup guard case is no longer bound to a compiled rejection: $($backupGuardCase.name)"
+        }
+        foreach ($requiredExpression in @($backupGuardCase.requiredExpressions)) {
+            if (-not $boundGuard.Contains([string]$requiredExpression)) {
+                Stop-Test "Backup guard case lost its compiled sub-expression $requiredExpression : $($backupGuardCase.name)"
+            }
+        }
+    }
+    foreach ($acceptedCase in @($backupGuardFixture.acceptedCases)) {
+        $acceptedVaultIds = @($acceptedCase.entries | ForEach-Object { $_.vaultResourceId.ToLowerInvariant() })
+        $acceptedVaultRegionPairs = @($acceptedCase.entries | ForEach-Object {
+            "$($_.vaultResourceId.ToLowerInvariant())|$($_.region.ToLowerInvariant())"
+        })
+        if (@($acceptedVaultIds | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -ne
+            @($acceptedVaultRegionPairs | Microsoft.PowerShell.Utility\Sort-Object -Unique).Count) {
+            Stop-Test "Accepted backup case reuses one single-region vault across regions: $($acceptedCase.name)"
+        }
+    }
+    $backupVaultTemplate = Join-Path $TempDir 'backup-vault.json'
+    & az bicep build --file (Join-Path $ProjectDir 'modules/backup-vault.bicep') --outfile $backupVaultTemplate
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'The optional backup vault module failed to compile.' }
+    $backupVaultJson = Get-Content -LiteralPath $backupVaultTemplate -Raw | ConvertFrom-Json
+    if ($backupVaultJson.parameters.deployRecoveryServicesVault.defaultValue -ne $false -or
+        $backupVaultJson.parameters.publicNetworkAccess.defaultValue -ne 'Disabled' -or
+        $backupVaultJson.parameters.storageRedundancy.defaultValue -ne 'LocallyRedundant' -or
+        $backupVaultJson.parameters.immutabilityState.defaultValue -ne 'Unlocked' -or
+        $backupVaultJson.parameters.dailyRetentionInDays.minValue -ne 7 -or
+        ([string]$backupVaultJson.variables.vaultTags) -notmatch 'Metered' -or
+        ([string]$backupVaultJson.variables.vaultTags) -notmatch 'Customer-owned') {
+        Stop-Test 'The optional customer-owned vault module must stay opt-in, private, and tagged as metered.'
+    }
+    $vaultDeclarations = Find-JsonObjects -Node $backupVaultJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.RecoveryServices/vaults'
+    }
+    $protectedItemDeclarations = Find-JsonObjects -Node $backupVaultJson -Predicate {
+        param($node)
+        $node.PSObject.Properties['type'] -and
+        $node.type -eq 'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems'
+    }
+    if (@($vaultDeclarations).Count -ne 1 -or @($protectedItemDeclarations).Count -ne 0) {
+        Stop-Test 'The optional vault module must declare exactly one vault and never protect live items.'
+    }
+    $backupParametersPath = Join-Path $TempDir 'backup-existing-vault.bicepparam'
+    $approvedVaultPrefix = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-backup/providers/Microsoft.RecoveryServices/vaults'
+    $approvedVaultEastUs2 = "$approvedVaultPrefix/rsv-workload-eastus2"
+    $approvedVaultCentralUs = "$approvedVaultPrefix/rsv-workload-centralus"
+    $approvedBackupVaultLiteral = "param approvedBackupVaults = [{workload: 'corp', region: 'eastus2', vaultResourceId: '$approvedVaultEastUs2', backupPolicyResourceId: '$approvedVaultEastUs2/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}, {workload: 'corp', region: 'centralus', vaultResourceId: '$approvedVaultCentralUs', backupPolicyResourceId: '$approvedVaultCentralUs/backupPolicies/vm-daily', inclusionTagValues: ['corp-daily']}]"
+    $backupParametersText = $benchmarkParameterTemplateText `
+        -replace "(?m)^using '\.\./main\.bicep'$", "using '../../main.bicep'" `
+        -replace '(?m)^param approvedVaultRegions = .*$', "param approvedVaultRegions = ['eastus2', 'centralus']" `
+        -replace '(?m)^param backupRetentionStandardId = .*$', "param backupRetentionStandardId = 'RETENTION-STD-001'" `
+        -replace '(?m)^param vmBackupInclusionTagName = .*$', "param vmBackupInclusionTagName = 'BackupPolicy'" `
+        -replace '(?m)^param enableVmBackupRemediation = .*$', 'param enableVmBackupRemediation = true' `
+        -replace '(?m)^param approvedBackupVaults = .*$', $approvedBackupVaultLiteral
+    Set-Content -LiteralPath $backupParametersPath -Value $backupParametersText
+    & az bicep build-params --file $backupParametersPath --outfile "$backupParametersPath.json"
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'The approved existing-vault integration path failed to compile.' }
+    $backupParametersJson = Get-Content -LiteralPath "$backupParametersPath.json" -Raw | ConvertFrom-Json
+    $compiledApprovedVaults = @($backupParametersJson.parameters.approvedBackupVaults.value)
+    if ($backupParametersJson.parameters.enableVmBackupRemediation.value -ne $true -or
+        $backupParametersJson.parameters.deployRecoveryServicesVault.value -ne $false -or
+        $backupParametersJson.parameters.allowCrossSubscriptionBackupVaults.value -ne $false -or
+        $backupParametersJson.parameters.grantVaultDiagnosticsWorkspaceAccess.value -ne $false -or
+        $compiledApprovedVaults.Count -ne 2 -or
+        (Compare-Object @($compiledApprovedVaults | ForEach-Object { $_.region } | Microsoft.PowerShell.Utility\Sort-Object) `
+            @('centralus', 'eastus2') -SyncWindow 0) -or
+        @($compiledApprovedVaults | ForEach-Object { $_.vaultResourceId } |
+            Microsoft.PowerShell.Utility\Sort-Object -Unique).Count -ne 2 -or
+        @($compiledApprovedVaults | Where-Object {
+            -not ([string]$_.backupPolicyResourceId).StartsWith("$($_.vaultResourceId)/backupPolicies/")
+        }).Count -ne 0) {
+        Stop-Test 'The approved existing-vault integration path did not compile to the expected parameter values.'
     }
 
     Write-Host ''
