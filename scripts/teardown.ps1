@@ -188,6 +188,10 @@ function Remove-ResourceGroupIfNotProtected {
             Write-Warning "SKIP: Cannot read ownership marker for $Group; it is external/protected."
             return
         }
+        if ([string]::IsNullOrEmpty([string]$owner)) {
+            Write-Warning "SKIP: $Group is external/protected because ESLZLifecycleOwner is absent."
+            return
+        }
         if ([string]$owner -cne $prefix) {
             Write-Warning "SKIP: $Group is external/protected because ESLZLifecycleOwner does not match this demo root."
             return
