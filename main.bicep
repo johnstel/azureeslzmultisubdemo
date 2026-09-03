@@ -2894,7 +2894,6 @@ module nercCipTechnicalOverlayAssignment 'modules/remediating-policy-assignment.
     }
     verifiedRoleDefinitionIds: [
       monitoringContributorRoleDefinitionId
-      logAnalyticsContributorRoleDefinitionId
     ]
     deployRemediationRoleAssignments: deployActivityLogRemediationRoleAssignments
     enforcementMode: denyPolicyEnforcementMode
@@ -2990,6 +2989,7 @@ module nercCipTechnicalOverlayAssignment 'modules/remediating-policy-assignment.
         value: validatedLoggingWorkspaceResourceId
       }
     }
+
     nonComplianceMessages: [
       {
         message: 'Critical resources must remain in customer-approved CIP regions.'
@@ -3120,6 +3120,18 @@ module nercCipTechnicalOverlayAssignment 'modules/remediating-policy-assignment.
   dependsOn: [
     hierarchy
   ]
+}
+
+module nercCipOverlayWorkspaceDestinationRbac 'modules/workspace-remediation-rbac.bicep' = if (enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs && deployActivityLogRemediationRoleAssignments) {
+  name: 'nerc-cip-overlay-workspace-destination-rbac'
+  scope: resourceGroup(loggingWorkspaceSubscriptionId, loggingWorkspaceResourceGroupName)
+  params: {
+    workspaceName: loggingWorkspaceName
+    principalId: nercCipTechnicalOverlayAssignment!.outputs.identityPrincipalId
+    roleDefinitionIds: [
+      logAnalyticsContributorRoleDefinitionId
+    ]
+  }
 }
 
 module vmBackupConfigurationAssignments 'modules/remediating-policy-assignment.bicep' = [
@@ -3604,6 +3616,14 @@ output loggingAssignments object = {
     categoryGroup: resourceDiagnosticsCategoryGroup
     policySetDefinitionId: resourceDiagnosticsPolicySetDefinitionId
   }
+}
+output nercCipTechnicalOverlay object = {
+  enabled: enableNercCipTechnicalOverlay
+  policyAssignmentId: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs ? nercCipTechnicalOverlayAssignment!.outputs.policyAssignmentId : ''
+  identityPrincipalId: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs ? nercCipTechnicalOverlayAssignment!.outputs.identityPrincipalId : ''
+  roleAssignmentIds: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs ? nercCipTechnicalOverlayAssignment!.outputs.roleAssignmentIds : []
+  workspaceDestinationAccessEnabled: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs && deployActivityLogRemediationRoleAssignments
+  workspaceDestinationRoleAssignmentIds: enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs && deployActivityLogRemediationRoleAssignments ? nercCipOverlayWorkspaceDestinationRbac!.outputs.roleAssignmentIds : []
 }
 
 

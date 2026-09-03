@@ -847,6 +847,7 @@ nerc_cip_overlay_count="$(jq '
   .resources as $resources |
   ($resources | map(select(.name == "nerc-cip-technical-overlay-initiative")) | first) as $initiative |
   ($resources | map(select(.name == "assign-nerc-cip-technical-overlay")) | first) as $assignment |
+  ($resources | map(select(.name == "nerc-cip-overlay-workspace-destination-rbac")) | first) as $workspace_rbac |
   ($initiative.scope | contains("demoRootManagementGroupId")) and
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-public-management-ingress")) != null and
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-require-subnet-nsg")) != null and
@@ -867,7 +868,7 @@ nerc_cip_overlay_count="$(jq '
   $assignment.properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
   $assignment.properties.parameters.identity.value == {"type":"SystemAssigned"} and
   $assignment.properties.parameters.verifiedRoleDefinitionIds.value ==
-    ["[variables(\u0027monitoringContributorRoleDefinitionId\u0027)]","[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+    ["[variables(\u0027monitoringContributorRoleDefinitionId\u0027)]"] and
   $assignment.properties.parameters.deployRemediationRoleAssignments.value == "[variables(\u0027deployActivityLogRemediationRoleAssignments\u0027)]" and
   $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
   ($assignment.properties.parameters.parameters.value.allowedLocations.value | contains("validatedNercCipApprovedLocations")) and
@@ -876,6 +877,14 @@ nerc_cip_overlay_count="$(jq '
   $assignment.properties.parameters.parameters.value.vaultDoubleEncryption.value == "[parameters(\u0027nercCipVaultDoubleEncryptionRequired\u0027)]" and
   $assignment.properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value == "[parameters(\u0027nercCipVaultCheckAlwaysOnSoftDeleteOnly\u0027)]" and
   $assignment.properties.parameters.parameters.value.diagnosticsEffect.value == "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
+  $workspace_rbac.condition == "[and(and(parameters(\u0027enableNercCipTechnicalOverlay\u0027), variables(\u0027validatedNercCipOverlayInputs\u0027)), variables(\u0027deployActivityLogRemediationRoleAssignments\u0027))]" and
+  $workspace_rbac.subscriptionId == "[variables(\u0027loggingWorkspaceSubscriptionId\u0027)]" and
+  $workspace_rbac.resourceGroup == "[variables(\u0027loggingWorkspaceResourceGroupName\u0027)]" and
+  $workspace_rbac.properties.parameters.workspaceName.value == "[variables(\u0027loggingWorkspaceName\u0027)]" and
+  $workspace_rbac.properties.parameters.principalId.value == "[reference(\u0027nercCipTechnicalOverlayAssignment\u0027).outputs.identityPrincipalId.value]" and
+  $workspace_rbac.properties.parameters.roleDefinitionIds.value == ["[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  .outputs.nercCipTechnicalOverlay.value.workspaceDestinationAccessEnabled == "[and(and(parameters(\u0027enableNercCipTechnicalOverlay\u0027), variables(\u0027validatedNercCipOverlayInputs\u0027)), variables(\u0027deployActivityLogRemediationRoleAssignments\u0027))]" and
+  .outputs.nercCipTechnicalOverlay.value.workspaceDestinationRoleAssignmentIds == "[if(and(and(parameters(\u0027enableNercCipTechnicalOverlay\u0027), variables(\u0027validatedNercCipOverlayInputs\u0027)), variables(\u0027deployActivityLogRemediationRoleAssignments\u0027)), reference(\u0027nercCipOverlayWorkspaceDestinationRbac\u0027).outputs.roleAssignmentIds.value, createArray())]" and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-public-management-ingress")) != null and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-require-subnet-nsg")) != null and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-paas-public-network-access")) != null and

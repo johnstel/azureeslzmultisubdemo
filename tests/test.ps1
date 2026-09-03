@@ -1174,9 +1174,11 @@ exit $LASTEXITCODE
     }
     $nercCipOverlayInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'nerc-cip-technical-overlay-initiative' })
     $nercCipOverlayAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-nerc-cip-technical-overlay' })
+    $nercCipOverlayWorkspaceRbac = @($compiledJson.resources | Where-Object { $_.name -eq 'nerc-cip-overlay-workspace-destination-rbac' })
     if ($nercCipOverlayInitiative.Count -ne 1 -or
-        $nercCipOverlayAssignment.Count -ne 1) {
-        Stop-Test 'NERC CIP technical overlay initiative and assignment must both be present exactly once.'
+        $nercCipOverlayAssignment.Count -ne 1 -or
+        $nercCipOverlayWorkspaceRbac.Count -ne 1) {
+        Stop-Test 'NERC CIP technical overlay initiative, assignment, and destination workspace RBAC deployment must each be present exactly once.'
     }
     $nercCipOverlayReferences = @($nercCipOverlayInitiative[0].properties.parameters.policyDefinitionReferences.value)
     $nercCipOverlayReferenceIds = @($nercCipOverlayReferences | ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object)
@@ -1202,7 +1204,7 @@ exit $LASTEXITCODE
         $nercCipOverlayAssignment[0].scope -match 'workloadManagementGroupId' -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.location.value -ne "[parameters('deploymentLocation')]" -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.identity.value.type -ne 'SystemAssigned' -or
-        (Compare-Object @($nercCipOverlayAssignment[0].properties.parameters.verifiedRoleDefinitionIds.value) @("[variables('monitoringContributorRoleDefinitionId')]", "[variables('logAnalyticsContributorRoleDefinitionId')]")) -or
+        (Compare-Object @($nercCipOverlayAssignment[0].properties.parameters.verifiedRoleDefinitionIds.value) @("[variables('monitoringContributorRoleDefinitionId')]")) -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.deployRemediationRoleAssignments.value -ne "[variables('deployActivityLogRemediationRoleAssignments')]" -or
         $nercCipOverlayAssignment[0].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.allowedLocations.value -notmatch 'validatedNercCipApprovedLocations' -or
@@ -1210,7 +1212,15 @@ exit $LASTEXITCODE
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.sspIdTagValue.value -ne "[trim(parameters('nercCipSspIdTagValue'))]" -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultDoubleEncryption.value -ne "[parameters('nercCipVaultDoubleEncryptionRequired')]" -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value -ne "[parameters('nercCipVaultCheckAlwaysOnSoftDeleteOnly')]" -or
-        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.diagnosticsEffect.value -ne "[parameters('activityLogExportPolicyEffect')]") {
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.diagnosticsEffect.value -ne "[parameters('activityLogExportPolicyEffect')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].condition -ne "[and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments'))]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].subscriptionId -ne "[variables('loggingWorkspaceSubscriptionId')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].resourceGroup -ne "[variables('loggingWorkspaceResourceGroupName')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].properties.parameters.workspaceName.value -ne "[variables('loggingWorkspaceName')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].properties.parameters.principalId.value -ne "[reference('nercCipTechnicalOverlayAssignment').outputs.identityPrincipalId.value]" -or
+        (Compare-Object @($nercCipOverlayWorkspaceRbac[0].properties.parameters.roleDefinitionIds.value) @("[variables('logAnalyticsContributorRoleDefinitionId')]")) -or
+        $compiledJson.outputs.nercCipTechnicalOverlay.value.workspaceDestinationAccessEnabled -ne "[and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments'))]" -or
+        $compiledJson.outputs.nercCipTechnicalOverlay.value.workspaceDestinationRoleAssignmentIds -ne "[if(and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments')), reference('nercCipOverlayWorkspaceDestinationRbac').outputs.roleAssignmentIds.value, createArray())]") {
         Stop-Test 'NERC CIP technical overlay must stay opt-in, critical-only, and parameter-wired to stricter inputs.'
     }
     $nercCipMessageReferenceIds = @(
