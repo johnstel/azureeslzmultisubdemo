@@ -708,6 +708,7 @@ try {
         'connectivity-evidence' = @{
             CostCenter = 'Demo'; ApplicationName = 'Connectivity Evidence'; Owner = 'Platform Team'
             Environment = 'Sandbox'; DataClassification = 'Non-sensitive'; 'SSP-ID' = 'Demo'
+            Purpose = 'Landing Zone Evidence'
         }
         'workload-evidence' = @{
             CostCenter = 'Demo'; ApplicationName = 'Landing Zone Demo'; Owner = 'Workload Team'
@@ -730,13 +731,19 @@ try {
         } else {
             $resourceGroupTags
         }
-        foreach ($requiredTag in $requiredTags) {
-            if (-not $evidenceTags.PSObject.Properties[$requiredTag] -or
-                $evidenceTags.PSObject.Properties[$requiredTag].Value -cne $expectedEvidenceTags[$evidenceDeploymentName][$requiredTag]) {
-                Stop-Test "$evidenceDeploymentName resource group has an invalid $requiredTag tag."
+        foreach ($expectedTag in $expectedEvidenceTags[$evidenceDeploymentName].Keys) {
+            if (-not $evidenceTags.PSObject.Properties[$expectedTag] -or
+                $evidenceTags.PSObject.Properties[$expectedTag].Value -cne $expectedEvidenceTags[$evidenceDeploymentName][$expectedTag]) {
+                Stop-Test "$evidenceDeploymentName resource group has an invalid $expectedTag tag."
             }
         }
-        if ($resourceGroupTags.ESLZLifecycleOwner -cne "[parameters('namePrefix')]") {
+        $expectedLifecycleTag = if ($evidenceDeploymentName -eq 'connectivity-evidence') {
+            "[union(variables('commonTags'), createObject('ESLZLifecycleOwner', parameters('namePrefix')))]"
+        } else {
+            "[parameters('namePrefix')]"
+        }
+        if (($evidenceDeploymentName -eq 'connectivity-evidence' -and $resourceGroupTags -cne $expectedLifecycleTag) -or
+            ($evidenceDeploymentName -eq 'workload-evidence' -and $resourceGroupTags.ESLZLifecycleOwner -cne $expectedLifecycleTag)) {
             Stop-Test "$evidenceDeploymentName resource group must bind ESLZLifecycleOwner to namePrefix."
         }
     }

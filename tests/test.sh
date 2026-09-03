@@ -574,8 +574,8 @@ jq -e '
     "Purpose": "Landing Zone Evidence"
   }) and
   (first($connectivityEvidence.properties.template.resources[] |
-    select(.type == "Microsoft.Resources/resourceGroups")).tags.ESLZLifecycleOwner ==
-    "[parameters(\u0027namePrefix\u0027)]") and
+    select(.type == "Microsoft.Resources/resourceGroups")).tags ==
+    "[union(variables(\u0027commonTags\u0027), createObject(\u0027ESLZLifecycleOwner\u0027, parameters(\u0027namePrefix\u0027)))]") and
   (first($workloadEvidence.properties.template.resources[] |
     select(.type == "Microsoft.Resources/resourceGroups")).tags == {
       "CostCenter": "Demo", "ApplicationName": "Landing Zone Demo", "Owner": "Workload Team",
