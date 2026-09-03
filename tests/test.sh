@@ -3449,7 +3449,52 @@ rg -q 'Remediation decision workflow' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
 rg -q 'registered entity remains responsible' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
 rg -q 'Required customer applicability decision' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
 rg -q 'Audit-readiness checklist' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
-rg -q 'offering-nerc-cip' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
-rg -q 'issues/22' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q '^\| NERC CIP requirement/family \| v2 technical control mapping \| Responsibility \| Policy/service evidence \| Evidence location \| Evidence owner \| Collection method \| Review cadence \| Known manual gap \|$' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+for required_mapping in \
+  'REQ-DEPLOY-01/02/04' \
+  'REQ-TAG-05/06' \
+  'REQ-NET-04/05' \
+  'REQ-DATA-01..07' \
+  'REQ-LOG-01 Activity Log export control (composed in REQ-CIP-01 overlay)' \
+  'REQ-DEF-07/08' \
+  'REQ-BKP-01..09' \
+  'REQ-ID-01/02 MFA baselines' \
+  'REQ-ID-04 PIM-ready time-bound privileged access' \
+  'REQ-ID-05 privileged-access inventory and Owner-count review' \
+  'REQ-ID-06 CIEM findings'; do
+  rg -q -F "${required_mapping}" "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+done
+rg -q 'service-principal/access-review governance dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+if rg -q 'technical control-matrix dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"; then
+  printf 'ERROR: NERC matrix still labels issue #21 as the technical control-matrix dependency.\n' >&2
+  exit 1
+fi
+rg -q 'learn.microsoft.com/en-us/azure/compliance/offerings/offering-nerc' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q 'learn.microsoft.com/en-us/azure/compliance/offerings/offering-nerc#shared-responsibility-in-the-cloud' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+rg -q 'nerc.com/standards/reliability-standards/cip' "${PROJECT_DIR}/docs/NERC-CIP-MATRIX.md"
+jq -e '
+  (.controls[] | select(.id == "REQ-CIP-01")) as $cip |
+  $cip.mechanism.displayName == "Demo - NERC CIP technical overlay (critical only)" and
+  $cip.mechanism.verificationMethod == "in-repository-custom-definition" and
+  $cip.remediationIdentityRequired == true and
+  ($cip.roleDefinitionIds | sort) == [
+    "749f88d5-cbae-40b8-bcfc-e573ddc772fa",
+    "92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+  ] and
+  ($cip.dependencies | index("REQ-LOG-01")) != null and
+  ($cip.dependencies | index("REQ-DEF-07")) != null and
+  ($cip.dependencies | index("REQ-DEF-08")) != null and
+  ($cip.dependencies | index("REQ-LOG-02")) == null and
+  ($cip.evidenceSource | contains("does not itself create any policy resource") | not) and
+  ($cip.notes | contains("No policyDefinition/policySetDefinition exists yet") | not)
+' "${PROJECT_DIR}/policy/control-catalog.json" >/dev/null || {
+  printf 'ERROR: REQ-CIP-01 control-catalog record is missing implemented overlay identity/remediation state.\n' >&2
+  exit 1
+}
+rg -q 'REQ-CIP-01 .*Demo - NERC CIP technical overlay \(critical only\).*manual-evidence \|$' "${PROJECT_DIR}/docs/CONTROL-MATRIX.md"
+if rg -q 'REQ-CIP-01 .*to be composed from existing verified controls' "${PROJECT_DIR}/docs/CONTROL-MATRIX.md"; then
+  printf 'ERROR: CONTROL-MATRIX still contains stale REQ-CIP-01 future-state text.\n' >&2
+  exit 1
+fi
 
 printf '\nAll local validation and safety tests passed.\n'

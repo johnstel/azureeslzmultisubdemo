@@ -2253,11 +2253,11 @@
       "mechanism": {
         "kind": "custom-policy-initiative",
         "builtIn": false,
-        "displayName": "Demo - NERC CIP technical overlay (to be composed from existing verified controls)",
+        "displayName": "Demo - NERC CIP technical overlay (critical only)",
         "definitionId": null,
         "sourceUrl": null,
-        "verifiedOn": "2026-08-31",
-        "verificationMethod": "not-yet-created"
+        "verifiedOn": "2026-09-03",
+        "verificationMethod": "in-repository-custom-definition"
       },
       "supportedEffects": [
         "Audit",
@@ -2269,8 +2269,11 @@
         "dataClassificationRequiredValues",
         "sspIdRequiredPattern"
       ],
-      "roleDefinitionIds": [],
-      "remediationIdentityRequired": false,
+      "roleDefinitionIds": [
+        "749f88d5-cbae-40b8-bcfc-e573ddc772fa",
+        "92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+      ],
+      "remediationIdentityRequired": true,
       "dependencies": [
         "REQ-DEPLOY-01",
         "REQ-DEPLOY-02",
@@ -2280,6 +2283,8 @@
         "REQ-NET-01",
         "REQ-NET-02",
         "REQ-NET-03",
+        "REQ-NET-04",
+        "REQ-NET-05",
         "REQ-NET-06",
         "REQ-DATA-01",
         "REQ-DATA-02",
@@ -2288,14 +2293,15 @@
         "REQ-DATA-05",
         "REQ-DATA-06",
         "REQ-LOG-01",
-        "REQ-LOG-02",
-        "REQ-DEF-02",
+        "REQ-DEF-06",
+        "REQ-DEF-07",
+        "REQ-DEF-08",
         "REQ-BKP-01",
         "REQ-BKP-02"
       ],
       "enforcementPhase": "manual-evidence",
-      "evidenceSource": "Custom initiative reusing existing domain definitions with stricter parameters (issue #22); does not itself create any policy resource until issue #22 is implemented.",
-      "notes": "Reuses existing verified domain controls above rather than duplicating policy rules; cannot be assigned outside the opt-in Critical Infrastructure branch; does not claim NERC CIP certification or full compliance. No policyDefinition/policySetDefinition exists yet (definitionId is null), so there is no remediation identity to require until issue #22 composes this initiative from the already-verified member records listed in dependencies, each of which documents its own roleDefinitionIds. Depends on REQ-DEF-02 (the individually assignable, safe-by-default Microsoft Defender CSPM plan), not the unsafe all-plans REQ-DEF-01 initiative."
+      "evidenceSource": "Compiled ARM template, custom policy-set definition and assignment at the Critical Infrastructure management-group scope, plus policy compliance state and role-assignment evidence (issue #22).",
+      "notes": "Implemented in main.bicep as a custom initiative and an opt-in remediating assignment (`enableNercCipTechnicalOverlay`) scoped only to the Critical Infrastructure branch. The assignment uses a SystemAssigned identity and verifies Monitoring Contributor at assignment scope for Activity Log remediation; workspace-destination Log Analytics Contributor is granted separately at the effective workspace resource-group scope via modules/workspace-remediation-rbac.bicep. `definitionId` remains null because the custom policy-set definition ID is deployment-derived from namePrefix and exposed by module outputs rather than a static built-in GUID. The overlay composes explicit members including REQ-LOG-01 and REQ-DEF-06/07/08; broader v2 REQ-LOG-02 diagnostics coverage remains outside this overlay's composed reference set. Assignment alone does not establish NERC CIP compliance."
     },
     {
       "id": "REQ-CIP-02",
@@ -2307,7 +2313,7 @@
         "kind": "documentation",
         "builtIn": false,
         "displayName": "NERC CIP responsibility and evidence matrix (docs/NERC-CIP-MATRIX.md)",
-        "sourceUrl": "https://learn.microsoft.com/en-us/compliance/regulatory/offering-nerc-cip",
+        "sourceUrl": "https://learn.microsoft.com/en-us/azure/compliance/offerings/offering-nerc",
         "verifiedOn": "2026-08-31",
         "verificationMethod": "documentation-pattern"
       },

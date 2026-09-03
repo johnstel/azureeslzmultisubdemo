@@ -4018,11 +4018,62 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
             'registered entity remains responsible',
             'Required customer applicability decision',
             'Audit-readiness checklist',
-            'offering-nerc-cip',
+            '| NERC CIP requirement/family | v2 technical control mapping | Responsibility | Policy/service evidence | Evidence location | Evidence owner | Collection method | Review cadence | Known manual gap |',
+            'REQ-DEPLOY-01/02/04',
+            'REQ-TAG-05/06',
+            'REQ-NET-04/05',
+            'REQ-DATA-01..07',
+            'REQ-LOG-01 Activity Log export control (composed in REQ-CIP-01 overlay)',
+            'REQ-DEF-07/08',
+            'REQ-BKP-01..09',
+            'REQ-ID-01/02 MFA baselines',
+            'REQ-ID-04 PIM-ready time-bound privileged access',
+            'REQ-ID-05 privileged-access inventory and Owner-count review',
+            'REQ-ID-06 CIEM findings',
+            'service-principal/access-review governance dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21',
+            'learn.microsoft.com/en-us/azure/compliance/offerings/offering-nerc',
+            'learn.microsoft.com/en-us/azure/compliance/offerings/offering-nerc#shared-responsibility-in-the-cloud',
+            'nerc.com/standards/reliability-standards/cip',
             'issues/22')) {
         if ($nercMatrixText -notmatch [regex]::Escape($requiredSnippet)) {
             Stop-Test "The NERC CIP matrix is missing required content: $requiredSnippet"
         }
+    }
+    foreach ($staleSnippet in @(
+            'technical control-matrix dependency issue: https://github.com/johnstel/azureeslzmultisubdemo/issues/21')) {
+        if ($nercMatrixText -match [regex]::Escape($staleSnippet)) {
+            Stop-Test "The NERC CIP matrix still contains stale text: $staleSnippet"
+        }
+    }
+
+    $controlMatrixText = Get-Content -LiteralPath (Join-Path $ProjectDir 'docs/CONTROL-MATRIX.md') -Raw
+    if ($controlMatrixText -notmatch [regex]::Escape('REQ-CIP-01 | Compose an opt-in, stricter technical control overlay for subscriptions under the Critical Infrastructure management-group branch. | critical-infrastructure | shared-service-architecture | Demo - NERC CIP technical overlay (critical only) (built-in: No) | `—` | — | Audit, Deny, DeployIfNotExists, Disabled | manual-evidence |')) {
+        Stop-Test 'The CONTROL-MATRIX REQ-CIP-01 row must reflect the implemented critical-only overlay.'
+    }
+    if ($controlMatrixText -match [regex]::Escape('REQ-CIP-01 | Compose an opt-in, stricter technical control overlay for subscriptions under the Critical Infrastructure management-group branch. | critical-infrastructure | shared-service-architecture | Demo - NERC CIP technical overlay (to be composed from existing verified controls)')) {
+        Stop-Test 'The CONTROL-MATRIX still contains stale REQ-CIP-01 future-state text.'
+    }
+
+    $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json -Depth 40
+    $cipOverlay = @($controlCatalog.controls | Where-Object { $_.id -eq 'REQ-CIP-01' })
+    if ($cipOverlay.Count -ne 1) {
+        Stop-Test 'Expected exactly one REQ-CIP-01 record in policy/control-catalog.json.'
+    }
+    $cipOverlayRoles = @($cipOverlay[0].roleDefinitionIds | Sort-Object)
+    if ($cipOverlay[0].mechanism.displayName -ne 'Demo - NERC CIP technical overlay (critical only)' -or
+        $cipOverlay[0].mechanism.verificationMethod -ne 'in-repository-custom-definition' -or
+        $cipOverlay[0].remediationIdentityRequired -ne $true -or
+        (Compare-Object $cipOverlayRoles @(
+                '749f88d5-cbae-40b8-bcfc-e573ddc772fa',
+                '92aaf0da-9dab-42b6-94a3-d43ce8d16293'
+            )) -or
+        -not (@($cipOverlay[0].dependencies) -contains 'REQ-LOG-01') -or
+        -not (@($cipOverlay[0].dependencies) -contains 'REQ-DEF-07') -or
+        -not (@($cipOverlay[0].dependencies) -contains 'REQ-DEF-08') -or
+        @($cipOverlay[0].dependencies) -contains 'REQ-LOG-02' -or
+        ([string]$cipOverlay[0].evidenceSource).Contains('does not itself create any policy resource') -or
+        ([string]$cipOverlay[0].notes).Contains('No policyDefinition/policySetDefinition exists yet')) {
+        Stop-Test 'REQ-CIP-01 in policy/control-catalog.json must reflect the implemented overlay identity and remediation evidence model.'
     }
 
     Write-Host ''
