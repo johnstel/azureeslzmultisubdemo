@@ -8,6 +8,167 @@ TEMP_DIR="${ARTIFACTS_PARENT}/test-sh-$$"
 mkdir -p "${TEMP_DIR}"
 trap 'rm -rf "${TEMP_DIR}"; rmdir "${ARTIFACTS_PARENT}" 2>/dev/null || true' EXIT
 
+run_offline_parity_suite() {
+  local mock_dir="${TEMP_DIR}/mock-az"
+  mkdir -p "${mock_dir}"
+  cat > "${mock_dir}/az" <<'EOF'
+#!/usr/bin/env bash
+set -e
+
+if [[ "${1:-}" == "bicep" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "account" ]]; then
+  if [[ "${2:-}" == "show" ]]; then
+    mock_account_json="${MOCK_ACCOUNT_JSON:-}"
+    if [[ -z "${mock_account_json}" ]]; then
+      mock_account_json='{"tenantId":"11111111-1111-1111-1111-111111111111","state":"Enabled"}'
+    fi
+    printf '%s\n' "${mock_account_json}"
+    exit 0
+  fi
+  if [[ "${2:-}" == "management-group" ]]; then
+    exit 0
+  fi
+fi
+
+if [[ "${1:-}" == "role" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "policy" ]]; then
+  policy_name=''
+  for index in "$@"; do
+    if [[ "${policy_name}" == '' && "${previous:-}" == '--name' ]]; then
+      policy_name="${index}"
+    fi
+    previous="${index}"
+  done
+  if [[ -n "${policy_name}" ]]; then
+    version="$(jq -r --arg id "${policy_name}" '.controls[] | select(.mechanism.builtIn == true and .mechanism.definitionId == $id) | ((.mechanism.majorVersion | tostring) + ".0.0")' "${PROJECT_DIR}/policy/control-catalog.json" 2>/dev/null | head -n 1)"
+    if [[ -n "${version}" ]]; then
+      printf '%s\n' "${version}"
+      exit 0
+    fi
+  fi
+  printf '%s\n' '1.0.0'
+  exit 0
+fi
+
+if [[ "${1:-}" == "provider" ]]; then
+  printf '%s\n' "Registered"
+  exit 0
+fi
+
+if [[ "${1:-}" == "resource" ]]; then
+  case "$*" in
+    *"Microsoft.OperationalInsights/workspaces"*) printf '%s\n' "Microsoft.OperationalInsights/workspaces"; exit 0 ;;
+    *"Microsoft.Network/azureFirewalls"*) printf '%s\n' "Microsoft.Network/azureFirewalls"; exit 0 ;;
+    *"Microsoft.Network/routeTables"*) printf '%s\n' "Microsoft.Network/routeTables"; exit 0 ;;
+    *"Microsoft.RecoveryServices/vaults"*) printf '%s\n' "Microsoft.RecoveryServices/vaults"; exit 0 ;;
+  esac
+  printf '%s\n' "${MOCK_RESOURCE_TYPE:-Microsoft.Network/routeTables}"
+  exit 0
+fi
+
+if [[ "${1:-}" == "rest" ]]; then
+  if [[ -n "${MOCK_WORKSPACE_ID:-}" && "$*" == *"${MOCK_WORKSPACE_ID}/providers/Microsoft.Authorization/permissions"* ]]; then
+    printf '%s\n' "${MOCK_WORKSPACE_REST_JSON}"
+    exit 0
+  fi
+  mock_rest_json="${MOCK_REST_JSON:-}"
+  if [[ -z "${mock_rest_json}" ]]; then
+    mock_rest_json='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+  fi
+  printf '%s\n' "${mock_rest_json}"
+  exit 0
+fi
+
+printf '%s\n' '{}'
+exit 0
+EOF
+  chmod +x "${mock_dir}/az"
+
+  local base_parameters="${TEMP_DIR}/base.parameters.json"
+  jq '
+    .parameters.tenantRootManagementGroupId.value = "demo-root" |
+    .parameters.connectivitySubscriptionId.value = "11111111-1111-1111-1111-111111111111" |
+    .parameters.workloadSubscriptionId.value = "22222222-2222-2222-2222-222222222222" |
+    .parameters.governanceAdminsGroupObjectId.value = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" |
+    .parameters.networkOperatorsGroupObjectId.value = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" |
+    .parameters.workloadContributorsGroupObjectId.value = "cccccccc-cccc-cccc-cccc-cccccccccccc" |
+    .parameters.readOnlyAuditorsGroupObjectId.value = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+  ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${base_parameters}"
+
+  run_case() {
+    local name="$1"
+    local expected_result="$2"
+    local json_file="${TEMP_DIR}/${name}.json"
+    local rest_json="$3"
+    shift 3
+    if [[ $# -gt 0 ]]; then
+      jq "$@" "${base_parameters}" > "${json_file}"
+    else
+      cp "${base_parameters}" "${json_file}"
+    fi
+
+    if PROJECT_DIR="${PROJECT_DIR}" PATH="${mock_dir}:$PATH" MOCK_REST_JSON="${rest_json}" "${PROJECT_DIR}/scripts/preflight.sh" "${json_file}" >/dev/null 2>&1; then
+      local actual_result='pass'
+    else
+      local actual_result='fail'
+    fi
+
+    if [[ "${actual_result}" != "${expected_result}" ]]; then
+      printf 'ERROR: offline parity case %s expected %s but got %s.\n' "${name}" "${expected_result}" "${actual_result}" >&2
+      exit 1
+    fi
+  }
+
+  run_case canonical_id_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+  run_case canonical_id_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.connectivitySubscriptionId.value = \"not-a-guid\""
+  run_case profile_shape_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' 'del(.parameters.deploySentinel)'
+  run_case blank_members_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.approvedRouteTableResourceIds.value = [\"\"]"
+  run_case blank_members_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.approvedRouteTableResourceIds.value = [\"\", \"not-a-resource-id\"]"
+  run_case ip_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
+  run_case ip_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallPrivateIp.value = \"999.999.999.999\" | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
+  run_case logging_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.activityLogExportPolicyEffect.value = \"DeployIfNotExists\" | .parameters.deployRoleAssignments.value = true | .parameters.deployLoggingRemediationRoleAssignments.value = true | .parameters.deployCentralLogAnalytics.value = true | .parameters.existingLogAnalyticsWorkspaceResourceId.value = \"\""
+  run_case logging_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.activityLogExportPolicyEffect.value = \"DeployIfNotExists\" | .parameters.deployLoggingRemediationRoleAssignments.value = true | .parameters.deployCentralLogAnalytics.value = false | .parameters.existingLogAnalyticsWorkspaceResourceId.value = \"\""
+  run_case routing_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
+  run_case routing_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\", \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\", \"10.0.0.0/24\"]"
+  run_case permissions_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+  run_case permissions_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":["microsoft.authorization/roleassignments/write"]}]}' '.parameters.deployRoleAssignments.value = true'
+  run_case permissions_internal_wildcard_fail fail '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]}]}'
+  run_case permissions_data_actions_only_fail fail '{"value":[{"actions":[],"dataActions":["*"],"notActions":[]}]}'
+  run_case permissions_separate_grant_pass pass '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]},{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write"],"notActions":[]}]}'
+  run_case missing_policy_definition_write_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}'
+  run_case backup_blank_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' '.parameters.approvedBackupVaults.value = [{"vaultResourceId":"","backupPolicyResourceId":""}]'
+
+  local workspace_id='/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-external/providers/Microsoft.OperationalInsights/workspaces/ws-external'
+  local management_permissions='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+  local workspace_mutator=".parameters.activityLogExportPolicyEffect.value = \"DeployIfNotExists\" | .parameters.deployRoleAssignments.value = true | .parameters.deployLoggingRemediationRoleAssignments.value = true | .parameters.deployCentralLogAnalytics.value = false | .parameters.existingLogAnalyticsWorkspaceResourceId.value = \"${workspace_id}\""
+  jq "${workspace_mutator}" "${base_parameters}" > "${TEMP_DIR}/workspace-dine.json"
+  for workspace_permission in \
+    '{"value":[{"actions":["microsoft.authorization/roleassignments/write"],"notActions":[]}]}' \
+    '{"value":[{"actions":[],"notActions":[]}]}'; do
+    if PROJECT_DIR="${PROJECT_DIR}" PATH="${mock_dir}:$PATH" MOCK_REST_JSON="${management_permissions}" MOCK_WORKSPACE_ID="${workspace_id}" MOCK_WORKSPACE_REST_JSON="${workspace_permission}" "${PROJECT_DIR}/scripts/preflight.sh" "${TEMP_DIR}/workspace-dine.json" >/dev/null 2>&1; then
+      workspace_result=pass
+    else
+      workspace_result=fail
+    fi
+    [[ "${workspace_result}" == pass ]] || [[ "${workspace_permission}" != *'roleassignments/write'* ]] \
+      || fail 'External workspace DINE permission fixture did not pass.'
+    [[ "${workspace_result}" == fail ]] || [[ "${workspace_permission}" == *'roleassignments/write'* ]] \
+      || fail 'External workspace DINE permission fixture did not fail.'
+  done
+
+  printf 'Offline parity suite passed.\n'
+}
+
+if [[ "${ESLZ_OFFLINE_TESTS:-0}" == '1' ]]; then
+  run_offline_parity_suite
+  exit 0
+fi
 command -v az >/dev/null 2>&1 || {
   printf 'ERROR: Azure CLI is required for Bicep validation.\n' >&2
   exit 1
@@ -20,6 +181,7 @@ command -v rg >/dev/null 2>&1 || {
   printf 'ERROR: ripgrep is required for safety tests.\n' >&2
   exit 1
 }
+run_offline_parity_suite
 
 printf '1/29 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
@@ -158,13 +320,13 @@ jq -e '
   .parameters.approvedFirewallPrivateIp.value == "" and
   .parameters.approvedRouteTableResourceIds.value == [] and
   .parameters.approvedRouteTablePrefixes.value == [] and
- .parameters.enableNercCipTechnicalOverlay.value == false and
- .parameters.nercCipApprovedLocations.value == [] and
- .parameters.nercCipDataClassificationTagValue.value == "" and
- .parameters.nercCipSspIdTagValue.value == "" and
- .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
- .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true and
- .parameters.deployLoggingRemediationRoleAssignments.value == false
+  .parameters.enableNercCipTechnicalOverlay.value == false and
+  .parameters.nercCipApprovedLocations.value == [] and
+  .parameters.nercCipDataClassificationTagValue.value == "" and
+  .parameters.nercCipSspIdTagValue.value == "" and
+  .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
+  .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true and
+  .parameters.deployLoggingRemediationRoleAssignments.value == false
 ' "${TEMP_DIR}/main.parameters.json" >/dev/null
 jq -e '
  .parameters.deployLoggingRemediationRoleAssignments.value == false and
@@ -3117,7 +3279,35 @@ jq -e --arg vaultPrefix "${backup_vault_prefix}" '
   exit 1
 }
 
-printf '29/29 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
+printf '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...\n'
+preflight_parameter_file="${TEMP_DIR}/preflight-unsafe.parameters.json"
+jq '
+  .parameters.tenantRootManagementGroupId.value = "demo-root" |
+  .parameters.connectivitySubscriptionId.value = "11111111-1111-4111-8111-111111111111" |
+  .parameters.workloadSubscriptionId.value = "22222222-2222-4222-8222-222222222222" |
+  .parameters.governanceAdminsGroupObjectId.value = "33333333-3333-4333-8333-333333333333" |
+  .parameters.networkOperatorsGroupObjectId.value = "44444444-4444-4444-8444-444444444444" |
+  .parameters.workloadContributorsGroupObjectId.value = "55555555-5555-4555-8555-555555555555" |
+  .parameters.readOnlyAuditorsGroupObjectId.value = "66666666-6666-4666-8666-666666666666" |
+  .parameters.enableCriticalInfrastructure.value = true |
+  .parameters.criticalInfrastructureSubscriptionIds.value = []
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${preflight_parameter_file}"
+preflight_commands=("${PROJECT_DIR}/scripts/preflight.sh ${preflight_parameter_file}")
+if command -v pwsh >/dev/null 2>&1; then
+  preflight_commands+=("pwsh -NoLogo -NoProfile -File ${PROJECT_DIR}/scripts/preflight.ps1 -ParameterFile ${preflight_parameter_file}")
+fi
+for preflight_command in "${preflight_commands[@]}"; do
+  if ${preflight_command} >"${TEMP_DIR}/preflight-output" 2>&1; then
+    printf 'ERROR: Preflight accepted critical infrastructure without a supplied subscription.\n' >&2
+    exit 1
+  fi
+  grep -q 'enableCriticalInfrastructure requires one or more' "${TEMP_DIR}/preflight-output" || {
+    printf 'ERROR: Preflight did not report the critical-infrastructure prerequisite.\n' >&2
+    exit 1
+  }
+done
+
+printf '30/30 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
 access_review_script="${PROJECT_DIR}/scripts/review-privileged-access.sh"
 access_review_ps_script="${PROJECT_DIR}/scripts/review-privileged-access.ps1"
 access_review_criteria="${PROJECT_DIR}/policy/access-review-criteria.json"
