@@ -95,7 +95,7 @@ done < <(jq -r '
     (.approvedBackupVaults.value? // [] | .[] | .vaultResourceId, .backupPolicyResourceId)
   ] | .[]? |
   select(type == "string") |
-  capture("^/subscriptions/(?<subscription>[^/]+)/resourceGroups/(?<group>[^/]+)/providers/.+$")? |
+  capture("(?i)^/subscriptions/(?<subscription>[^/]+)/resourceGroups/(?<group>[^/]+)/providers/.+$")? |
   [.subscription, .group] | @tsv
 ' "${PARAMETER_FILE}")
 
@@ -156,7 +156,11 @@ wait_for_resource_group_deletion() {
       printf 'ERROR: Cannot determine whether resource group %s was deleted.\n' "${group}" >&2
       exit 1
     fi
-    if printf '%s\n' "${group_exists}" | grep -qi true; then
+    if [[ "${group_exists}" != 'true' && "${group_exists}" != 'false' ]]; then
+      printf 'ERROR: Resource group %s returned an invalid post-wait existence result.\n' "${group}" >&2
+      exit 1
+    fi
+    if [[ "${group_exists}" == 'true' ]]; then
       printf 'ERROR: Failed waiting for resource group %s deletion.\n' "${group}" >&2
       exit 1
     fi

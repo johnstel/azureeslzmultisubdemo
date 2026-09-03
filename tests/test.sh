@@ -99,35 +99,6 @@ printf '%s\n' '{}'
 exit 0
 EOF
   chmod +x "${mock_dir}/az"
-cat > "${mock_dir}/az.cmd" <<'EOF'
-@echo off
-echo az %* >> "%MOCK_AZ_LOG%"
-set "args=%*"
-if "%MOCK_AZ_OWNER%"=="" (set "owner=demo") else (set "owner=%MOCK_AZ_OWNER%")
-if /I "%~1 %~2 %~3"=="policy assignment show" (
-echo %args% | findstr /I /C:"demo-nerc-cip-technical" >nul
-if not errorlevel 1 (echo nerc-assignment-principal) else (echo null)
-exit /b 0
-)
-if /I "%~1 %~2 %~3"=="role assignment list" (
-echo %args% | findstr /I /C:"nerc-assignment-principal" >nul || exit /b 0
-echo %args% | findstr /I /C:"ws-protected" >nul || exit /b 0
-echo NERC-ROLE-ASSIGNMENT-ID
-exit /b 0
-)
-if /I "%~1 %~2"=="group exists" (
-echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
-if errorlevel 1 (echo false) else (echo true)
-exit /b 0
-)
-if /I "%~1 %~2"=="group show" (
-echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
-if errorlevel 1 (echo.) else (echo %owner%)
-exit /b 0
-)
-exit /b 0
-EOF
-
   local base_parameters="${TEMP_DIR}/base.parameters.json"
   jq '
     .parameters.tenantRootManagementGroupId.value = "demo-root" |
@@ -243,6 +214,10 @@ case "${1}" in
   group)
     case "${2:-}" in
       exists)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" && -f "${MOCK_AZ_WAIT_FALLBACK_FILE}" ]]; then
+          printf '%s\n' invalid
+          exit 0
+        fi
         case "$*" in
           *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
           *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
@@ -261,6 +236,10 @@ case "${1}" in
         esac
         ;;
       wait)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" ]]; then
+          : > "${MOCK_AZ_WAIT_FALLBACK_FILE}"
+          exit 1
+        fi
         exit 0
         ;;
     esac
@@ -305,6 +284,39 @@ esac
 exit 0
 EOF
   chmod +x "${mock_dir}/az"
+  cat > "${mock_dir}/az.cmd" <<'EOF'
+@echo off
+echo az %* >> "%MOCK_AZ_LOG%"
+set "args=%*"
+if "%MOCK_AZ_OWNER%"=="" (set "owner=demo") else (set "owner=%MOCK_AZ_OWNER%")
+if /I "%~1 %~2 %~3"=="policy assignment show" (
+echo %args% | findstr /I /C:"demo-nerc-cip-technical" >nul
+if not errorlevel 1 (echo nerc-assignment-principal) else (echo null)
+exit /b 0
+)
+if /I "%~1 %~2 %~3"=="role assignment list" (
+echo %args% | findstr /I /C:"nerc-assignment-principal" >nul || exit /b 0
+echo %args% | findstr /I /C:"ws-protected" >nul || exit /b 0
+echo NERC-ROLE-ASSIGNMENT-ID
+exit /b 0
+)
+if /I "%~1 %~2"=="group exists" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" if exist "%MOCK_AZ_WAIT_FALLBACK_FILE%" (echo invalid& exit /b 0)
+echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+if errorlevel 1 (echo false) else (echo true)
+exit /b 0
+)
+if /I "%~1 %~2"=="group wait" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" (type nul > "%MOCK_AZ_WAIT_FALLBACK_FILE%"& exit /b 1)
+  exit /b 0
+)
+if /I "%~1 %~2"=="group show" (
+echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+if errorlevel 1 (echo.) else (echo %owner%)
+exit /b 0
+)
+exit /b 0
+EOF
 
   local parameter_file="${fixture_dir}/teardown.parameters.json"
   cat > "${parameter_file}" <<'JSON'
@@ -334,7 +346,7 @@ EOF
       "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.Network/azureFirewalls/fw-protected"
     },
     "approvedRouteTableResourceIds": {
-      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-workloads-demo/providers/Microsoft.Network/routeTables/rt-protected"]
+      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/RESOURCEGROUPS/rg-demo-workloads-demo/PROVIDERS/Microsoft.Network/routeTables/rt-protected"]
     },
     "approvedBackupVaults": {
       "value": [{"vaultResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected", "backupPolicyResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected/backupPolicies/policy-protected"}]
@@ -390,6 +402,15 @@ text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
 if re.search(r'az group (delete|wait).*--name rg-demo-(monitoring|connectivity|workloads-demo)', text):
     raise SystemExit(f'Bash teardown fixture acted on a mismatched-owner resource group: {text}')
 PY
+
+  local wait_fallback_parameters="${fixture_dir}/wait-fallback.parameters.json"
+  jq '.parameters.deployEvidenceResources.value = false | .parameters.deployCentralLogAnalytics.value = true | .parameters.deployRecoveryServicesVault.value = false | .parameters.existingLogAnalyticsWorkspaceResourceId.value = "" | .parameters.approvedFirewallResourceId.value = "" | .parameters.approvedRouteTableResourceIds.value = [] | .parameters.approvedBackupVaults.value = []' "${parameter_file}" > "${wait_fallback_parameters}"
+  local wait_fallback_marker="${fixture_dir}/wait-fallback.marker"
+  if PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${fixture_dir}/wait-fallback.log" MOCK_AZ_WAIT_FALLBACK_FILE="${wait_fallback_marker}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+    bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${wait_fallback_parameters}" >/dev/null 2>&1; then
+    printf 'ERROR: Bash teardown fixture accepted an invalid post-wait existence result.\n' >&2
+    return 1
+  fi
 
   if command -v pwsh >/dev/null 2>&1; then
     local powershell_log="${fixture_dir}/powershell.log"

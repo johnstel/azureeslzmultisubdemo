@@ -220,6 +220,7 @@ function Wait-ResourceGroupDeletion {
     if ($LASTEXITCODE -ne 0) {
         $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
         if ($LASTEXITCODE -ne 0) { Stop-Teardown "Cannot determine whether resource group $Group was deleted." }
+        if ([string]$groupExists -notin @('true', 'false')) { Stop-Teardown "Resource group $Group returned an invalid post-wait existence result." }
         if ([string]$groupExists -eq 'true') { Stop-Teardown "Failed waiting for resource group $Group deletion." }
     }
 }

@@ -233,7 +233,7 @@ function Invoke-TeardownOfflineFixture {
       "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.Network/azureFirewalls/fw-protected"
     },
     "approvedRouteTableResourceIds": {
-      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-workloads-demo/providers/Microsoft.Network/routeTables/rt-protected"]
+      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/RESOURCEGROUPS/rg-demo-workloads-demo/PROVIDERS/Microsoft.Network/routeTables/rt-protected"]
     },
     "approvedBackupVaults": {
       "value": [{"vaultResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected", "backupPolicyResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected/backupPolicies/policy-protected"}]
@@ -259,6 +259,10 @@ case "${1}" in
   group)
     case "${2:-}" in
       exists)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" && -f "${MOCK_AZ_WAIT_FALLBACK_FILE}" ]]; then
+          printf '%s\n' invalid
+          exit 0
+        fi
         case "$*" in
           *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
           *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
@@ -277,6 +281,10 @@ case "${1}" in
         esac
         ;;
       wait)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" ]]; then
+          : > "${MOCK_AZ_WAIT_FALLBACK_FILE}"
+          exit 1
+        fi
         exit 0
         ;;
     esac
@@ -336,8 +344,13 @@ if /I "%~1 %~2 %~3"=="role assignment list" (
   exit /b 0
 )
 if /I "%~1 %~2"=="group exists" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" if exist "%MOCK_AZ_WAIT_FALLBACK_FILE%" (echo invalid& exit /b 0)
   echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
   if errorlevel 1 (echo false) else (echo true)
+  exit /b 0
+)
+if /I "%~1 %~2"=="group wait" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" (type nul > "%MOCK_AZ_WAIT_FALLBACK_FILE%"& exit /b 1)
   exit /b 0
 )
 if /I "%~1 %~2"=="group show" (
@@ -435,6 +448,36 @@ exit $LASTEXITCODE
     $mismatchedOwnerText = Get-Content -LiteralPath $mismatchedOwnerLog -Raw
     if ($mismatchedOwnerText -match 'az group (delete|wait).*--name rg-demo-(monitoring|connectivity|workloads-demo)') {
         throw "PowerShell teardown fixture acted on a mismatched-owner resource group: $mismatchedOwnerText"
+    }
+
+    $waitFallbackParameters = Join-Path $fixtureDir 'wait-fallback.parameters.json'
+    $waitFallbackDocument = Get-Content -LiteralPath $parameterPath -Raw | ConvertFrom-Json
+    $waitFallbackDocument.parameters.deployEvidenceResources.value = $false
+    $waitFallbackDocument.parameters.deployCentralLogAnalytics.value = $true
+    $waitFallbackDocument.parameters.deployRecoveryServicesVault.value = $false
+    $waitFallbackDocument.parameters.existingLogAnalyticsWorkspaceResourceId.value = ''
+    $waitFallbackDocument.parameters.approvedFirewallResourceId.value = ''
+    $waitFallbackDocument.parameters.approvedRouteTableResourceIds.value = @()
+    $waitFallbackDocument.parameters.approvedBackupVaults.value = @()
+    $waitFallbackDocument | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $waitFallbackParameters -Encoding utf8
+    $waitFallbackMarker = Join-Path $fixtureDir 'wait-fallback.marker'
+    $waitFallbackPreviousPath = $env:PATH
+    $waitFallbackPreviousLog = $env:MOCK_AZ_LOG
+    $waitFallbackPreviousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+    $waitFallbackPreviousMarker = $env:MOCK_AZ_WAIT_FALLBACK_FILE
+    try {
+        $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$waitFallbackPreviousPath"
+        $env:MOCK_AZ_LOG = Join-Path $fixtureDir 'wait-fallback.log'
+        $env:MOCK_AZ_WAIT_FALLBACK_FILE = $waitFallbackMarker
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        $null = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $waitFallbackParameters -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation 'demo' 2>&1
+        if ($LASTEXITCODE -eq 0) { throw 'PowerShell teardown fixture accepted an invalid post-wait existence result.' }
+    }
+    finally {
+        $env:PATH = $waitFallbackPreviousPath
+        if ($null -eq $waitFallbackPreviousLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $waitFallbackPreviousLog }
+        if ($null -eq $waitFallbackPreviousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $waitFallbackPreviousConfirmation }
+        if ($null -eq $waitFallbackPreviousMarker) { Remove-Item Env:MOCK_AZ_WAIT_FALLBACK_FILE -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_WAIT_FALLBACK_FILE = $waitFallbackPreviousMarker }
     }
 
     foreach ($case in @(
