@@ -1,0 +1,28 @@
+{
+  "criteriaVersion": "1.0.0",
+  "description": "Configurable review criteria for the read-only privileged access inventory. These values decide what is surfaced for human review. They never decide whether a principal is excessive.",
+  "reviewCadenceDays": 90,
+  "maxOwnersPerSubscription": 3,
+  "broadScopeTypes": [
+    "tenantRoot",
+    "managementGroup",
+    "subscription"
+  ],
+  "nonHumanPrincipalTypes": [
+    "ServicePrincipal",
+    "MSI"
+  ],
+  "highPrivilegeRoleNames": [
+    "Owner",
+    "User Access Administrator",
+    "Role Based Access Control Administrator"
+  ],
+  "elevatedRoleNames": [
+    "Contributor",
+    "Management Group Contributor",
+    "Resource Policy Contributor",
+    "Network Contributor",
+    "Security Admin",
+    "Key Vault Administrator"
+  ]
+}
