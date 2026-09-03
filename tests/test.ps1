@@ -3658,7 +3658,25 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }).Count -ne 0) {
         Stop-Test 'The approved existing-vault integration path did not compile to the expected parameter values.'
     }
-    Write-Host '29/29 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
+    Write-Host '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...'
+    $preflightParameterFile = Join-Path $TempDir 'preflight-unsafe.parameters.json'
+    $preflightParameterDocument = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json -Depth 20
+    $preflightParameterDocument.parameters.tenantRootManagementGroupId.value = 'demo-root'
+    $preflightParameterDocument.parameters.connectivitySubscriptionId.value = '11111111-1111-4111-8111-111111111111'
+    $preflightParameterDocument.parameters.workloadSubscriptionId.value = '22222222-2222-4222-8222-222222222222'
+    $preflightParameterDocument.parameters.governanceAdminsGroupObjectId.value = '33333333-3333-4333-8333-333333333333'
+    $preflightParameterDocument.parameters.networkOperatorsGroupObjectId.value = '44444444-4444-4444-8444-444444444444'
+    $preflightParameterDocument.parameters.workloadContributorsGroupObjectId.value = '55555555-5555-4555-8555-555555555555'
+    $preflightParameterDocument.parameters.readOnlyAuditorsGroupObjectId.value = '66666666-6666-4666-8666-666666666666'
+    $preflightParameterDocument.parameters.enableCriticalInfrastructure.value = $true
+    $preflightParameterDocument.parameters.criticalInfrastructureSubscriptionIds.value = @()
+    $preflightParameterDocument | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $preflightParameterFile -Encoding utf8NoBOM
+    $preflightOutput = & pwsh -NoLogo -NoProfile -File (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $preflightParameterFile 2>&1
+    if ($LASTEXITCODE -eq 0 -or ($preflightOutput -join "`n") -notmatch 'enableCriticalInfrastructure requires one or more\s+criticalInfrastructureSubscriptionIds') {
+        Stop-Test 'Preflight must reject critical infrastructure without a supplied subscription before Azure access.'
+    }
+
+    Write-Host '30/30 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
     $accessReviewScript = Join-Path $ProjectDir 'scripts/review-privileged-access.ps1'
     $accessReviewCriteria = Join-Path $ProjectDir 'policy/access-review-criteria.json'
     $accessReviewAssignments = Join-Path $ProjectDir 'tests/fixtures/privileged-access-assignments.json'

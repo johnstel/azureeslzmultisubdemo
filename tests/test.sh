@@ -2990,7 +2990,33 @@ jq -e --arg vaultPrefix "${backup_vault_prefix}" '
   exit 1
 }
 
-printf '29/29 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
+printf '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...\n'
+preflight_parameter_file="${TEMP_DIR}/preflight-unsafe.parameters.json"
+jq '
+  .parameters.tenantRootManagementGroupId.value = "demo-root" |
+  .parameters.connectivitySubscriptionId.value = "11111111-1111-4111-8111-111111111111" |
+  .parameters.workloadSubscriptionId.value = "22222222-2222-4222-8222-222222222222" |
+  .parameters.governanceAdminsGroupObjectId.value = "33333333-3333-4333-8333-333333333333" |
+  .parameters.networkOperatorsGroupObjectId.value = "44444444-4444-4444-8444-444444444444" |
+  .parameters.workloadContributorsGroupObjectId.value = "55555555-5555-4555-8555-555555555555" |
+  .parameters.readOnlyAuditorsGroupObjectId.value = "66666666-6666-4666-8666-666666666666" |
+  .parameters.enableCriticalInfrastructure.value = true |
+  .parameters.criticalInfrastructureSubscriptionIds.value = []
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${preflight_parameter_file}"
+for preflight_command in \
+  "${PROJECT_DIR}/scripts/preflight.sh ${preflight_parameter_file}" \
+  "pwsh -NoLogo -NoProfile -File ${PROJECT_DIR}/scripts/preflight.ps1 -ParameterFile ${preflight_parameter_file}"; do
+  if ${preflight_command} >"${TEMP_DIR}/preflight-output" 2>&1; then
+    printf 'ERROR: Preflight accepted critical infrastructure without a supplied subscription.\n' >&2
+    exit 1
+  fi
+  grep -q 'enableCriticalInfrastructure requires one or more' "${TEMP_DIR}/preflight-output" || {
+    printf 'ERROR: Preflight did not report the critical-infrastructure prerequisite.\n' >&2
+    exit 1
+  }
+done
+
+printf '30/30 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
 access_review_script="${PROJECT_DIR}/scripts/review-privileged-access.sh"
 access_review_ps_script="${PROJECT_DIR}/scripts/review-privileged-access.ps1"
 access_review_criteria="${PROJECT_DIR}/policy/access-review-criteria.json"
