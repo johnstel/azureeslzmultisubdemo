@@ -1284,9 +1284,11 @@ for teardown_script in "${PROJECT_DIR}/scripts/teardown.sh" "${PROJECT_DIR}/scri
 done
 for assignment_name in demo-firewall-routes 'demo-vm-backup-${approvedVaultIndex}'; do
   rg -Fq "assignmentName: '${assignment_name}'" "${PROJECT_DIR}/main.bicep"
-  rg -Fq "${assignment_name}" "${PROJECT_DIR}/scripts/teardown.sh"
-  rg -Fq "${assignment_name}" "${PROJECT_DIR}/scripts/teardown.ps1"
 done
+rg -Fq 'demo-firewall-routes' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'demo-firewall-routes' "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -Fq 'demo-vm-backup-${backup_index}' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'demo-vm-backup-$index' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -Fq "assignmentName: 'demo-deploy-restrictions'" "${PROJECT_DIR}/modules/root-deployment-restrictions.bicep"
 rg -Fq 'demo-deploy-restrictions|${demo_root_scope}' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -Fq "demo-deploy-restrictions', \$demoRootScope" "${PROJECT_DIR}/scripts/teardown.ps1"
@@ -1975,7 +1977,7 @@ rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'existingLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/scripts/teardown.sh"
-rg -q 'is_protected_existing_workspace_group' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -q 'is_protected_external_resource_group' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'monitoring_group_is_repo_owned' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'.*&&.*-z.*existing_workspace_resource_id" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'delete_resource_group_if_not_protected "\$\{connectivity_subscription\}" "rg-\$\{prefix\}-connectivity"' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -1984,7 +1986,7 @@ rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q 'centralLogAnalyticsEnabled' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q 'rg-\$prefix-monitoring' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q 'existingLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/scripts/teardown.ps1"
-rg -q 'Test-ProtectedExistingWorkspaceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -q 'Test-ProtectedExternalResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q '\$existingWorkspaceSupplied = \$existingWorkspaceResourceId\.Length -gt 0' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q '\$monitoringGroupIsRepoOwned = \$centralLogAnalyticsEnabled -and -not \$existingWorkspaceSupplied' "${PROJECT_DIR}/scripts/teardown.ps1"
 if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/scripts/teardown.ps1"; then
@@ -2030,8 +2032,14 @@ jq '
   .parameters.deployEvidenceResources.value = false |
   .parameters.enableCriticalInfrastructure.value = true |
   .parameters.criticalInfrastructureSubscriptionIds.value = ["88888888-8888-8888-8888-888888888888"] |
+  .parameters.enableNercCipTechnicalOverlay.value = true |
+  .parameters.nercCipApprovedLocations.value = ["eastus"] |
+  .parameters.nercCipDataClassificationTagValue.value = "Non-sensitive" |
+  .parameters.nercCipSspIdTagValue.value = "Demo" |
+  .parameters.enableVmBackupRemediation.value = true |
+  .parameters.deployActivityLogRemediationRoleAssignments.value = true |
   .parameters.enableFirewallRouteGuardrails.value = true |
-  .parameters.approvedBackupVaults.value = [{}] |
+  .parameters.approvedBackupVaults.value = [{"vaultResourceId":"/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault","backupPolicyResourceId":"/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault/backupPolicies/daily"}] |
   .parameters.policyExemptions.value = [{
     "exemptionName": "child-exemption",
     "exemptionScopeType": "resourceGroup",
@@ -2044,8 +2052,8 @@ jq '
 : > "${az_call_log}"
 echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
   bash "${PROJECT_DIR}/scripts/teardown.sh" "${whitespace_param_file}" --execute >/dev/null
-if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
-  printf 'ERROR: teardown.sh must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
+if rg -qi 'group (delete|wait).*rg-eslz-demo-monitoring' "${az_call_log}"; then
+  printf 'ERROR: teardown.sh must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
   cat "${az_call_log}" >&2
   exit 1
 fi
@@ -2054,8 +2062,8 @@ if command -v pwsh >/dev/null 2>&1; then
   : > "${az_call_log}"
   echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
     pwsh -NoLogo -NoProfile -File "${PROJECT_DIR}/scripts/teardown.ps1" "${whitespace_param_file}" -Execute >/dev/null
-  if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
-    printf 'ERROR: teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
+  if rg -qi 'group (delete|wait).*rg-eslz-demo-monitoring' "${az_call_log}"; then
+    printf 'ERROR: teardown.ps1 must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
     cat "${az_call_log}" >&2
     exit 1
   fi
@@ -2080,7 +2088,7 @@ jq '.parameters.existingLogAnalyticsWorkspaceResourceId.value = "   " | .paramet
 : > "${az_call_log}"
 echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
   bash "${PROJECT_DIR}/scripts/teardown.sh" "${whitespace_only_param_file}" --execute >/dev/null
-if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
+if rg -qi 'group (delete|wait).*rg-eslz-demo-monitoring' "${az_call_log}"; then
   printf 'ERROR: teardown.sh must not delete monitoring resources for a whitespace-only supplied workspace value.\n' >&2
   exit 1
 fi

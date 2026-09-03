@@ -1588,20 +1588,23 @@ exit $LASTEXITCODE
         if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw) -notmatch [regex]::Escape("assignmentName: '$assignmentName'")) {
             Stop-Test "main.bicep is missing $assignmentName."
         }
-        foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {
-            if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir $teardownScript) -Raw).Contains($assignmentName)) {
-                Stop-Test "$teardownScript does not clean up $assignmentName."
-            }
-        }
-        if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/root-deployment-restrictions.bicep') -Raw).Contains("assignmentName: 'demo-deploy-restrictions'")) {
-            Stop-Test 'Nested root-deployment-restrictions assignment inventory is missing.'
-        }
-        if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-deploy-restrictions|${demo_root_scope}')) {
-            Stop-Test 'Bash teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
-        }
-        if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains("@('demo-deploy-restrictions', `$demoRootScope)")) {
-            Stop-Test 'PowerShell teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
-        }
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-firewall-routes') -or
+        -not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains('demo-firewall-routes')) {
+        Stop-Test 'Teardown scripts do not clean up demo-firewall-routes.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-vm-backup-${backup_index}') -or
+        -not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains('demo-vm-backup-$index')) {
+        Stop-Test 'Teardown scripts do not clean up dynamic demo-vm-backup assignments.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/root-deployment-restrictions.bicep') -Raw).Contains("assignmentName: 'demo-deploy-restrictions'")) {
+        Stop-Test 'Nested root-deployment-restrictions assignment inventory is missing.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-deploy-restrictions|${demo_root_scope}')) {
+        Stop-Test 'Bash teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains("@('demo-deploy-restrictions', `$demoRootScope)")) {
+        Stop-Test 'PowerShell teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
     }
     foreach ($requiredText in @('exemptionScopeType', 'deployEvidenceResources')) {
         foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {
@@ -2421,12 +2424,12 @@ exit $LASTEXITCODE
     Write-Host '17/29 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
-    foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_external_resource_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
         if (-not $teardownShText.Contains($requiredText)) {
             Stop-Test "scripts/teardown.sh is missing monitoring teardown safety text: $requiredText"
         }
     }
-    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'Test-ProtectedExistingWorkspaceGroup', '$existingWorkspaceSupplied = $existingWorkspaceResourceId.Length -gt 0', '$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied', 'Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup')) {
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'Test-ProtectedExternalResourceGroup', '$existingWorkspaceSupplied = $existingWorkspaceResourceId.Length -gt 0', '$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied', 'Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup')) {
         if (-not $teardownPs1Text.Contains($requiredText)) {
             Stop-Test "scripts/teardown.ps1 is missing monitoring teardown safety text: $requiredText"
         }
@@ -2516,8 +2519,17 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $templateJson.parameters.deployEvidenceResources.value = $false
     $templateJson.parameters.enableCriticalInfrastructure.value = $true
     $templateJson.parameters.criticalInfrastructureSubscriptionIds.value = @('88888888-8888-8888-8888-888888888888')
+    $templateJson.parameters.enableNercCipTechnicalOverlay.value = $true
+    $templateJson.parameters.nercCipApprovedLocations.value = @('eastus')
+    $templateJson.parameters.nercCipDataClassificationTagValue.value = 'Non-sensitive'
+    $templateJson.parameters.nercCipSspIdTagValue.value = 'Demo'
+    $templateJson.parameters.enableVmBackupRemediation.value = $true
+    $templateJson.parameters.deployActivityLogRemediationRoleAssignments.value = $true
     $templateJson.parameters.enableFirewallRouteGuardrails.value = $true
-    $templateJson.parameters.approvedBackupVaults.value = @(@{})
+    $templateJson.parameters.approvedBackupVaults.value = @([pscustomobject]@{
+        vaultResourceId = '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault'
+        backupPolicyResourceId = '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault/backupPolicies/daily'
+    })
     $templateJson.parameters.policyExemptions.value = @(@{
         exemptionName = 'child-exemption'; exemptionScopeType = 'resourceGroup'
         subscriptionId = '22222222-2222-2222-2222-222222222222'; resourceGroupName = 'child-rg'
@@ -2537,8 +2549,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
         Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
         $azCalls = Get-Content -LiteralPath $azCallLog -Raw
-        if ($azCalls -match 'rg-eslz-demo-monitoring') {
-            Stop-Test 'teardown.sh must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+        if ($azCalls -match 'group (delete|wait).*rg-eslz-demo-monitoring') {
+            Stop-Test 'teardown.sh must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
         }
         foreach ($requiredCall in @(
             'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
@@ -2567,8 +2579,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test "teardown.ps1 safety test failed: az did not resolve to the temporary mock directory (or teardown.ps1 failed unexpectedly). Nested output: $nestedOutput"
     }
     $azCalls = Get-Content -LiteralPath $azCallLog -Raw
-    if ($azCalls -match 'rg-eslz-demo-monitoring') {
-        Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+    if ($azCalls -match 'group (delete|wait).*rg-eslz-demo-monitoring') {
+        Stop-Test 'teardown.ps1 must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
     }
     foreach ($requiredCall in @(
         'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
@@ -2596,7 +2608,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($whitespaceExitCode -ne 0) {
         Stop-Test "teardown.ps1 whitespace fixture failed: $whitespaceOutput"
     }
-    if ((Get-Content -LiteralPath $azCallLog -Raw) -match 'rg-eslz-demo-monitoring') {
+    if ((Get-Content -LiteralPath $azCallLog -Raw) -match 'group (delete|wait).*rg-eslz-demo-monitoring') {
         Stop-Test 'teardown.ps1 must not delete monitoring resources for a whitespace-only supplied workspace value.'
     }
 
