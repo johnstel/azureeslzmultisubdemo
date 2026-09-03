@@ -813,9 +813,9 @@ nerc_cip_overlay_count="$(jq '
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-backup-posture")) == null and
   ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-resource-diagnostics")) == null and
   ($initiative.properties.parameters.policyDefinitionReferences.value | length) >= 25 and
-  ($initiative.properties.parameters.policyDefinitionReferences.value | all((.policyDefinitionId | tostring | contains("policySetDefinitionId")) | not)) and
   ($initiative.properties.parameters.policyDefinitionReferences.value | all((.policyDefinitionId | tostring | contains("/policySetDefinitions/")) | not)) and
-  $assignment.condition == "[parameters(\u0027enableNercCipTechnicalOverlay\u0027)]" and
+  ($assignment.condition | contains("enableNercCipTechnicalOverlay")) and
+  ($assignment.condition | contains("validatedNercCipOverlayInputs")) and
   ($assignment.scope | contains("criticalInfrastructureManagementGroupId")) and
   ($assignment.scope | contains("workloadManagementGroupId") | not) and
   $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and

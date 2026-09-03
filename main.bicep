@@ -2848,7 +2848,7 @@ module nercCipTechnicalOverlayInitiative 'modules/policy-initiative.bicep' = {
   }
 }
 
-module nercCipTechnicalOverlayAssignment 'modules/policy-assignment.bicep' = if (enableNercCipTechnicalOverlay) {
+module nercCipTechnicalOverlayAssignment 'modules/policy-assignment.bicep' = if (enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs) {
   name: 'assign-nerc-cip-technical-overlay'
   scope: managementGroup(criticalInfrastructureManagementGroupId)
   params: {
@@ -2859,7 +2859,7 @@ module nercCipTechnicalOverlayAssignment 'modules/policy-assignment.bicep' = if 
     enforcementMode: denyPolicyEnforcementMode
     parameters: {
       allowedLocations: {
-        value: validatedNercCipOverlayInputs ? validatedNercCipApprovedLocations : validatedNercCipApprovedLocations
+        value: validatedNercCipApprovedLocations
       }
       networkIngressEffect: {
         value: networkIngressPolicyEffect

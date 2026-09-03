@@ -1129,10 +1129,10 @@ exit $LASTEXITCODE
         @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-backup-posture' }).Count -ne 0 -or
         @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-resource-diagnostics' }).Count -ne 0 -or
         @($nercCipOverlayReferences | Where-Object {
-            ([string]$_.policyDefinitionId).Contains('policySetDefinitionId') -or
             ([string]$_.policyDefinitionId).Contains('/policySetDefinitions/')
         }).Count -ne 0 -or
-        $nercCipOverlayAssignment[0].condition -ne "[parameters('enableNercCipTechnicalOverlay')]" -or
+        ([string]$nercCipOverlayAssignment[0].condition) -notmatch 'enableNercCipTechnicalOverlay' -or
+        ([string]$nercCipOverlayAssignment[0].condition) -notmatch 'validatedNercCipOverlayInputs' -or
         $nercCipOverlayAssignment[0].scope -notmatch 'criticalInfrastructureManagementGroupId' -or
         $nercCipOverlayAssignment[0].scope -match 'workloadManagementGroupId' -or
         $nercCipOverlayAssignment[0].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
