@@ -105,7 +105,8 @@ delete_resource_group_if_not_protected() {
   fi
   if az group exists --subscription "${subscription}" --name "${group}" --output tsv | grep -qi true; then
     local owner
-    owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv 2>/dev/null || true)"
+    owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
+      || { printf 'ERROR: Cannot read ownership marker for %s; it is protected.\n' "${group}" >&2; return 0; }
     if [[ "${owner}" != "${prefix}" ]]; then
       printf 'SKIP: %s is external/protected because ESLZLifecycleOwner does not match this demo root.\n' "${group}" >&2
       return 0

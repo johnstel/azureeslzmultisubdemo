@@ -184,6 +184,10 @@ function Remove-ResourceGroupIfNotProtected {
     $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
     if ([string]$groupExists -eq 'true') {
         $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "SKIP: Cannot read ownership marker for $Group; it is external/protected."
+            return
+        }
         if ([string]$owner -cne $prefix) {
             Write-Warning "SKIP: $Group is external/protected because ESLZLifecycleOwner does not match this demo root."
             return

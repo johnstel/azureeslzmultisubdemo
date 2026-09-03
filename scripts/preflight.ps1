@@ -502,7 +502,7 @@ function Test-OwnedResourceGroupCollision {
     $exists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
     if ([string]$exists -eq 'true') {
         $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
-        if ($LASTEXITCODE -ne 0) { Stop-Preflight "Cannot verify ownership marker for existing resource group $Group; it is protected." }
+        if ($LASTEXITCODE -ne 0) { Stop-Preflight "Cannot read existing resource group $Group; it is protected." }
         if ([string]$owner -cne $namePrefix) { Stop-Preflight "Resource group $Group already exists without this deployment's ESLZLifecycleOwner marker; it is protected." }
     }
 }

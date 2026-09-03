@@ -413,8 +413,8 @@ check_owned_resource_group_collision() {
   local group="$2"
   if az group exists --subscription "${subscription}" --name "${group}" --output tsv 2>/dev/null | grep -qi true; then
     local owner
-    owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv 2>/dev/null)" \
-      || fail "Cannot verify ownership marker for existing resource group ${group}; it is protected."
+    owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
+      || fail "Cannot read existing resource group ${group}; it is protected."
     [[ "${owner}" == "${name_prefix}" ]] \
       || fail "Resource group ${group} already exists without this deployment's ESLZLifecycleOwner marker; it is protected."
   fi
