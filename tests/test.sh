@@ -115,7 +115,7 @@ jq -e '
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/29 Validate the ARM parameter template...\n'
+printf '3/29 Validate the safe-demo and customer-control parameter templates...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -136,7 +136,7 @@ jq -e '
   .parameters.networkIngressPolicyEffect.value == "Audit"
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null
 az bicep build-params \
-  --file "${PROJECT_DIR}/parameters/main.template.bicepparam" \
+  --file "${PROJECT_DIR}/parameters/customer-control.template.bicepparam" \
   --outfile "${TEMP_DIR}/main.parameters.json"
 jq -e '
   .parameters.networkIngressPolicyEffect.value == "Audit" and
@@ -150,6 +150,12 @@ jq -e '
   .parameters.deployLoggingRemediationRoleAssignments.value == false
 ' "${TEMP_DIR}/main.parameters.json" >/dev/null
 jq -e '.parameters.enableTagInheritance.value == false' "${TEMP_DIR}/main.parameters.json" >/dev/null
+jq -S '.parameters' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${TEMP_DIR}/safe-demo.parameters.json"
+jq -S '.parameters' "${TEMP_DIR}/main.parameters.json" > "${TEMP_DIR}/customer-control.parameters.sorted.json"
+cmp -s "${TEMP_DIR}/safe-demo.parameters.json" "${TEMP_DIR}/customer-control.parameters.sorted.json" || {
+ printf 'ERROR: Safe-demo JSON and customer-control Bicep parameter templates must expose identical controls.\n' >&2
+ exit 1
+}
 for tag_inheritance_enabled in false true; do
   tag_params="${TEMP_DIR}/tag-inheritance-${tag_inheritance_enabled}.bicepparam"
   sed -e "s|^using '../main.bicep'\$|using '../../main.bicep'|" \

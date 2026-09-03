@@ -268,7 +268,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/29 Validate both parameter templates...'
+    Write-Host '3/29 Validate the safe-demo and customer-control parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -290,9 +290,9 @@ try {
         @($parameterTemplate.parameters.customerAllowedVmSkus.value).Count -eq 0) {
         Stop-Test 'Customer resource-type and VM SKU allowlists must remain safe and populated.'
     }
-    $compiledParametersPath = Join-Path $TempDir 'main.parameters.json'
+    $compiledParametersPath = Join-Path $TempDir 'customer-control.parameters.json'
     & az bicep build-params `
-        --file (Join-Path $ProjectDir 'parameters/main.template.bicepparam') `
+        --file (Join-Path $ProjectDir 'parameters/customer-control.template.bicepparam') `
         --outfile $compiledParametersPath
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep parameter build failed.' }
     $compiledParameters = Get-Content -LiteralPath $compiledParametersPath -Raw | ConvertFrom-Json
@@ -301,6 +301,11 @@ try {
     }
     if ($compiledParameters.parameters.enableTagInheritance.value -ne $false) {
         Stop-Test 'enableTagInheritance must default to false in the Bicep parameter template.'
+    }
+    $safeDemoParameterJson = $parameterTemplate.parameters | ConvertTo-Json -Depth 20 -Compress
+    $customerControlParameterJson = $compiledParameters.parameters | ConvertTo-Json -Depth 20 -Compress
+    if ($safeDemoParameterJson -cne $customerControlParameterJson) {
+        Stop-Test 'Safe-demo JSON and customer-control Bicep parameter templates must expose identical controls.'
     }
     foreach ($tagInheritanceEnabled in @($false, $true)) {
         $tagParameterPath = Join-Path $TempDir "tag-inheritance-$($tagInheritanceEnabled.ToString().ToLowerInvariant()).bicepparam"

@@ -1,0 +1,128 @@
+using '../main.bicep'
+
+param deploymentLocation = 'eastus'
+param tenantRootManagementGroupId = 'REPLACE_WITH_TENANT_ROOT_MANAGEMENT_GROUP_ID'
+param namePrefix = 'eslz-demo'
+param demoRootDisplayName = 'Enterprise-Scale Sandbox Demo'
+param workloadArchetype = 'corp'
+param connectivitySubscriptionId = 'REPLACE_WITH_CONNECTIVITY_SUBSCRIPTION_GUID'
+param workloadSubscriptionId = 'REPLACE_WITH_WORKLOAD_SUBSCRIPTION_GUID'
+param governanceAdminsGroupObjectId = 'REPLACE_WITH_GOVERNANCE_ADMINS_GROUP_OBJECT_GUID'
+param networkOperatorsGroupObjectId = 'REPLACE_WITH_NETWORK_OPERATORS_GROUP_OBJECT_GUID'
+param workloadContributorsGroupObjectId = 'REPLACE_WITH_WORKLOAD_CONTRIBUTORS_GROUP_OBJECT_GUID'
+param readOnlyAuditorsGroupObjectId = 'REPLACE_WITH_READ_ONLY_AUDITORS_GROUP_OBJECT_GUID'
+param denyPolicyEnforcementMode = 'DoNotEnforce'
+param customerAllowedLocations = [
+  'eastus'
+  'eastus2'
+]
+param customerAllowedResourceTypes = [
+  'Microsoft.Authorization/policyDefinitions'
+  'Microsoft.Authorization/policyExemptions'
+  'Microsoft.Authorization/policyAssignments'
+  'Microsoft.Authorization/policySetDefinitions'
+  'Microsoft.Authorization/roleAssignments'
+  'Microsoft.Compute/disks'
+  'Microsoft.Compute/virtualMachines'
+  'Microsoft.Compute/virtualMachines/extensions'
+  'Microsoft.Insights/diagnosticSettings'
+  'Microsoft.ManagedIdentity/userAssignedIdentities'
+  'Microsoft.Network/networkInterfaces'
+  'Microsoft.Network/networkSecurityGroups'
+  'Microsoft.Network/privateDnsZones'
+  'Microsoft.Network/privateDnsZones/virtualNetworkLinks'
+  'Microsoft.Network/privateEndpoints'
+  'Microsoft.Network/privateEndpoints/privateDnsZoneGroups'
+  'Microsoft.Network/publicIPAddresses'
+  'Microsoft.Network/virtualNetworks'
+  'Microsoft.Network/virtualNetworks/subnets'
+  'Microsoft.OperationalInsights/workspaces'
+  'Microsoft.OperationsManagement/solutions'
+  'Microsoft.PolicyInsights/remediations'
+  'Microsoft.RecoveryServices/vaults'
+  'Microsoft.RecoveryServices/vaults/backupFabrics'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers'
+  'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems'
+  'Microsoft.RecoveryServices/vaults/backupPolicies'
+  'Microsoft.Resources/deployments'
+  'Microsoft.Resources/resourceGroups'
+  'Microsoft.SecurityInsights/onboardingStates'
+]
+param customerAllowedVmSkus = [
+  'Standard_B1ls'
+  'Standard_B1s'
+  'Standard_B1ms'
+  'Standard_B2s'
+  'Standard_B2ms'
+]
+param networkIngressPolicyEffect = 'Audit'
+param privateAccessPublicNetworkPolicyEffect = 'Audit'
+param privateAccessServiceCategories = [
+  'Storage'
+  'KeyVault'
+]
+param enableFirewallRouteGuardrails = false
+param approvedFirewallResourceId = ''
+param approvedFirewallPrivateIp = ''
+param approvedRouteTableResourceIds = []
+param approvedRouteTablePrefixes = []
+param dataProtectionPolicyEffect = 'Audit'
+param storageMinimumTlsVersion = 'TLS1_2'
+param approvedCustomerManagedKeyVaultUris = []
+param approvedCustomerManagedKeyNames = []
+param deployRoleAssignments = false
+param deployEvidenceResources = false
+param enableTagInheritance = false
+param evidenceLocation = 'eastus2'
+param deployCentralLogAnalytics = false
+param deploySentinel = false
+param existingLogAnalyticsWorkspaceResourceId = ''
+param centralMonitoringLocation = 'eastus2'
+param centralLogAnalyticsRetentionInDays = 30
+param centralLogAnalyticsDailyQuotaGb = -1
+param enableCriticalInfrastructure = false
+param criticalInfrastructureSubscriptionIds = []
+param enableDefenderCspm = false
+param enableDefenderCiem = true
+param enableDefenderForServers = false
+param defenderForServersSubPlan = 'P2'
+param defenderForServersAgentlessVmScanningEnabled = true
+param enableDefenderForStorage = false
+param enableDefenderStorageMalwareScanning = false
+param defenderStorageMalwareScanningCapGBPerMonthPerStorageAccount = 10000
+param enableMicrosoftCloudSecurityBenchmark = true
+param enableCisAzureFoundationsBenchmark = false
+param enableNistSp80053Rev5 = false
+param activityLogExportPolicyEffect = 'Disabled'
+param activityLogExportLogsEnabled = 'True'
+param resourceDiagnosticsPolicyEffect = 'AuditIfNotExists'
+param resourceDiagnosticsCategoryGroup = 'audit'
+param deployLoggingRemediationRoleAssignments = false
+param vmBackupCoveragePolicyEffect = 'AuditIfNotExists'
+param vaultPublicNetworkPolicyEffect = 'Audit'
+param vaultEncryptionPolicyEffect = 'Audit'
+param vaultDoubleEncryptionRequired = false
+param vaultImmutabilityPolicyEffect = 'Audit'
+param vaultCheckLockedImmutabilityOnly = true
+param vaultSoftDeletePolicyEffect = 'Audit'
+param vaultCheckAlwaysOnSoftDeleteOnly = false
+param vaultMultiUserAuthorizationPolicyEffect = 'Audit'
+param approvedVaultRegions = []
+param backupRetentionStandardId = ''
+param approvedBackupVaults = []
+param allowCrossSubscriptionBackupVaults = false
+param enableVmBackupRemediation = false
+param vmBackupConfigurationEffect = 'AuditIfNotExists'
+param vmBackupInclusionTagName = ''
+param enableVaultDiagnostics = false
+param vaultDiagnosticsEffect = 'AuditIfNotExists'
+param grantVaultDiagnosticsWorkspaceAccess = false
+param deployRecoveryServicesVault = false
+param recoveryServicesVaultLocation = 'eastus2'
+param vaultImmutabilityState = 'Unlocked'
+param vaultSoftDeleteState = 'Enabled'
+param vaultSoftDeleteRetentionInDays = 14
+param backupDailyRetentionInDays = 30
+param backupWeeklyRetentionInWeeks = 0
+param backupMonthlyRetentionInMonths = 0
+param backupYearlyRetentionInYears = 0
