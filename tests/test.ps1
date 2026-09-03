@@ -302,10 +302,17 @@ try {
     if ($compiledParameters.parameters.enableTagInheritance.value -ne $false) {
         Stop-Test 'enableTagInheritance must default to false in the Bicep parameter template.'
     }
-    $safeDemoParameterJson = $parameterTemplate.parameters | ConvertTo-Json -Depth 20 -Compress
-    $customerControlParameterJson = $compiledParameters.parameters | ConvertTo-Json -Depth 20 -Compress
-    if ($safeDemoParameterJson -cne $customerControlParameterJson) {
+    $safeDemoParameterNames = @($parameterTemplate.parameters.PSObject.Properties.Name | Sort-Object)
+    $customerControlParameterNames = @($compiledParameters.parameters.PSObject.Properties.Name | Sort-Object)
+    if (Compare-Object $safeDemoParameterNames $customerControlParameterNames) {
         Stop-Test 'Safe-demo JSON and customer-control Bicep parameter templates must expose identical controls.'
+    }
+    foreach ($parameterName in $safeDemoParameterNames) {
+        $safeDemoParameterValue = $parameterTemplate.parameters.$parameterName | ConvertTo-Json -Depth 20 -Compress
+        $customerControlParameterValue = $compiledParameters.parameters.$parameterName | ConvertTo-Json -Depth 20 -Compress
+        if ($safeDemoParameterValue -cne $customerControlParameterValue) {
+            Stop-Test "Safe-demo and customer-control values differ for $parameterName."
+        }
     }
     foreach ($tagInheritanceEnabled in @($false, $true)) {
         $tagParameterPath = Join-Path $TempDir "tag-inheritance-$($tagInheritanceEnabled.ToString().ToLowerInvariant()).bicepparam"
