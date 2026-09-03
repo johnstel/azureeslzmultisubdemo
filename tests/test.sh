@@ -1732,7 +1732,7 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 fi
 
-for lifecycle_log in "${az_call_log}"; do
+lifecycle_log="${az_call_log}"
   rg -q -F 'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg' "${lifecycle_log}"
   rg -q -F 'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra' "${lifecycle_log}"
   rg -q -F 'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp' "${lifecycle_log}"
@@ -1744,7 +1744,6 @@ for lifecycle_log in "${az_call_log}"; do
   nerc_role_line="$(rg -n -F 'role assignment delete --ids' "${lifecycle_log}" | head -1 | cut -d: -f1)"
   nerc_assignment_line="$(rg -n -F 'policy assignment delete --name demo-nerc-cip-technical' "${lifecycle_log}" | cut -d: -f1)"
   [[ "${nerc_role_line}" -lt "${nerc_assignment_line}" ]] || { printf 'ERROR: NERC role cleanup must precede assignment deletion.\n' >&2; exit 1; }
-done
 
 printf '19/29 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"

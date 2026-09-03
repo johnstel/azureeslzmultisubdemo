@@ -179,8 +179,8 @@ if grep -Eq 'migrate-legacy-rg-tags' \
   printf 'ERROR: Legacy tag migration must never run automatically from another lifecycle script.\n' >&2
   exit 1
 fi
-grep -Fq '"demo-require-rg-tags|${landing_zones_scope}"' "${PROJECT_DIR}/scripts/teardown.sh"
-if grep -Fq '"demo-require-rg-tags|${workload_scope}"' "${PROJECT_DIR}/scripts/teardown.sh"; then
+grep -Fq 'demo-require-rg-tags|${landing_zones_scope}' "${PROJECT_DIR}/scripts/teardown.sh"
+if grep -Fq 'demo-require-rg-tags|${workload_scope}' "${PROJECT_DIR}/scripts/teardown.sh"; then
   printf 'ERROR: Bash teardown must not delete the resource-group tags assignment at the workload scope.\n' >&2
   exit 1
 fi

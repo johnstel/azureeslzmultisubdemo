@@ -70,13 +70,14 @@ function Get-OptionalStringValue {
         return $Default
     }
 
-    function Get-OptionalArrayValue {
-        param([string]$Name)
-        $property = $parameters.parameters.PSObject.Properties[$Name]
-        if ($null -eq $property -or $null -eq $property.Value.value) { return @() }
-        return @($property.Value.value)
-    }
     return [string]$property.Value.value
+}
+
+function Get-OptionalArrayValue {
+    param([string]$Name)
+    $property = $parameters.parameters.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value.value) { return @() }
+    return @($property.Value.value)
 }
 
 $tenantRoot = Get-Value 'tenantRootManagementGroupId'
