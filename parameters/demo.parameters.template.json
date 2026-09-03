@@ -198,6 +198,24 @@
     "enableNistSp80053Rev5": {
       "value": false
     },
+    "enableNercCipTechnicalOverlay": {
+      "value": false
+    },
+    "nercCipApprovedLocations": {
+      "value": []
+    },
+    "nercCipDataClassificationTagValue": {
+      "value": ""
+    },
+    "nercCipSspIdTagValue": {
+      "value": ""
+    },
+    "nercCipVaultDoubleEncryptionRequired": {
+      "value": true
+    },
+    "nercCipVaultCheckAlwaysOnSoftDeleteOnly": {
+      "value": true
+    },
     "activityLogExportPolicyEffect": {
       "value": "Disabled"
     },

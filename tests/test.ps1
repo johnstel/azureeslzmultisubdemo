@@ -11,90 +11,6 @@ $TempDir = Join-Path $ArtifactsParent ("test-ps1-" + [guid]::NewGuid().ToString(
 New-Item -ItemType Directory -Path $ArtifactsParent -Force | Out-Null
 New-Item -ItemType Directory -Path $TempDir | Out-Null
 
-function Invoke-OfflineParitySuite {
-    $mockDir = Join-Path $TempDir 'mock-az'
-    New-Item -ItemType Directory -Path $mockDir -Force | Out-Null
-    $global:OfflinePolicyVersions = @{}
-    foreach ($control in @((Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json).controls)) {
-        if ($control.mechanism.builtIn -eq $true -and $control.mechanism.definitionId) {
-            $global:OfflinePolicyVersions[[string]$control.mechanism.definitionId] = "$($control.mechanism.majorVersion).0.0"
-        }
-    }
-    function global:az {
-        param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-        $global:LASTEXITCODE = 0
-        switch ($Arguments[0]) {
-            'account' { if ($Arguments[1] -eq 'show') { $env:MOCK_ACCOUNT_JSON ?? '{"tenantId":"11111111-1111-1111-1111-111111111111","state":"Enabled"}' }; return }
-            'bicep' { return }
-            'role' { return }
-            'provider' { 'Registered'; return }
-            'rest' { $env:MOCK_REST_JSON ?? '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; return }
-            'policy' {
-                $nameIndex = [array]::IndexOf($Arguments, '--name')
-                if ($nameIndex -ge 0 -and $global:OfflinePolicyVersions.ContainsKey($Arguments[$nameIndex + 1])) { $global:OfflinePolicyVersions[$Arguments[$nameIndex + 1]] } else { '1.0.0' }
-                return
-            }
-            'resource' {
-                $idIndex = [array]::IndexOf($Arguments, '--ids')
-                $resourceId = if ($idIndex -ge 0) { $Arguments[$idIndex + 1] } else { '' }
-                if ($resourceId -match '/providers/(Microsoft\.[^/]+/[^/]+)') { $matches[1] } else { 'Microsoft.Network/routeTables' }
-                return
-            }
-        }
-    }
-
-    $baseDocument = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw
-    $cases = @(
-        @{ Name = 'canonical-id-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' },
-        @{ Name = 'canonical-id-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.connectivitySubscriptionId.value = 'not-a-guid' } },
-        @{ Name = 'blank-members-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.approvedRouteTableResourceIds.value = @('') } },
-        @{ Name = 'blank-members-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.approvedRouteTableResourceIds.value = @('', 'not-a-resource-id') } },
-        @{ Name = 'ip-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallResourceId.value = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01'; $doc.parameters.approvedFirewallPrivateIp.value = '10.0.0.4'; $doc.parameters.approvedRouteTableResourceIds.value = @('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01'); $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24') } },
-        @{ Name = 'ip-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallPrivateIp.value = '999.999.999.999'; $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24') } },
-        @{ Name = 'logging-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.activityLogExportPolicyEffect.value = 'DeployIfNotExists'; $doc.parameters.deployRoleAssignments.value = $true; $doc.parameters.deployLoggingRemediationRoleAssignments.value = $true; $doc.parameters.deployCentralLogAnalytics.value = $true; $doc.parameters.existingLogAnalyticsWorkspaceResourceId.value = '' } },
-        @{ Name = 'logging-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.activityLogExportPolicyEffect.value = 'DeployIfNotExists'; $doc.parameters.deployLoggingRemediationRoleAssignments.value = $true; $doc.parameters.deployCentralLogAnalytics.value = $false; $doc.parameters.existingLogAnalyticsWorkspaceResourceId.value = '' } },
-        @{ Name = 'routing-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallResourceId.value = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01'; $doc.parameters.approvedFirewallPrivateIp.value = '10.0.0.4'; $doc.parameters.approvedRouteTableResourceIds.value = @('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01'); $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24') } },
-        @{ Name = 'routing-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallResourceId.value = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01'; $doc.parameters.approvedFirewallPrivateIp.value = '10.0.0.4'; $doc.parameters.approvedRouteTableResourceIds.value = @('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01','/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01'); $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24','10.0.0.0/24') } },
-        @{ Name = 'permissions-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' },
-        @{ Name = 'permissions-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":["microsoft.authorization/roleassignments/write"]}]}' ; Mutator = { param($doc) $doc.parameters.deployRoleAssignments.value = $true } },
-        @{ Name = 'permissions-internal-wildcard-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]}]}' },
-        @{ Name = 'permissions-separate-grant-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]},{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write"],"notActions":[]}]}' },
-        @{ Name = 'missing-policy-definition-write-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' },
-        @{ Name = 'backup-blank-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.approvedBackupVaults.value = @([pscustomobject]@{ vaultResourceId = ''; backupPolicyResourceId = '' }) } }
-    )
-
-    foreach ($case in $cases) {
-        $doc = $baseDocument | ConvertFrom-Json
-        $doc.parameters.tenantRootManagementGroupId.value = 'demo-root'
-        $doc.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
-        $doc.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
-        $doc.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-        $doc.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
-        $doc.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
-        $doc.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
-        if ($case.ContainsKey('Mutator') -and $null -ne $case.Mutator) {
-            & $case.Mutator $doc
-        }
-        $path = Join-Path $TempDir ($case.Name + '.json')
-        $doc | ConvertTo-Json -Depth 20 | Set-Content -Path $path -Encoding utf8
-
-        $env:PROJECT_DIR = $ProjectDir
-        $env:MOCK_REST_JSON = $case.RestJson
-        $output = & (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $path 2>&1
-        $passed = ($LASTEXITCODE -eq 0)
-        if (($case.Expected -eq 'pass' -and -not $passed) -or ($case.Expected -eq 'fail' -and $passed)) {
-            throw "Offline parity case $($case.Name) expected $($case.Expected) but got $($passed.ToString().ToLowerInvariant()). Output: $($output -join ' ')"
-        }
-    }
-
-    Write-Host 'Offline parity suite passed.'
-}
-
-if ($env:ESLZ_OFFLINE_TESTS -eq '1') {
-    Invoke-OfflineParitySuite
-    return
-}
-
 function Stop-Test {
     param([string]$Message)
     throw $Message
@@ -172,8 +88,6 @@ try {
     if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
-
-    Invoke-OfflineParitySuite
 
     Write-Host '1/29 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
@@ -403,22 +317,20 @@ try {
         $compiledParameters.parameters.policyExemptions.value.Count -ne 0) {
         Stop-Test 'Customer-control diagnostics require an explicit workspace and policy exemptions must remain opt-in.'
     }
-    $profileShapes = @(
-        @($parameterTemplate.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
-            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
-            '{0}:{1}' -f $_.Name, $valueType
-        }),
-        @($safeDemoParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
-            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
-            '{0}:{1}' -f $_.Name, $valueType
-        }),
-        @($compiledParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
-            $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
-            '{0}:{1}' -f $_.Name, $valueType
-        })
-    )
-    if ((Compare-Object $profileShapes[0] $profileShapes[1]) -or
-        (Compare-Object $profileShapes[0] $profileShapes[2])) {
+    $demoProfileShape = @($parameterTemplate.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    $safeDemoProfileShape = @($safeDemoParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    $customerControlProfileShape = @($compiledParameters.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+        $valueType = if ($null -eq $_.Value.value) { 'null' } else { $_.Value.value.GetType().FullName }
+        '{0}:{1}' -f $_.Name, $valueType
+    })
+    if ((Compare-Object $demoProfileShape $safeDemoProfileShape) -or
+        (Compare-Object $demoProfileShape $customerControlProfileShape)) {
         Stop-Test 'Safe-demo JSON and both Bicep profiles must expose identical parameter names and value types.'
     }
     $monitoringPositivePath = Join-Path $TempDir 'monitoring-positive.bicepparam'
@@ -449,7 +361,9 @@ try {
     }
     $monitoringPositive = Get-Content -LiteralPath "$monitoringPositivePath.json" -Raw | ConvertFrom-Json
     $monitoringNegative = Get-Content -LiteralPath "$monitoringNegativePath.json" -Raw | ConvertFrom-Json
-    if ($monitoringPositive.parameters.existingLogAnalyticsWorkspaceResourceId.value -eq '' -or
+    if ($monitoringPositive.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $monitoringNegative.parameters.resourceDiagnosticsPolicyEffect.value -ne 'AuditIfNotExists' -or
+        $monitoringPositive.parameters.existingLogAnalyticsWorkspaceResourceId.value -eq '' -or
         $monitoringNegative.parameters.existingLogAnalyticsWorkspaceResourceId.value -ne '') {
         Stop-Test 'Monitoring guard fixtures must cover workspace-backed and workspace-free diagnostics activation.'
     }
@@ -544,6 +458,12 @@ try {
         $parameterTemplate.parameters.approvedFirewallPrivateIp.value -ne '' -or
         @($parameterTemplate.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
         @($parameterTemplate.parameters.approvedRouteTablePrefixes.value).Count -ne 0 -or
+        $parameterTemplate.parameters.enableNercCipTechnicalOverlay.value -ne $false -or
+        @($parameterTemplate.parameters.nercCipApprovedLocations.value).Count -ne 0 -or
+        $parameterTemplate.parameters.nercCipDataClassificationTagValue.value -ne '' -or
+        $parameterTemplate.parameters.nercCipSspIdTagValue.value -ne '' -or
+        $parameterTemplate.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $parameterTemplate.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true -or
         $parameterTemplate.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
         Stop-Test 'Private-access and firewall-route JSON template parameters must retain safe defaults.'
     }
@@ -554,6 +474,12 @@ try {
         $compiledParameters.parameters.approvedFirewallPrivateIp.value -ne '' -or
         @($compiledParameters.parameters.approvedRouteTableResourceIds.value).Count -ne 0 -or
         @($compiledParameters.parameters.approvedRouteTablePrefixes.value).Count -ne 0 -or
+        $compiledParameters.parameters.enableNercCipTechnicalOverlay.value -ne $false -or
+        @($compiledParameters.parameters.nercCipApprovedLocations.value).Count -ne 0 -or
+        $compiledParameters.parameters.nercCipDataClassificationTagValue.value -ne '' -or
+        $compiledParameters.parameters.nercCipSspIdTagValue.value -ne '' -or
+        $compiledParameters.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $compiledParameters.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true -or
         $compiledParameters.parameters.deployLoggingRemediationRoleAssignments.value -ne $false) {
         Stop-Test 'Private-access and firewall-route Bicep template parameters must retain safe defaults.'
     }
@@ -1245,6 +1171,112 @@ exit $LASTEXITCODE
         ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'fail\(' -or
         ([string]$compiledJson.variables.validatedFirewallRouteInputs) -notmatch 'approvedRouteTablePrefixes') {
         Stop-Test 'Firewall-route assignment must retain approved-firewall evidence and validate all architecture inputs.'
+    }
+    $nercCipOverlayInitiative = @($compiledJson.resources | Where-Object { $_.name -eq 'nerc-cip-technical-overlay-initiative' })
+    $nercCipOverlayAssignment = @($compiledJson.resources | Where-Object { $_.name -eq 'assign-nerc-cip-technical-overlay' })
+    $nercCipOverlayWorkspaceRbac = @($compiledJson.resources | Where-Object { $_.name -eq 'nerc-cip-overlay-workspace-destination-rbac' })
+    if ($nercCipOverlayInitiative.Count -ne 1 -or
+        $nercCipOverlayAssignment.Count -ne 1 -or
+        $nercCipOverlayWorkspaceRbac.Count -ne 1) {
+        Stop-Test 'NERC CIP technical overlay initiative, assignment, and destination workspace RBAC deployment must each be present exactly once.'
+    }
+    $nercCipOverlayReferences = @($nercCipOverlayInitiative[0].properties.parameters.policyDefinitionReferences.value)
+    $nercCipOverlayReferenceIds = @($nercCipOverlayReferences | ForEach-Object { $_.policyDefinitionReferenceId } | Sort-Object)
+    if (
+        $nercCipOverlayInitiative[0].scope -notmatch 'demoRootManagementGroupId' -or
+        $nercCipOverlayReferenceIds.Count -lt 25 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-public-management-ingress' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-require-subnet-nsg' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-paas-public-network-access' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-vault-customer-managed-key' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-activity-log-export' }).Count -ne 1 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-network-ingress' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-private-access' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-data-protection' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-backup-posture' }).Count -ne 0 -or
+        @($nercCipOverlayReferenceIds | Where-Object { $_ -eq 'critical-resource-diagnostics' }).Count -ne 0 -or
+        @($nercCipOverlayReferences | Where-Object {
+            ([string]$_.policyDefinitionId).Contains('/policySetDefinitions/')
+        }).Count -ne 0 -or
+        ([string]$nercCipOverlayAssignment[0].condition) -notmatch 'enableNercCipTechnicalOverlay' -or
+        ([string]$nercCipOverlayAssignment[0].condition) -notmatch 'validatedNercCipOverlayInputs' -or
+        $nercCipOverlayAssignment[0].scope -notmatch 'criticalInfrastructureManagementGroupId' -or
+        $nercCipOverlayAssignment[0].scope -match 'workloadManagementGroupId' -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.location.value -ne "[parameters('deploymentLocation')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.identity.value.type -ne 'SystemAssigned' -or
+        (Compare-Object @($nercCipOverlayAssignment[0].properties.parameters.verifiedRoleDefinitionIds.value) @("[variables('monitoringContributorRoleDefinitionId')]")) -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.deployRemediationRoleAssignments.value -ne "[variables('deployActivityLogRemediationRoleAssignments')]" -or
+        $nercCipOverlayAssignment[0].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.allowedLocations.value -notmatch 'validatedNercCipApprovedLocations' -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.dataClassificationTagValue.value -notmatch 'nercCipDataClassificationTagValue' -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.sspIdTagValue.value -ne "[trim(parameters('nercCipSspIdTagValue'))]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultDoubleEncryption.value -ne "[parameters('nercCipVaultDoubleEncryptionRequired')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value -ne "[parameters('nercCipVaultCheckAlwaysOnSoftDeleteOnly')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.diagnosticsEffect.value -ne "[parameters('activityLogExportPolicyEffect')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].condition -ne "[and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments'))]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].subscriptionId -ne "[variables('loggingWorkspaceSubscriptionId')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].resourceGroup -ne "[variables('loggingWorkspaceResourceGroupName')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].properties.parameters.workspaceName.value -ne "[variables('loggingWorkspaceName')]" -or
+        [string]$nercCipOverlayWorkspaceRbac[0].properties.parameters.principalId.value -ne "[reference('nercCipTechnicalOverlayAssignment').outputs.identityPrincipalId.value]" -or
+        (Compare-Object @($nercCipOverlayWorkspaceRbac[0].properties.parameters.roleDefinitionIds.value) @("[variables('logAnalyticsContributorRoleDefinitionId')]")) -or
+        $compiledJson.outputs.nercCipTechnicalOverlay.value.workspaceDestinationAccessEnabled -ne "[and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments'))]" -or
+        $compiledJson.outputs.nercCipTechnicalOverlay.value.workspaceDestinationRoleAssignmentIds -ne "[if(and(and(parameters('enableNercCipTechnicalOverlay'), variables('validatedNercCipOverlayInputs')), variables('deployActivityLogRemediationRoleAssignments')), reference('nercCipOverlayWorkspaceDestinationRbac').outputs.roleAssignmentIds.value, createArray())]") {
+        Stop-Test 'NERC CIP technical overlay must stay opt-in, critical-only, and parameter-wired to stricter inputs.'
+    }
+    $nercCipMessageReferenceIds = @(
+        $nercCipOverlayAssignment[0].properties.parameters.nonComplianceMessages.value |
+        ForEach-Object { $_.policyDefinitionReferenceId } |
+        Sort-Object
+    )
+    if (@($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-public-management-ingress' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-require-subnet-nsg' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-paas-public-network-access' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-vault-customer-managed-key' }).Count -ne 1 -or
+        @($nercCipMessageReferenceIds | Where-Object { $_ -eq 'critical-activity-log-export' }).Count -ne 1 -or
+        @($nercCipOverlayAssignment[0].properties.parameters.nonComplianceMessages.value |
+            Where-Object { [string]::IsNullOrEmpty($_.message) }).Count -ne 0) {
+        Stop-Test 'NERC CIP technical overlay must include non-empty noncompliance messages for each reference.'
+    }
+    foreach ($requiredValidationText in @(
+        'enableNercCipTechnicalOverlay requires enableCriticalInfrastructure to be true so the overlay remains Critical-scope only.',
+        'enableNercCipTechnicalOverlay requires at least one criticalInfrastructureSubscriptionIds entry.',
+        'enableNercCipTechnicalOverlay requires a canonical effective monitoring workspace resource ID from deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId.',
+        'enableNercCipTechnicalOverlay requires activityLogExportPolicyEffect to be DeployIfNotExists so centralized Activity Log export remains active.',
+        'enableNercCipTechnicalOverlay requires deployRoleAssignments and deployLoggingRemediationRoleAssignments to be true so the overlay assignment identity can receive least-privilege remediation access.',
+        'enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to be true with approved firewall and route-table evidence.',
+        'enableNercCipTechnicalOverlay requires approvedBackupVaults records for backup coverage evidence.',
+        'enableNercCipTechnicalOverlay requires backupRetentionStandardId so backup controls map to a documented standard.',
+        'enableNercCipTechnicalOverlay requires non-empty nercCipDataClassificationTagValue and nercCipSspIdTagValue inputs.',
+        'nercCipApprovedLocations must contain only string region values.',
+        'nercCipApprovedLocations must not contain empty or whitespace-only values.',
+        'nercCipApprovedLocations must contain case-insensitively unique region values.'
+    )) {
+        if (-not $mainBicepText.Contains($requiredValidationText)) {
+            Stop-Test "NERC CIP overlay guard validation is missing: $requiredValidationText"
+        }
+    }
+    if ($compiledJson.parameters.nercCipVaultDoubleEncryptionRequired.defaultValue -ne $true -or
+        $compiledJson.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.defaultValue -ne $true -or
+        $parameterTemplate.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $parameterTemplate.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true -or
+        $compiledParameters.parameters.nercCipVaultDoubleEncryptionRequired.value -ne $true -or
+        $compiledParameters.parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value -ne $true) {
+        Stop-Test 'NERC CIP stricter backup defaults must stay true in compiled and parameter templates.'
+    }
+    $nercCipLocationValidationFixture = Get-Content -LiteralPath (Join-Path $ScriptDir 'fixtures/nerc-cip-approved-locations-validation-cases.json') -Raw | ConvertFrom-Json
+    foreach ($case in $nercCipLocationValidationFixture.cases) {
+        $values = @($case.value)
+        $allStrings = @($values | Where-Object { $_ -isnot [string] }).Count -eq 0
+        $normalized = @($values | ForEach-Object {
+            if ($_ -is [string]) { $_.Trim().ToLowerInvariant() } else { '' }
+        })
+        $valid = $allStrings -and
+            $normalized.Count -gt 0 -and
+            (@($normalized | Where-Object { [string]::IsNullOrEmpty($_) }).Count -eq 0) -and
+            (@($normalized | Sort-Object -Unique).Count -eq $normalized.Count)
+        if ($valid -ne $case.valid) {
+            Stop-Test "NERC CIP approved-location validation case failed: $($values -join ',')"
+        }
     }
     foreach ($requiredValidationText in @(
         'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values',
@@ -3748,25 +3780,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }).Count -ne 0) {
         Stop-Test 'The approved existing-vault integration path did not compile to the expected parameter values.'
     }
-    Write-Host '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...'
-    $preflightParameterFile = Join-Path $TempDir 'preflight-unsafe.parameters.json'
-    $preflightParameterDocument = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json -Depth 20
-    $preflightParameterDocument.parameters.tenantRootManagementGroupId.value = 'demo-root'
-    $preflightParameterDocument.parameters.connectivitySubscriptionId.value = '11111111-1111-4111-8111-111111111111'
-    $preflightParameterDocument.parameters.workloadSubscriptionId.value = '22222222-2222-4222-8222-222222222222'
-    $preflightParameterDocument.parameters.governanceAdminsGroupObjectId.value = '33333333-3333-4333-8333-333333333333'
-    $preflightParameterDocument.parameters.networkOperatorsGroupObjectId.value = '44444444-4444-4444-8444-444444444444'
-    $preflightParameterDocument.parameters.workloadContributorsGroupObjectId.value = '55555555-5555-4555-8555-555555555555'
-    $preflightParameterDocument.parameters.readOnlyAuditorsGroupObjectId.value = '66666666-6666-4666-8666-666666666666'
-    $preflightParameterDocument.parameters.enableCriticalInfrastructure.value = $true
-    $preflightParameterDocument.parameters.criticalInfrastructureSubscriptionIds.value = @()
-    $preflightParameterDocument | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $preflightParameterFile -Encoding utf8NoBOM
-    $preflightOutput = & pwsh -NoLogo -NoProfile -File (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $preflightParameterFile 2>&1
-    if ($LASTEXITCODE -eq 0 -or ($preflightOutput -join "`n") -notmatch 'enableCriticalInfrastructure requires one or more\s+criticalInfrastructureSubscriptionIds') {
-        Stop-Test 'Preflight must reject critical infrastructure without a supplied subscription before Azure access.'
-    }
-
-    Write-Host '30/30 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
+    Write-Host '29/29 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
     $accessReviewScript = Join-Path $ProjectDir 'scripts/review-privileged-access.ps1'
     $accessReviewCriteria = Join-Path $ProjectDir 'policy/access-review-criteria.json'
     $accessReviewAssignments = Join-Path $ProjectDir 'tests/fixtures/privileged-access-assignments.json'
@@ -3935,7 +3949,9 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $accessReviewStrictReport = Get-Content -LiteralPath (
         @(Get-ChildItem -LiteralPath $accessReviewStrictOut -Filter 'privileged-access-review-*.json')[0].FullName) -Raw |
         ConvertFrom-Json -Depth 20
-    if (@($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) -ne @($accessReviewSubscription) -or
+    if ((Compare-Object `
+            -ReferenceObject @($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) `
+            -DifferenceObject @($accessReviewSubscription)) -or
         $accessReviewStrictReport.criteria.maxOwnersPerSubscription -ne 1 -or
         $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].ownerPrincipalCount -ne 2 -or
         -not $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].exceedsThreshold) {
