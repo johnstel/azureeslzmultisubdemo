@@ -284,7 +284,7 @@ echo %* | findstr /I /C:"group show" >nul && (
   exit /b 0
 )
 exit /b 0
-'@ | Set-Content -LiteralPath $mockAzCmdPath -NoNewline
+'@ | Set-Content -LiteralPath $mockAzCmdPath
 
     $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
     if ($null -eq $pwshCommand) {
