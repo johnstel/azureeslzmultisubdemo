@@ -1745,6 +1745,17 @@ lifecycle_log="${az_call_log}"
   nerc_assignment_line="$(rg -n -F 'policy assignment delete --name demo-nerc-cip-technical' "${lifecycle_log}" | cut -d: -f1)"
   [[ "${nerc_role_line}" -lt "${nerc_assignment_line}" ]] || { printf 'ERROR: NERC role cleanup must precede assignment deletion.\n' >&2; exit 1; }
 
+whitespace_only_param_file="${TEMP_DIR}/whitespace-only.parameters.json"
+jq '.parameters.existingLogAnalyticsWorkspaceResourceId.value = "   " | .parameters.deployCentralLogAnalytics.value = true' \
+  "${whitespace_param_file}" > "${whitespace_only_param_file}"
+: > "${az_call_log}"
+echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
+  bash "${PROJECT_DIR}/scripts/teardown.sh" "${whitespace_only_param_file}" --execute >/dev/null
+if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
+  printf 'ERROR: teardown.sh must not delete monitoring resources for a whitespace-only supplied workspace value.\n' >&2
+  exit 1
+fi
+
 printf '19/29 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do

@@ -2179,15 +2179,31 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $azCalls = Get-Content -LiteralPath $azCallLog -Raw
     if ($azCalls -match 'rg-eslz-demo-monitoring') {
         Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
-        foreach ($requiredCall in @(
-            'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
-            'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra',
-            'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp',
-            'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones',
-            'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888'
-        )) {
-            if (-not $azCalls.Contains($requiredCall)) { Stop-Test "teardown.ps1 missing mocked lifecycle call: $requiredCall" }
-        }
+    }
+    foreach ($requiredCall in @(
+        'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
+        'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra',
+        'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp',
+        'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones',
+        'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888'
+    )) {
+        if (-not $azCalls.Contains($requiredCall)) { Stop-Test "teardown.ps1 missing mocked lifecycle call: $requiredCall" }
+    }
+    $whitespaceOnlyParameterFile = Join-Path $TempDir 'whitespace-only.parameters.json'
+    $templateJson.parameters.existingLogAnalyticsWorkspaceResourceId.value = '   '
+    $templateJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $whitespaceOnlyParameterFile
+    if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
+    New-Item -ItemType File -Path $azCallLog | Out-Null
+    $originalPath = $env:PATH
+    $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
+    $env:AZ_CALL_LOG = $azCallLog
+    $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+    'eslz-demo' | & pwsh -NoLogo -NoProfile -File $wrapperScript -ParameterFile $whitespaceOnlyParameterFile -ExpectedMockDir $mockBinDir -TeardownScript $ps1Script | Out-Null
+    $env:PATH = $originalPath
+    Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
+    Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+    if ((Get-Content -LiteralPath $azCallLog -Raw) -match 'rg-eslz-demo-monitoring') {
+        Stop-Test 'teardown.ps1 must not delete monitoring resources for a whitespace-only supplied workspace value.'
     }
 
     Write-Host '19/29 Parse every PowerShell lifecycle and test script...'
