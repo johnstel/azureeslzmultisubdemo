@@ -214,8 +214,8 @@ if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
     Write-Host "NOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group $existingWorkspaceResourceGroup in subscription $existingWorkspaceSubscription is protected and will never be deleted by this script, even if its name collides with a group above."
 }
 Write-Host '  4. deployment-owned custom initiatives and policy definitions are deleted after assignments.'
-Write-Host "  4. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
-$stepNumber = 5
+Write-Host "  5. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
+$stepNumber = 6
 if ($criticalEnabled -and $criticalSubscriptions.Count -gt 0) {
     $criticalSubscriptionsList = $criticalSubscriptions -join ', '
     Write-Host "  $stepNumber. Move critical infrastructure subscriptions ($criticalSubscriptionsList) back to $tenantRoot."
@@ -295,6 +295,7 @@ function Remove-PolicyExemptions {
 }
 
 function Remove-DemoPolicyAssignments {
+    $criticalScope = "/providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
     $scopes = @($demoRootScope, $platformScope, $landingZonesScope, $workloadScope)
     $assignmentNames = @(
         'demo-allowed-us-locs', 'demo-audit-public-ip', 'demo-deploy-restrictions',
@@ -312,7 +313,6 @@ function Remove-DemoPolicyAssignments {
         }
     }
     if ($criticalEnabled) {
-        $criticalScope = "/providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
         foreach ($assignmentName in @('demo-critical-private', 'demo-nerc-cip-technical')) {
             Remove-PolicyAssignment $assignmentName $criticalScope
         }
