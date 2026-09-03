@@ -53,8 +53,42 @@ function Test-ResourceId {
         [string]$Provider,
         [string]$Type
     )
-    $pattern = '^/subscriptions/[0-9a-fA-F-]{{36}}/resourceGroups/[^/\s]+/providers/{0}/{1}/[^/\s]+$' -f [regex]::Escape($Provider), [regex]::Escape($Type)
-    return $Value -match $pattern
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -ne $Value.Trim()) { return $false }
+    $segments = $Value.Split('/')
+    return $segments.Count -eq 9 -and $segments[0] -eq '' -and
+        $segments[1] -ieq 'subscriptions' -and (Test-GuidShape $segments[2]) -and
+        $segments[3] -ieq 'resourceGroups' -and -not [string]::IsNullOrWhiteSpace($segments[4]) -and
+        $segments[5] -ieq 'providers' -and $segments[6] -ieq $Provider -and
+        $segments[7] -ieq $Type -and -not [string]::IsNullOrWhiteSpace($segments[8])
+}
+
+function Get-ResourceSubscriptionId {
+    param([string]$ResourceId)
+    return $ResourceId.Split('/')[2]
+}
+
+function Test-Ipv4Address {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    $octets = $Value.Split('.')
+    if ($octets.Count -ne 4) { return $false }
+    foreach ($octet in $octets) {
+        if ($octet -notmatch '^[0-9]+$') { return $false }
+        $octetValue = [int]$octet
+        if ($octetValue -lt 0 -or $octetValue -gt 255) { return $false }
+    }
+    return $true
+}
+
+function Test-Ipv4Cidr {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    $parts = $Value.Split('/')
+    if ($parts.Count -ne 2) { return $false }
+    if (-not (Test-Ipv4Address $parts[0])) { return $false }
+    if ($parts[1] -notmatch '^[0-9]+$') { return $false }
+    $prefixLength = [int]$parts[1]
+    return ($prefixLength -ge 0 -and $prefixLength -le 32)
 }
 
 function Test-ResourceIdParameter {
@@ -141,14 +175,44 @@ foreach ($groupParameter in $groupParameters) {
     $seenGroupIds[$normalizedGroupId] = $groupParameter
 }
 
+$privateAccessServiceCategoriesValue = Get-OptionalParameterValue privateAccessServiceCategories
+$privateAccessServiceCategories = @()
+if ($null -ne $privateAccessServiceCategoriesValue) {
+    $privateAccessServiceCategories = @($privateAccessServiceCategoriesValue)
+    if ($privateAccessServiceCategories.Count -eq 0) {
+        Stop-Preflight 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values.'
+    }
+}
+$seenPrivateAccessServiceCategories = @{}
+foreach ($serviceCategory in $privateAccessServiceCategories) {
+    $serviceCategoryValue = [string]$serviceCategory
+    if ([string]::IsNullOrWhiteSpace($serviceCategoryValue)) {
+        Stop-Preflight 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values.'
+    }
+    if ($serviceCategoryValue -notin @('Storage', 'KeyVault')) {
+        Stop-Preflight 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values.'
+    }
+    if ($seenPrivateAccessServiceCategories.ContainsKey($serviceCategoryValue)) {
+        Stop-Preflight 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values.'
+    }
+    $seenPrivateAccessServiceCategories[$serviceCategoryValue] = $true
+}
+
 Test-ResourceIdParameter existingLogAnalyticsWorkspaceResourceId Microsoft.OperationalInsights workspaces
 Test-ResourceIdParameter approvedFirewallResourceId Microsoft.Network azureFirewalls
-$routeTableIds = Get-OptionalParameterValue approvedRouteTableResourceIds
-if ($null -ne $routeTableIds) {
-    foreach ($routeTableId in @($routeTableIds)) {
-        if (-not (Test-ResourceId ([string]$routeTableId) Microsoft.Network routeTables)) {
+$routeTableIds = @(Get-OptionalParameterValue approvedRouteTableResourceIds)
+$seenRouteTableIds = @{}
+foreach ($routeTableId in $routeTableIds) {
+    $routeTableIdText = [string]$routeTableId
+    if (-not [string]::IsNullOrWhiteSpace($routeTableIdText)) {
+        if (-not (Test-ResourceId $routeTableIdText Microsoft.Network routeTables)) {
             Stop-Preflight 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
         }
+        $normalizedRouteTableId = $routeTableIdText.ToLowerInvariant()
+        if ($seenRouteTableIds.ContainsKey($normalizedRouteTableId)) {
+            Stop-Preflight 'approvedRouteTableResourceIds contains duplicate Microsoft.Network/routeTables resource IDs.'
+        }
+        $seenRouteTableIds[$normalizedRouteTableId] = $true
     }
 }
 $keyVaultUris = Get-OptionalParameterValue approvedCustomerManagedKeyVaultUris
@@ -170,15 +234,40 @@ if ($null -ne $keyNames) {
 
 if (Test-ParameterTrue enableFirewallRouteGuardrails) {
     if ([string]::IsNullOrWhiteSpace([string](Get-OptionalParameterValue approvedFirewallResourceId))) { Stop-Preflight 'enableFirewallRouteGuardrails requires approvedFirewallResourceId.' }
-    if ([string]::IsNullOrWhiteSpace([string](Get-OptionalParameterValue approvedFirewallPrivateIp))) { Stop-Preflight 'enableFirewallRouteGuardrails requires approvedFirewallPrivateIp.' }
+    $approvedFirewallPrivateIp = [string](Get-OptionalParameterValue approvedFirewallPrivateIp)
+    if ([string]::IsNullOrWhiteSpace($approvedFirewallPrivateIp)) { Stop-Preflight 'enableFirewallRouteGuardrails requires approvedFirewallPrivateIp.' }
+    if (-not (Test-Ipv4Address $approvedFirewallPrivateIp)) { Stop-Preflight 'approvedFirewallPrivateIp must be an IPv4 address.' }
     if (@(Get-OptionalParameterValue approvedRouteTableResourceIds).Count -eq 0) { Stop-Preflight 'enableFirewallRouteGuardrails requires approvedRouteTableResourceIds.' }
     if (@(Get-OptionalParameterValue approvedRouteTablePrefixes).Count -eq 0) { Stop-Preflight 'enableFirewallRouteGuardrails requires approvedRouteTablePrefixes.' }
+    $routeTablePrefixes = @((Get-OptionalParameterValue approvedRouteTablePrefixes))
+    $seenRouteTablePrefixes = @{}
+    foreach ($routeTablePrefix in $routeTablePrefixes) {
+        $routeTablePrefixText = [string]$routeTablePrefix
+        if (-not [string]::IsNullOrWhiteSpace($routeTablePrefixText)) {
+            if (-not (Test-Ipv4Cidr $routeTablePrefixText)) { Stop-Preflight 'approvedRouteTablePrefixes contains an invalid IPv4 CIDR.' }
+            $normalizedRouteTablePrefix = $routeTablePrefixText.ToLowerInvariant()
+            if ($seenRouteTablePrefixes.ContainsKey($normalizedRouteTablePrefix)) {
+                Stop-Preflight 'approvedRouteTablePrefixes contains duplicate IPv4 CIDR values.'
+            }
+            $seenRouteTablePrefixes[$normalizedRouteTablePrefix] = $true
+        }
+    }
 }
 if ((Test-ParameterTrue deployCentralLogAnalytics) -and -not [string]::IsNullOrWhiteSpace([string](Get-OptionalParameterValue existingLogAnalyticsWorkspaceResourceId))) {
     Stop-Preflight 'deployCentralLogAnalytics and existingLogAnalyticsWorkspaceResourceId cannot both be supplied.'
 }
 if ((Test-ParameterTrue deploySentinel) -and -not (Test-ParameterTrue deployCentralLogAnalytics) -and [string]::IsNullOrWhiteSpace([string](Get-OptionalParameterValue existingLogAnalyticsWorkspaceResourceId))) {
     Stop-Preflight 'deploySentinel requires deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId.'
+}
+$loggingWorkspaceConfigured = (Test-ParameterTrue deployCentralLogAnalytics) -or -not [string]::IsNullOrWhiteSpace([string](Get-OptionalParameterValue existingLogAnalyticsWorkspaceResourceId))
+if ((Get-OptionalParameterValue activityLogExportPolicyEffect) -eq 'DeployIfNotExists' -or
+    (Get-OptionalParameterValue resourceDiagnosticsPolicyEffect) -eq 'AuditIfNotExists' -or
+    (Get-OptionalParameterValue resourceDiagnosticsPolicyEffect) -eq 'DeployIfNotExists') {
+    if (-not $loggingWorkspaceConfigured) { Stop-Preflight 'Activity Log and supported-resource diagnostics assignments require deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId.' }
+}
+if ((Get-OptionalParameterValue activityLogExportPolicyEffect) -eq 'DeployIfNotExists') {
+    if (-not (Test-ParameterTrue deployLoggingRemediationRoleAssignments)) { Stop-Preflight 'activityLogExportPolicyEffect=DeployIfNotExists requires deployLoggingRemediationRoleAssignments.' }
+    if (-not (Test-ParameterTrue deployRoleAssignments)) { Stop-Preflight 'activityLogExportPolicyEffect=DeployIfNotExists requires deployRoleAssignments.' }
 }
 
 $criticalSubscriptions = @()
@@ -190,8 +279,15 @@ if ($null -ne $criticalSubscriptionIds) {
         $criticalSubscriptions += ([string]$criticalSubscription).ToLowerInvariant()
     }
 }
-if ((Test-ParameterTrue enableCriticalInfrastructure) -and $criticalSubscriptions.Count -eq 0) {
-    Stop-Preflight 'enableCriticalInfrastructure requires one or more criticalInfrastructureSubscriptionIds.'
+if (Test-ParameterTrue enableCriticalInfrastructure) {
+    if ($criticalSubscriptions.Count -eq 0) {
+        Stop-Preflight 'enableCriticalInfrastructure requires one or more criticalInfrastructureSubscriptionIds.'
+    }
+    foreach ($criticalSubscription in $criticalSubscriptions) {
+        if ($criticalSubscription -eq $connectivitySubscription.ToLowerInvariant() -or $criticalSubscription -eq $workloadSubscription.ToLowerInvariant()) {
+            Stop-Preflight 'criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.'
+        }
+    }
 }
 
 $approvedBackupVaultInput = Get-OptionalParameterValue approvedBackupVaults
@@ -200,7 +296,9 @@ foreach ($approvedBackupVault in $approvedBackupVaults) {
     $vaultId = [string]$approvedBackupVault.vaultResourceId
     $backupPolicyId = [string]$approvedBackupVault.backupPolicyResourceId
     if (-not (Test-ResourceId $vaultId Microsoft.RecoveryServices vaults)) { Stop-Preflight 'approvedBackupVaults contains an invalid Recovery Services vault resource ID.' }
-    if (-not $backupPolicyId.StartsWith("$vaultId/backupPolicies/", [System.StringComparison]::OrdinalIgnoreCase)) { Stop-Preflight 'approvedBackupVaults backupPolicyResourceId must be inside its vault.' }
+    if (-not $backupPolicyId.StartsWith("$vaultId/backupPolicies/", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $backupPolicyId.Length -eq ($vaultId.Length + '/backupPolicies/'.Length) -or
+        $backupPolicyId.Substring($vaultId.Length + '/backupPolicies/'.Length).Contains('/')) { Stop-Preflight 'approvedBackupVaults backupPolicyResourceId must be inside its vault.' }
 }
 if (Test-ParameterTrue enableVmBackupRemediation) {
     if ($approvedBackupVaults.Count -eq 0) { Stop-Preflight 'enableVmBackupRemediation requires approvedBackupVaults.' }
@@ -267,6 +365,49 @@ if ($LASTEXITCODE -ne 0) {
     Stop-Preflight "Cannot read tenant-root management group '$tenantRoot'. Check the ID and tenant permissions."
 }
 
+function Test-ScopeAccess {
+    param(
+        [string]$Scope,
+        [string]$Label
+    )
+    & az role assignment list --scope $Scope --include-inherited --all --output none 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Preflight "Cannot read effective role assignments at $Label scope $Scope; request Reader access before deployment."
+    }
+}
+
+$tenantRootScope = "/providers/Microsoft.Management/managementGroups/$tenantRoot"
+Test-ScopeAccess $tenantRootScope 'tenant-root management group'
+Test-ScopeAccess "/subscriptions/$connectivitySubscription" 'connectivity subscription'
+Test-ScopeAccess "/subscriptions/$workloadSubscription" 'workload subscription'
+function Test-EffectivePermission {
+    param(
+        [string]$Scope,
+        [string]$Action
+    )
+    $permissions = Invoke-AzJson @(
+        'rest', '--method', 'get',
+        '--url', "https://management.azure.com$Scope/providers/Microsoft.Authorization/permissions?api-version=2015-07-01",
+        '--output', 'json'
+    )
+    if ($null -eq $permissions) {
+        Stop-Preflight "Cannot determine effective permissions at $Scope; request $Action before deployment."
+    }
+    $normalizedAction = $Action.ToLowerInvariant()
+    $granted = @($permissions.value | ForEach-Object { $_.actions } | ForEach-Object { [string]$_ } | Where-Object {
+        $candidate = $_.ToLowerInvariant()
+        $candidate -eq '*' -or $candidate -eq $normalizedAction -or
+        ($candidate.EndsWith('/*') -and $normalizedAction.StartsWith($candidate.Substring(0, $candidate.Length - 1)))
+    }).Count -gt 0
+    if (-not $granted) {
+        Stop-Preflight "The deployment caller lacks $Action at $Scope; grant the required role before deployment."
+    }
+}
+Test-EffectivePermission $tenantRootScope 'microsoft.authorization/policyassignments/write'
+if ((Test-ParameterTrue deployRoleAssignments) -or (Test-ParameterTrue enableVmBackupRemediation) -or (Test-ParameterTrue grantVaultDiagnosticsWorkspaceAccess)) {
+    Test-EffectivePermission $tenantRootScope 'microsoft.authorization/roleassignments/write'
+}
+
 function Test-ProviderRegistration {
     param(
         [string]$SubscriptionId,
@@ -285,13 +426,10 @@ foreach ($subscriptionId in @($connectivitySubscription, $workloadSubscription) 
     Test-ProviderRegistration $subscriptionId Microsoft.Authorization
     Test-ProviderRegistration $subscriptionId Microsoft.Resources
 }
-if (Test-ParameterTrue enableFirewallRouteGuardrails) {
-    Test-ProviderRegistration $workloadSubscription Microsoft.Network
-}
-if ((Test-ParameterTrue deployCentralLogAnalytics) -or -not [string]::IsNullOrWhiteSpace([string](Get-OptionalParameterValue existingLogAnalyticsWorkspaceResourceId))) {
+if (Test-ParameterTrue deployCentralLogAnalytics) {
     Test-ProviderRegistration $connectivitySubscription Microsoft.OperationalInsights
 }
-if ($approvedBackupVaults.Count -gt 0 -or (Test-ParameterTrue deployRecoveryServicesVault)) {
+if (Test-ParameterTrue deployRecoveryServicesVault) {
     Test-ProviderRegistration $workloadSubscription Microsoft.RecoveryServices
 }
 
@@ -310,15 +448,31 @@ function Test-ReferencedResource {
 }
 
 $workspaceId = [string](Get-OptionalParameterValue existingLogAnalyticsWorkspaceResourceId)
-if (-not [string]::IsNullOrWhiteSpace($workspaceId)) { Test-ReferencedResource $workspaceId Microsoft.OperationalInsights/workspaces }
+if (-not [string]::IsNullOrWhiteSpace($workspaceId)) {
+    $workspaceSubscriptionId = Get-ResourceSubscriptionId $workspaceId
+    Test-Subscription $workspaceSubscriptionId 'workspace'
+    Test-ProviderRegistration $workspaceSubscriptionId Microsoft.OperationalInsights
+    Test-ReferencedResource $workspaceId Microsoft.OperationalInsights/workspaces
+}
 $firewallId = [string](Get-OptionalParameterValue approvedFirewallResourceId)
-if (-not [string]::IsNullOrWhiteSpace($firewallId)) { Test-ReferencedResource $firewallId Microsoft.Network/azureFirewalls }
+if (-not [string]::IsNullOrWhiteSpace($firewallId)) {
+    $firewallSubscriptionId = Get-ResourceSubscriptionId $firewallId
+    Test-Subscription $firewallSubscriptionId 'firewall'
+    Test-ProviderRegistration $firewallSubscriptionId Microsoft.Network
+    Test-ReferencedResource $firewallId Microsoft.Network/azureFirewalls
+}
 if ($null -ne $routeTableIds) {
     foreach ($routeTableId in @($routeTableIds)) {
+        $routeTableSubscriptionId = Get-ResourceSubscriptionId ([string]$routeTableId)
+        Test-Subscription $routeTableSubscriptionId 'route-table'
+        Test-ProviderRegistration $routeTableSubscriptionId Microsoft.Network
         Test-ReferencedResource ([string]$routeTableId) Microsoft.Network/routeTables
     }
 }
 foreach ($approvedBackupVault in $approvedBackupVaults) {
+    $backupVaultSubscriptionId = Get-ResourceSubscriptionId ([string]$approvedBackupVault.vaultResourceId)
+    Test-Subscription $backupVaultSubscriptionId 'backup-vault'
+    Test-ProviderRegistration $backupVaultSubscriptionId Microsoft.RecoveryServices
     Test-ReferencedResource ([string]$approvedBackupVault.vaultResourceId) Microsoft.RecoveryServices/vaults
     Test-ReferencedResource ([string]$approvedBackupVault.backupPolicyResourceId) Microsoft.RecoveryServices/vaults/backupPolicies
 }

@@ -3003,9 +3003,11 @@ jq '
   .parameters.enableCriticalInfrastructure.value = true |
   .parameters.criticalInfrastructureSubscriptionIds.value = []
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${preflight_parameter_file}"
-for preflight_command in \
-  "${PROJECT_DIR}/scripts/preflight.sh ${preflight_parameter_file}" \
-  "pwsh -NoLogo -NoProfile -File ${PROJECT_DIR}/scripts/preflight.ps1 -ParameterFile ${preflight_parameter_file}"; do
+preflight_commands=("${PROJECT_DIR}/scripts/preflight.sh ${preflight_parameter_file}")
+if command -v pwsh >/dev/null 2>&1; then
+  preflight_commands+=("pwsh -NoLogo -NoProfile -File ${PROJECT_DIR}/scripts/preflight.ps1 -ParameterFile ${preflight_parameter_file}")
+fi
+for preflight_command in "${preflight_commands[@]}"; do
   if ${preflight_command} >"${TEMP_DIR}/preflight-output" 2>&1; then
     printf 'ERROR: Preflight accepted critical infrastructure without a supplied subscription.\n' >&2
     exit 1
