@@ -14,83 +14,34 @@ New-Item -ItemType Directory -Path $TempDir | Out-Null
 function Invoke-OfflineParitySuite {
     $mockDir = Join-Path $TempDir 'mock-az'
     New-Item -ItemType Directory -Path $mockDir -Force | Out-Null
-    $mockAz = @'
-#!/usr/bin/env bash
-set -e
-
-if [[ "${1:-}" == "bicep" ]]; then
-  exit 0
-fi
-
-if [[ "${1:-}" == "account" ]]; then
-  if [[ "${2:-}" == "show" ]]; then
-    mock_account_json="${MOCK_ACCOUNT_JSON:-}"
-    if [[ -z "${mock_account_json}" ]]; then
-      mock_account_json='{"tenantId":"11111111-1111-1111-1111-111111111111","state":"Enabled"}'
-    fi
-    printf '%s\n' "${mock_account_json}"
-    exit 0
-  fi
-  if [[ "${2:-}" == "management-group" ]]; then
-    exit 0
-  fi
-fi
-
-if [[ "${1:-}" == "role" ]]; then
-  exit 0
-fi
-
-if [[ "${1:-}" == "policy" ]]; then
-  policy_name=''
-  previous=''
-  for index in "$@"; do
-    if [[ "${previous:-}" == '--name' ]]; then
-      policy_name="${index}"
-      break
-    fi
-    previous="${index}"
-  done
-  if [[ -n "${policy_name}" ]]; then
-    version="$(jq -r --arg id "${policy_name}" '.controls[] | select(.mechanism.builtIn == true and .mechanism.definitionId == $id) | ((.mechanism.majorVersion | tostring) + ".0.0")' "${PROJECT_DIR}/policy/control-catalog.json" 2>/dev/null | head -n 1)"
-    if [[ -n "${version}" ]]; then
-      printf '%s\n' "${version}"
-      exit 0
-    fi
-  fi
-  printf '%s\n' '1.0.0'
-  exit 0
-fi
-
-if [[ "${1:-}" == "provider" ]]; then
-  printf '%s\n' "Registered"
-  exit 0
-fi
-
-if [[ "${1:-}" == "resource" ]]; then
-  case "$*" in
-    *"Microsoft.OperationalInsights/workspaces"*) printf '%s\n' "Microsoft.OperationalInsights/workspaces"; exit 0 ;;
-    *"Microsoft.Network/azureFirewalls"*) printf '%s\n' "Microsoft.Network/azureFirewalls"; exit 0 ;;
-    *"Microsoft.Network/routeTables"*) printf '%s\n' "Microsoft.Network/routeTables"; exit 0 ;;
-    *"Microsoft.RecoveryServices/vaults"*) printf '%s\n' "Microsoft.RecoveryServices/vaults"; exit 0 ;;
-  esac
-  printf '%s\n' "${MOCK_RESOURCE_TYPE:-Microsoft.Network/routeTables}"
-  exit 0
-fi
-
-if [[ "${1:-}" == "rest" ]]; then
-  mock_rest_json="${MOCK_REST_JSON:-}"
-  if [[ -z "${mock_rest_json}" ]]; then
-    mock_rest_json='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
-  fi
-  printf '%s\n' "${mock_rest_json}"
-  exit 0
-fi
-
-printf '%s\n' '{}'
-exit 0
-'@
-    Set-Content -Path (Join-Path $mockDir 'az') -Value $mockAz -Encoding utf8
-    & bash -lc "chmod +x '$((Join-Path $mockDir 'az'))'"
+    $global:OfflinePolicyVersions = @{}
+    foreach ($control in @((Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json).controls)) {
+        if ($control.mechanism.builtIn -eq $true -and $control.mechanism.definitionId) {
+            $global:OfflinePolicyVersions[[string]$control.mechanism.definitionId] = "$($control.mechanism.majorVersion).0.0"
+        }
+    }
+    function global:az {
+        param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+        $global:LASTEXITCODE = 0
+        switch ($Arguments[0]) {
+            'account' { if ($Arguments[1] -eq 'show') { $env:MOCK_ACCOUNT_JSON ?? '{"tenantId":"11111111-1111-1111-1111-111111111111","state":"Enabled"}' }; return }
+            'bicep' { return }
+            'role' { return }
+            'provider' { 'Registered'; return }
+            'rest' { $env:MOCK_REST_JSON ?? '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; return }
+            'policy' {
+                $nameIndex = [array]::IndexOf($Arguments, '--name')
+                if ($nameIndex -ge 0 -and $global:OfflinePolicyVersions.ContainsKey($Arguments[$nameIndex + 1])) { $global:OfflinePolicyVersions[$Arguments[$nameIndex + 1]] } else { '1.0.0' }
+                return
+            }
+            'resource' {
+                $idIndex = [array]::IndexOf($Arguments, '--ids')
+                $resourceId = if ($idIndex -ge 0) { $Arguments[$idIndex + 1] } else { '' }
+                if ($resourceId -match '/providers/(Microsoft\.[^/]+/[^/]+)') { $matches[1] } else { 'Microsoft.Network/routeTables' }
+                return
+            }
+        }
+    }
 
     $baseDocument = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw
     $cases = @(
@@ -127,7 +78,6 @@ exit 0
         $path = Join-Path $TempDir ($case.Name + '.json')
         $doc | ConvertTo-Json -Depth 20 | Set-Content -Path $path -Encoding utf8
 
-        $env:PATH = "$mockDir$([IO.Path]::PathSeparator)$env:PATH"
         $env:PROJECT_DIR = $ProjectDir
         $env:MOCK_REST_JSON = $case.RestJson
         $output = & (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $path 2>&1
