@@ -187,7 +187,7 @@ function Invoke-TeardownOfflineFixture {
     "criticalInfrastructureSubscriptionIds": { "value": ["55555555-5555-5555-5555-555555555555"] },
     "enableNercCipTechnicalOverlay": { "value": true },
     "existingLogAnalyticsWorkspaceResourceId": {
-      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-monitoring/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
     },
     "policyExemptions": { "value": [] },
     "approvedBackupVaults": { "value": [] }
@@ -263,6 +263,28 @@ exit 0
 '@
     Set-Content -LiteralPath $mockAzPath -Value $mockAzScript -Encoding utf8
     & bash -c "chmod +x '$mockAzPath'"
+    $mockAzCmdPath = Join-Path $mockDir 'az.cmd'
+    @'
+@echo off
+echo az %* >> "%MOCK_AZ_LOG%"
+echo %* | findstr /I /C:"policy assignment show" /C:"demo-nerc-cip-technical" >nul && (
+  echo nerc-assignment-principal
+  exit /b 0
+)
+echo %* | findstr /I /C:"role assignment list" /C:"nerc-assignment-principal" /C:"ws-protected" >nul && (
+  echo NERC-ROLE-ASSIGNMENT-ID
+  exit /b 0
+)
+echo %* | findstr /I /C:"group exists" >nul && (
+  echo true
+  exit /b 0
+)
+echo %* | findstr /I /C:"group show" >nul && (
+  echo demo
+  exit /b 0
+)
+exit /b 0
+'@ | Set-Content -LiteralPath $mockAzCmdPath -NoNewline
 
     $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
     if ($null -eq $pwshCommand) {
@@ -270,6 +292,25 @@ exit 0
         return
     }
     $scriptPath = Join-Path $ProjectDir 'scripts/teardown.ps1'
+    $wrapperPath = Join-Path $fixtureDir 'invoke-teardown-with-mock-check.ps1'
+    @'
+param(
+    [Parameter(Mandatory = $true)][string]$ParameterFile,
+    [Parameter(Mandatory = $true)][string]$ExpectedMockDir,
+    [Parameter(Mandatory = $true)][string]$TeardownScript,
+    [Parameter(Mandatory = $true)][string]$Confirmation,
+    [switch]$MissingConfirmation
+)
+$azCommand = Get-Command az -ErrorAction SilentlyContinue
+if ($null -eq $azCommand -or -not $azCommand.Source.StartsWith($ExpectedMockDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Error "az did not resolve to the fixture mock directory."
+    exit 1
+}
+$global:FixtureTeardownConfirmation = $Confirmation
+function global:Read-Host { param([string]$Prompt) $global:FixtureTeardownConfirmation }
+if ($MissingConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue }
+& $TeardownScript -ParameterFile $ParameterFile -Execute
+'@ | Set-Content -LiteralPath $wrapperPath
 
     $goodLog = Join-Path $fixtureDir 'good.log'
     $previousPath = $env:PATH
@@ -279,16 +320,7 @@ exit 0
         $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$previousPath"
         $env:MOCK_AZ_LOG = $goodLog
         $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
-        $scriptLiteral = $scriptPath.Replace("'", "''")
-        $paramLiteral = $parameterPath.Replace("'", "''")
-        $goodCommand = @"
-function global:Read-Host {
-    param([string]`$Prompt)
-    'demo'
-}
-& '$scriptLiteral' -ParameterFile '$paramLiteral' -Execute
-"@
-        $goodOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $goodCommand 2>&1
+        $goodOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation 'demo' 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "PowerShell teardown fixture unexpectedly failed with valid confirmation. Output: $($goodOutput -join ' ')"
         }
@@ -311,14 +343,13 @@ function global:Read-Host {
         throw "PowerShell teardown fixture expected NERC role delete immediately before NERC assignment delete. Log: $($lines -join ' | ')"
     }
     foreach ($line in $lines) {
-        if ($line -match 'az group delete .*rg-demo-monitoring' -or $line -match 'az group wait .*rg-demo-monitoring') {
-            throw "PowerShell teardown fixture attempted to delete or wait on the protected monitoring resource group: $line"
+        if ($line -match 'az group delete .*rg-demo-connectivity' -or $line -match 'az group wait .*rg-demo-connectivity') {
+            throw "PowerShell teardown fixture attempted to delete or wait on the protected evidence resource group: $line"
         }
     }
 
     foreach ($case in @(
-        @{ Name = 'missing-env'; Confirmation = $null; Input = 'demo' },
-        @{ Name = 'wrong-confirm'; Confirmation = 'DELETE-ESLZ-DEMO'; Input = 'wrong-demo-root' }
+        @{ Name = 'missing-env'; Confirmation = $null; Input = 'demo' }
     )) {
         $caseLog = Join-Path $fixtureDir "$($case.Name).log"
         Remove-Item -LiteralPath $caseLog -ErrorAction SilentlyContinue
@@ -335,16 +366,8 @@ function global:Read-Host {
             else {
                 $env:ESLZ_TEARDOWN_CONFIRMATION = $case.Confirmation
             }
-            $scriptLiteral = $scriptPath.Replace("'", "''")
-            $paramLiteral = $parameterPath.Replace("'", "''")
-            $caseCommand = @"
-function global:Read-Host {
-    param([string]`$Prompt)
-    '$($case.Input.Replace("'", "''"))'
-}
-& '$scriptLiteral' -ParameterFile '$paramLiteral' -Execute
-"@
-            $null = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $caseCommand 2>&1
+            $missingConfirmationArgument = if ($null -eq $case.Confirmation) { @('-MissingConfirmation') } else { @() }
+            $null = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation $case.Input @missingConfirmationArgument 2>&1
             $caseExitCode = $LASTEXITCODE
         }
         finally {

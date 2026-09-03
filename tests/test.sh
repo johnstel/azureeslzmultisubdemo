@@ -267,7 +267,7 @@ EOF
     "criticalInfrastructureSubscriptionIds": { "value": ["55555555-5555-5555-5555-555555555555"] },
     "enableNercCipTechnicalOverlay": { "value": true },
     "existingLogAnalyticsWorkspaceResourceId": {
-      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-monitoring/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
     },
     "policyExemptions": { "value": [] },
     "approvedBackupVaults": { "value": [] }
@@ -303,10 +303,10 @@ if role_delete is None or policy_delete is None:
 if role_delete + 1 != policy_delete:
     raise SystemExit(f'Bash teardown fixture expected NERC role delete immediately before NERC assignment delete; got {role_delete} and {policy_delete}')
 for idx, line in enumerate(lines):
-    if 'az group delete' in line and '--name rg-demo-monitoring' in line:
-        raise SystemExit(f'Bash teardown fixture deleted protected monitoring resource group: {line}')
-    if 'az group wait' in line and '--name rg-demo-monitoring' in line:
-        raise SystemExit(f'Bash teardown fixture waited on protected monitoring resource group: {line}')
+    if 'az group delete' in line and '--name rg-demo-connectivity' in line:
+        raise SystemExit(f'Bash teardown fixture deleted protected evidence resource group: {line}')
+    if 'az group wait' in line and '--name rg-demo-connectivity' in line:
+        raise SystemExit(f'Bash teardown fixture waited on protected evidence resource group: {line}')
 PY
 
   if command -v pwsh >/dev/null 2>&1; then
