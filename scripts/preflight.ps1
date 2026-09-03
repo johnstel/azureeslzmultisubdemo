@@ -147,15 +147,15 @@ foreach ($routeTableId in @(Get-OptionalParameterValue approvedRouteTableResourc
     if (-not (Test-ResourceId ([string]$routeTableId) Microsoft.Network routeTables)) {
         Stop-Preflight 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
     }
-    foreach ($keyVaultUri in @(Get-OptionalParameterValue approvedCustomerManagedKeyVaultUris)) {
-        if ([string]$keyVaultUri -notmatch '^https://[a-zA-Z0-9-]+\.vault\.azure\.net/$') {
-            Stop-Preflight 'approvedCustomerManagedKeyVaultUris contains an invalid Key Vault URI.'
-        }
+}
+foreach ($keyVaultUri in @(Get-OptionalParameterValue approvedCustomerManagedKeyVaultUris)) {
+    if ([string]$keyVaultUri -notmatch '^https://[a-zA-Z0-9-]+\.vault\.azure\.net/$') {
+        Stop-Preflight 'approvedCustomerManagedKeyVaultUris contains an invalid Key Vault URI.'
     }
-    foreach ($keyName in @(Get-OptionalParameterValue approvedCustomerManagedKeyNames)) {
-        if ([string]$keyName -notmatch '^[A-Za-z0-9-]{1,127}$') {
-            Stop-Preflight 'approvedCustomerManagedKeyNames contains an invalid key name.'
-        }
+}
+foreach ($keyName in @(Get-OptionalParameterValue approvedCustomerManagedKeyNames)) {
+    if ([string]$keyName -notmatch '^[A-Za-z0-9-]{1,127}$') {
+        Stop-Preflight 'approvedCustomerManagedKeyNames contains an invalid key name.'
     }
 }
 
