@@ -34,7 +34,11 @@ function Invoke-OfflineParitySuite {
             'bicep' { return }
             'role' { return }
             'provider' { 'Registered'; return }
-            'rest' { $env:MOCK_REST_JSON ?? '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; return }
+            'rest' {
+                if ($env:MOCK_WORKSPACE_ID -and (($Arguments -join ' ') -like "*$($env:MOCK_WORKSPACE_ID)/providers/Microsoft.Authorization/permissions*")) { $env:MOCK_WORKSPACE_REST_JSON }
+                else { $env:MOCK_REST_JSON ?? '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' }
+                return
+            }
             'policy' {
                 $nameIndex = [array]::IndexOf($Arguments, '--name')
                 if ($nameIndex -ge 0 -and $global:OfflinePolicyVersions.ContainsKey($Arguments[$nameIndex + 1])) { $global:OfflinePolicyVersions[$Arguments[$nameIndex + 1]] } else { '1.0.0' }
@@ -80,9 +84,54 @@ function Invoke-OfflineParitySuite {
         $doc.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
         $doc.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
         $doc.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+        $doc.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        $doc.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+        $doc.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+        $doc.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+        $doc.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        $doc.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+        $doc.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+        $doc.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
         if ($case.ContainsKey('Mutator') -and $null -ne $case.Mutator) {
             & $case.Mutator $doc
         }
+
+        $workspaceId = '/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-external/providers/Microsoft.OperationalInsights/workspaces/ws-external'
+        foreach ($workspacePermission in @(
+            '{"value":[{"actions":["microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ,
+            '{"value":[{"actions":[],"notActions":[]}]}')) {
+            $doc = $baseDocument | ConvertFrom-Json
+            $doc.parameters.tenantRootManagementGroupId.value = 'demo-root'
+            $doc.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
+            $doc.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
+            $doc.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            $doc.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+            $doc.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+            $doc.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+            $doc.parameters.activityLogExportPolicyEffect.value = 'DeployIfNotExists'
+            $doc.parameters.deployRoleAssignments.value = $true
+            $doc.parameters.deployLoggingRemediationRoleAssignments.value = $true
+            $doc.parameters.deployCentralLogAnalytics.value = $false
+            $doc.parameters.existingLogAnalyticsWorkspaceResourceId.value = $workspaceId
+            $path = Join-Path $TempDir 'workspace-dine.json'
+            $doc | ConvertTo-Json -Depth 20 | Set-Content -Path $path -Encoding utf8
+            $env:MOCK_REST_JSON = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+            $env:MOCK_WORKSPACE_ID = $workspaceId
+            $env:MOCK_WORKSPACE_REST_JSON = $workspacePermission
+            $output = & (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $path 2>&1
+            $passed = ($LASTEXITCODE -eq 0)
+            if ($passed -ne ($workspacePermission -match 'roleassignments/write')) { throw "External workspace DINE permission fixture did not use the supplied workspace scope: $($output -join ' ')" }
+        }
+        Remove-Item env:MOCK_WORKSPACE_ID, env:MOCK_WORKSPACE_REST_JSON -ErrorAction SilentlyContinue
+        $doc = $baseDocument | ConvertFrom-Json
+        $doc.parameters.tenantRootManagementGroupId.value = 'demo-root'
+        $doc.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
+        $doc.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
+        $doc.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        $doc.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+        $doc.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+        $doc.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+        if ($case.ContainsKey('Mutator') -and $null -ne $case.Mutator) { & $case.Mutator $doc }
         $path = Join-Path $TempDir ($case.Name + '.json')
         $doc | ConvertTo-Json -Depth 20 | Set-Content -Path $path -Encoding utf8
 

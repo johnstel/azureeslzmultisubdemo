@@ -73,6 +73,10 @@ if [[ "${1:-}" == "resource" ]]; then
 fi
 
 if [[ "${1:-}" == "rest" ]]; then
+  if [[ -n "${MOCK_WORKSPACE_ID:-}" && "$*" == *"${MOCK_WORKSPACE_ID}/providers/Microsoft.Authorization/permissions"* ]]; then
+    printf '%s\n' "${MOCK_WORKSPACE_REST_JSON}"
+    exit 0
+  fi
   mock_rest_json="${MOCK_REST_JSON:-}"
   if [[ -z "${mock_rest_json}" ]]; then
     mock_rest_json='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
@@ -139,6 +143,24 @@ EOF
   run_case permissions_separate_grant_pass pass '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]},{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write"],"notActions":[]}]}'
   run_case missing_policy_definition_write_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}'
   run_case backup_blank_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' '.parameters.approvedBackupVaults.value = [{"vaultResourceId":"","backupPolicyResourceId":""}]'
+
+  local workspace_id='/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-external/providers/Microsoft.OperationalInsights/workspaces/ws-external'
+  local management_permissions='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+  local workspace_mutator=".parameters.activityLogExportPolicyEffect.value = \"DeployIfNotExists\" | .parameters.deployRoleAssignments.value = true | .parameters.deployLoggingRemediationRoleAssignments.value = true | .parameters.deployCentralLogAnalytics.value = false | .parameters.existingLogAnalyticsWorkspaceResourceId.value = \"${workspace_id}\""
+  jq "${workspace_mutator}" "${base_parameters}" > "${TEMP_DIR}/workspace-dine.json"
+  for workspace_permission in \
+    '{"value":[{"actions":["microsoft.authorization/roleassignments/write"],"notActions":[]}]}' \
+    '{"value":[{"actions":[],"notActions":[]}]}'; do
+    if PROJECT_DIR="${PROJECT_DIR}" PATH="${mock_dir}:$PATH" MOCK_REST_JSON="${management_permissions}" MOCK_WORKSPACE_ID="${workspace_id}" MOCK_WORKSPACE_REST_JSON="${workspace_permission}" "${PROJECT_DIR}/scripts/preflight.sh" "${TEMP_DIR}/workspace-dine.json" >/dev/null 2>&1; then
+      workspace_result=pass
+    else
+      workspace_result=fail
+    fi
+    [[ "${workspace_result}" == pass ]] || [[ "${workspace_permission}" != *'roleassignments/write'* ]] \
+      || fail 'External workspace DINE permission fixture did not pass.'
+    [[ "${workspace_result}" == fail ]] || [[ "${workspace_permission}" == *'roleassignments/write'* ]] \
+      || fail 'External workspace DINE permission fixture did not fail.'
+  done
 
   printf 'Offline parity suite passed.\n'
 }
