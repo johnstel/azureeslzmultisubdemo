@@ -1740,7 +1740,7 @@ lifecycle_log="${az_call_log}"
   rg -q -F 'role assignment list --assignee 11111111-1111-1111-1111-111111111111 --scope /subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-monitoring/providers/Microsoft.OperationalInsights/workspaces/external-log' "${lifecycle_log}"
   ! rg -q -F 'group delete --subscription 11111111-1111-1111-1111-111111111111 --name rg-eslz-demo-connectivity' "${lifecycle_log}"
   rg -q -F 'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888' "${lifecycle_log}"
-  ! rg -q -F 'external-monitoring' "${lifecycle_log}" || [[ "$(rg -c -F 'external-monitoring' "${lifecycle_log}")" -eq "$(rg -c -F 'role assignment list' "${lifecycle_log}")" ]] || { printf 'ERROR: external workspace may only be queried for deployment-owned identity roles.\n' >&2; exit 1; }
+  ! rg -q -F 'external-monitoring' "${lifecycle_log}" || [[ "$(rg -c 'external-monitoring.*role assignment list|role assignment list.*external-monitoring' "${lifecycle_log}")" -eq "$(rg -c -F 'external-monitoring' "${lifecycle_log}")" ]] || { printf 'ERROR: external workspace may only be queried for deployment-owned identity roles.\n' >&2; exit 1; }
   nerc_role_line="$(rg -n -F 'role assignment delete --ids' "${lifecycle_log}" | head -1 | cut -d: -f1)"
   nerc_assignment_line="$(rg -n -F 'policy assignment delete --name demo-nerc-cip-technical' "${lifecycle_log}" | cut -d: -f1)"
   [[ "${nerc_role_line}" -lt "${nerc_assignment_line}" ]] || { printf 'ERROR: NERC role cleanup must precede assignment deletion.\n' >&2; exit 1; }
