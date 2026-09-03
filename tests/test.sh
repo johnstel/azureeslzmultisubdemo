@@ -77,7 +77,6 @@ if [[ "${1:-}" == "rest" ]]; then
   if [[ -z "${mock_rest_json}" ]]; then
     mock_rest_json='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
   fi
-  mock_rest_json="$(printf '%s\n' "${mock_rest_json}" | jq '.value |= map(.actions += ["microsoft.authorization/policydefinitions/write", "microsoft.authorization/policysetdefinitions/write"])')"
   printf '%s\n' "${mock_rest_json}"
   exit 0
 fi
@@ -126,22 +125,30 @@ EOF
   run_case canonical_id_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.connectivitySubscriptionId.value = \"not-a-guid\""
   run_case blank_members_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.approvedRouteTableResourceIds.value = [\"\"]"
   run_case blank_members_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.approvedRouteTableResourceIds.value = [\"\", \"not-a-resource-id\"]"
-  run_case ip_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
+  run_case ip_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
   run_case ip_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallPrivateIp.value = \"999.999.999.999\" | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
-  run_case logging_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.activityLogExportPolicyEffect.value = \"DeployIfNotExists\" | .parameters.deployRoleAssignments.value = true | .parameters.deployLoggingRemediationRoleAssignments.value = true | .parameters.deployCentralLogAnalytics.value = true | .parameters.existingLogAnalyticsWorkspaceResourceId.value = \"\""
+  run_case logging_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.activityLogExportPolicyEffect.value = \"DeployIfNotExists\" | .parameters.deployRoleAssignments.value = true | .parameters.deployLoggingRemediationRoleAssignments.value = true | .parameters.deployCentralLogAnalytics.value = true | .parameters.existingLogAnalyticsWorkspaceResourceId.value = \"\""
   run_case logging_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.activityLogExportPolicyEffect.value = \"DeployIfNotExists\" | .parameters.deployLoggingRemediationRoleAssignments.value = true | .parameters.deployCentralLogAnalytics.value = false | .parameters.existingLogAnalyticsWorkspaceResourceId.value = \"\""
-  run_case routing_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
+  run_case routing_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\"]"
   run_case routing_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ".parameters.enableFirewallRouteGuardrails.value = true | .parameters.approvedFirewallResourceId.value = \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01\" | .parameters.approvedFirewallPrivateIp.value = \"10.0.0.4\" | .parameters.approvedRouteTableResourceIds.value = [\"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\", \"/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01\"] | .parameters.approvedRouteTablePrefixes.value = [\"10.0.0.0/24\", \"10.0.0.0/24\"]"
-  run_case permissions_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+  run_case permissions_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
   run_case permissions_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":["microsoft.authorization/roleassignments/write"]}]}' '.parameters.deployRoleAssignments.value = true'
+  run_case permissions_internal_wildcard_fail fail '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]}]}'
+  run_case permissions_separate_grant_pass pass '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]},{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write"],"notActions":[]}]}'
+  run_case missing_policy_definition_write_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}'
+  run_case backup_blank_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' '.parameters.approvedBackupVaults.value = [{"vaultResourceId":"","backupPolicyResourceId":""}]'
 
   printf 'Offline parity suite passed.\n'
 }
 
-if ! command -v az >/dev/null 2>&1 || [[ "${ESLZ_OFFLINE_TESTS:-0}" == '1' ]]; then
+if [[ "${ESLZ_OFFLINE_TESTS:-0}" == '1' ]]; then
   run_offline_parity_suite
   exit 0
 fi
+command -v az >/dev/null 2>&1 || {
+  printf 'ERROR: Azure CLI is required for Bicep validation.\n' >&2
+  exit 1
+}
 command -v jq >/dev/null 2>&1 || {
   printf 'ERROR: jq is required for structural tests.\n' >&2
   exit 1
@@ -150,6 +157,7 @@ command -v rg >/dev/null 2>&1 || {
   printf 'ERROR: ripgrep is required for safety tests.\n' >&2
   exit 1
 }
+run_offline_parity_suite
 
 printf '1/29 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"

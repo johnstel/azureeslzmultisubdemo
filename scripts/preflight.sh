@@ -35,22 +35,21 @@ permission_pattern_matches() {
   normalized_action="$(printf '%s' "${action}" | tr '[:upper:]' '[:lower:]')"
   normalized_pattern="$(printf '%s' "${pattern}" | tr '[:upper:]' '[:lower:]')"
 
-  [[ "${normalized_pattern}" == '*' ]] && return 0
-  [[ "${normalized_pattern}" == *'/*' ]] || [[ "${normalized_action}" == "${normalized_pattern}" ]] || return 1
-  local prefix="${normalized_pattern%/*}"
-  [[ "${normalized_action}" == "${prefix}" || "${normalized_action}" == "${prefix}/"* ]]
+  local expression
+  expression="$(printf '%s' "${normalized_pattern}" | sed 's/[][\\.^$+?(){}|]/\\&/g; s/\*/.*/g')"
+  [[ "${normalized_action}" =~ ^${expression}$ ]]
 }
 
 permission_set_allows_action() {
   local action="${1:-}"
   local permissions_json="${2:-}"
-  local allowed=false
-  local denied=false
   local permission_set
   local pattern
 
   while IFS= read -r permission_set; do
     [[ -n "${permission_set}" ]] || continue
+    local allowed=false
+    local denied=false
     while IFS= read -r pattern; do
       [[ -n "${pattern}" ]] || continue
       if permission_pattern_matches "${action}" "${pattern}"; then
@@ -63,9 +62,10 @@ permission_set_allows_action() {
         denied=true
       fi
     done < <(printf '%s\n' "${permission_set}" | jq -r '((.notActions // [])[]?, (.notDataActions // [])[]?)' 2>/dev/null)
+    [[ "${allowed}" == 'true' && "${denied}" == 'false' ]] && return 0
   done < <(printf '%s\n' "${permissions_json}" | jq -c '.value[]?' 2>/dev/null)
 
-  [[ "${allowed}" == 'true' && "${denied}" == 'false' ]]
+  return 1
 }
 
 is_guid() {
@@ -136,7 +136,7 @@ require_command jq
 
 jq -e '.parameters | type == "object"' "${PARAMETER_FILE}" >/dev/null \
   || fail 'Parameter file is not an ARM deployment-parameters JSON document.'
-jq -n --slurpfile expected "${PROJECT_DIR}/parameters/demo.parameters.template.json" --slurpfile actual "${PARAMETER_FILE}" '
+jq -e -n --slurpfile expected "${PROJECT_DIR}/parameters/demo.parameters.template.json" --slurpfile actual "${PARAMETER_FILE}" '
   def shape: .parameters | to_entries | map({name: .key, type: (.value.value | type)}) | sort_by(.name);
   ($expected[0] | shape) == ($actual[0] | shape)
 ' >/dev/null || fail 'Parameter file must expose the same parameter names and value types as the committed v2 profiles.'
@@ -289,7 +289,8 @@ done
 
 approved_backup_vault_count="$(jq -r '.parameters.approvedBackupVaults.value | length // 0' "${PARAMETER_FILE}")"
 while IFS=$'\t' read -r vault_id backup_policy_id; do
-  [[ -z "${vault_id}" ]] && continue
+  [[ -n "${vault_id}" && -n "${backup_policy_id}" ]] \
+    || fail 'approvedBackupVaults entries require vaultResourceId and backupPolicyResourceId.'
   is_resource_id "${vault_id}" Microsoft.RecoveryServices vaults \
     || fail 'approvedBackupVaults contains an invalid Recovery Services vault resource ID.'
   normalized_vault_id="$(printf '%s' "${vault_id}" | tr '[:upper:]' '[:lower:]')"
@@ -425,7 +426,10 @@ if [[ -n "${workspace_id}" ]]; then
   check_subscription "$(resource_subscription_id "${workspace_id}")" 'workspace'
   check_provider "$(resource_subscription_id "${workspace_id}")" Microsoft.OperationalInsights
   check_resource "${workspace_id}" Microsoft.OperationalInsights/workspaces
-  if parameter_is_true grantVaultDiagnosticsWorkspaceAccess; then
+  if parameter_is_true grantVaultDiagnosticsWorkspaceAccess ||
+    { parameter_is_true deployLoggingRemediationRoleAssignments &&
+      { [[ "$(optional_parameter_value activityLogExportPolicyEffect)" == 'DeployIfNotExists' ]] ||
+        [[ "$(optional_parameter_value resourceDiagnosticsPolicyEffect)" == 'DeployIfNotExists' ]]; }; }; then
     check_permission "${workspace_id}" 'microsoft.authorization/roleassignments/write'
   fi
 fi
@@ -442,7 +446,8 @@ while IFS= read -r route_table_id; do
   check_resource "${route_table_id}" Microsoft.Network/routeTables
 done < <(jq -r '.parameters.approvedRouteTableResourceIds.value[]? // empty' "${PARAMETER_FILE}")
 while IFS=$'\t' read -r vault_id backup_policy_id; do
-  [[ -z "${vault_id}" ]] && continue
+  [[ -n "${vault_id}" && -n "${backup_policy_id}" ]] \
+    || fail 'approvedBackupVaults entries require vaultResourceId and backupPolicyResourceId.'
   check_subscription "$(resource_subscription_id "${vault_id}")" 'backup-vault'
   check_provider "$(resource_subscription_id "${vault_id}")" Microsoft.RecoveryServices
   check_resource "${vault_id}" Microsoft.RecoveryServices/vaults

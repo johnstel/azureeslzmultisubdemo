@@ -52,15 +52,7 @@ function Test-ActionPatternMatch {
     }
     $normalizedAction = $Action.Trim().ToLowerInvariant()
     $normalizedPattern = $Pattern.Trim().ToLowerInvariant()
-    if ($normalizedPattern -eq '*') {
-        return $true
-    }
-    if ($normalizedPattern.EndsWith('/*', [System.StringComparison]::Ordinal)) {
-        $prefix = $normalizedPattern.Substring(0, $normalizedPattern.Length - 2)
-        return $normalizedAction.Equals($prefix, [System.StringComparison]::Ordinal) -or
-            $normalizedAction.StartsWith("$prefix/", [System.StringComparison]::Ordinal)
-    }
-    return $normalizedAction.Equals($normalizedPattern, [System.StringComparison]::Ordinal)
+    return $normalizedAction -match ('^' + [regex]::Escape($normalizedPattern).Replace('\*', '.*') + '$')
 }
 
 function Test-ActionPermitted {
@@ -71,10 +63,10 @@ function Test-ActionPermitted {
     if ($null -eq $Permissions -or $null -eq $Permissions.value) {
         return $false
     }
-    $allowed = $false
-    $denied = $false
     foreach ($permissionSet in @($Permissions.value)) {
         if ($null -eq $permissionSet) { continue }
+        $allowed = $false
+        $denied = $false
         $allowedCandidates = @()
         foreach ($propertyName in @('actions', 'dataActions')) {
             if ($null -ne $permissionSet.PSObject.Properties[$propertyName]) {
@@ -98,8 +90,9 @@ function Test-ActionPermitted {
                 $denied = $true
             }
         }
+        if ($allowed -and -not $denied) { return $true }
     }
-    return $allowed -and -not $denied
+    return $false
 }
 
 function Test-GuidShape {
@@ -369,6 +362,7 @@ $approvedBackupVaults = if ($null -eq $approvedBackupVaultInput) { @() } else { 
 foreach ($approvedBackupVault in $approvedBackupVaults) {
     $vaultId = [string]$approvedBackupVault.vaultResourceId
     $backupPolicyId = [string]$approvedBackupVault.backupPolicyResourceId
+    if ([string]::IsNullOrWhiteSpace($vaultId) -or [string]::IsNullOrWhiteSpace($backupPolicyId)) { Stop-Preflight 'approvedBackupVaults entries require vaultResourceId and backupPolicyResourceId.' }
     if (-not (Test-ResourceId $vaultId Microsoft.RecoveryServices vaults)) { Stop-Preflight 'approvedBackupVaults contains an invalid Recovery Services vault resource ID.' }
     if (-not $backupPolicyId.StartsWith("$vaultId/backupPolicies/", [System.StringComparison]::OrdinalIgnoreCase) -or
         $backupPolicyId.Length -eq ($vaultId.Length + '/backupPolicies/'.Length) -or
@@ -523,7 +517,10 @@ if (-not [string]::IsNullOrWhiteSpace($workspaceId)) {
     Test-Subscription $workspaceSubscriptionId 'workspace'
     Test-ProviderRegistration $workspaceSubscriptionId Microsoft.OperationalInsights
     Test-ReferencedResource $workspaceId Microsoft.OperationalInsights/workspaces
-    if (Test-ParameterTrue grantVaultDiagnosticsWorkspaceAccess) {
+    if ((Test-ParameterTrue grantVaultDiagnosticsWorkspaceAccess) -or
+        ((Test-ParameterTrue deployLoggingRemediationRoleAssignments) -and
+        (((Get-OptionalParameterValue activityLogExportPolicyEffect) -eq 'DeployIfNotExists') -or
+        ((Get-OptionalParameterValue resourceDiagnosticsPolicyEffect) -eq 'DeployIfNotExists')))) {
         Test-EffectivePermission $workspaceId 'microsoft.authorization/roleassignments/write'
     }
 }
@@ -547,7 +544,7 @@ if ($null -ne $routeTableIds) {
 }
 foreach ($approvedBackupVault in $approvedBackupVaults) {
     $vaultResourceId = [string]$approvedBackupVault.vaultResourceId
-    if ([string]::IsNullOrWhiteSpace($vaultResourceId)) { continue }
+    if ([string]::IsNullOrWhiteSpace($vaultResourceId) -or [string]::IsNullOrWhiteSpace([string]$approvedBackupVault.backupPolicyResourceId)) { Stop-Preflight 'approvedBackupVaults entries require vaultResourceId and backupPolicyResourceId.' }
     $backupVaultSubscriptionId = Get-ResourceSubscriptionId $vaultResourceId
     if ([string]::IsNullOrWhiteSpace($backupVaultSubscriptionId)) { continue }
     Test-Subscription $backupVaultSubscriptionId 'backup-vault'
