@@ -65,9 +65,10 @@ workload_scope="/providers/Microsoft.Management/managementGroups/${prefix}-${arc
 connectivity_scope="/subscriptions/${connectivity_subscription}"
 subscription_workload_scope="/subscriptions/${workload_subscription}"
 workspace_scope=''
+existing_workspace_resource_id_normalized="$(printf '%s' "${existing_workspace_resource_id}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${central_log_analytics_enabled}" == 'true' ]]; then
   workspace_scope="/subscriptions/${connectivity_subscription}/resourceGroups/rg-${prefix}-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-${prefix}-central"
-elif [[ "${existing_workspace_resource_id}" =~ ^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.OperationalInsights/workspaces/[^/]+$ ]]; then
+elif [[ "${existing_workspace_resource_id_normalized}" =~ ^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\.operationalinsights/workspaces/[^/]+$ ]]; then
   workspace_scope="${existing_workspace_resource_id}"
 fi
 monitoring_resource_group="rg-${prefix}-monitoring"

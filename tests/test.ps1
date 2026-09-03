@@ -227,7 +227,7 @@ function Invoke-TeardownOfflineFixture {
     "criticalInfrastructureSubscriptionIds": { "value": ["55555555-5555-5555-5555-555555555555"] },
     "enableNercCipTechnicalOverlay": { "value": true },
     "existingLogAnalyticsWorkspaceResourceId": {
-      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.OperationalInsights/workspaces/ws-protected"
+      "value": "/SUBSCRIPTIONS/11111111-1111-1111-1111-111111111111/RESOURCEGROUPS/rg-demo-connectivity/PROVIDERS/MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/ws-protected"
     },
     "approvedFirewallResourceId": {
       "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.Network/azureFirewalls/fw-protected"
