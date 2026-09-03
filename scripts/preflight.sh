@@ -408,6 +408,28 @@ if parameter_is_true deployRecoveryServicesVault; then
   check_provider "${workload_subscription}" Microsoft.RecoveryServices
 fi
 
+check_owned_resource_group_collision() {
+  local subscription="$1"
+  local group="$2"
+  if az group exists --subscription "${subscription}" --name "${group}" --output tsv 2>/dev/null | grep -qi true; then
+    local owner
+    owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv 2>/dev/null)" \
+      || fail "Cannot verify ownership marker for existing resource group ${group}; it is protected."
+    [[ "${owner}" == "${name_prefix}" ]] \
+      || fail "Resource group ${group} already exists without this deployment's ESLZLifecycleOwner marker; it is protected."
+  fi
+}
+if parameter_is_true deployEvidenceResources; then
+  check_owned_resource_group_collision "${connectivity_subscription}" "rg-${name_prefix}-connectivity"
+  check_owned_resource_group_collision "${workload_subscription}" "rg-${name_prefix}-$(parameter_value workloadArchetype)-demo"
+fi
+if parameter_is_true deployCentralLogAnalytics && [[ -z "$(optional_parameter_value existingLogAnalyticsWorkspaceResourceId)" ]]; then
+  check_owned_resource_group_collision "${connectivity_subscription}" "rg-${name_prefix}-monitoring"
+fi
+if parameter_is_true deployRecoveryServicesVault; then
+  check_owned_resource_group_collision "${workload_subscription}" "rg-${name_prefix}-backup"
+fi
+
 check_resource() {
   local resource_id="$1"
   local expected_type="$2"

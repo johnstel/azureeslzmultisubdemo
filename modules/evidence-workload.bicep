@@ -14,6 +14,7 @@ resource workloadResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' =
     CostCenter: 'Demo'
     DataClassification: 'Non-sensitive'
     'SSP-ID': 'Demo'
+    ESLZLifecycleOwner: namePrefix
   }
 }
 

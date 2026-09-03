@@ -38,6 +38,7 @@ recovery_services_vault_enabled="$(jq -r '.parameters.deployRecoveryServicesVaul
 role_assignments_enabled="$(jq -r '.parameters.deployRoleAssignments.value // false' "${PARAMETER_FILE}")"
 evidence_resources_enabled="$(jq -r '.parameters.deployEvidenceResources.value // false' "${PARAMETER_FILE}")"
 firewall_route_guardrails_enabled="$(jq -r '.parameters.enableFirewallRouteGuardrails.value // false' "${PARAMETER_FILE}")"
+nerc_cip_overlay_enabled="$(jq -r '.parameters.enableNercCipTechnicalOverlay.value // false' "${PARAMETER_FILE}")"
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
 # by this script, regardless of any naming collision with a generated resource group name.
@@ -103,6 +104,12 @@ delete_resource_group_if_not_protected() {
     return 0
   fi
   if az group exists --subscription "${subscription}" --name "${group}" --output tsv | grep -qi true; then
+    local owner
+    owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv 2>/dev/null || true)"
+    if [[ "${owner}" != "${prefix}" ]]; then
+      printf 'SKIP: %s is external/protected because ESLZLifecycleOwner does not match this demo root.\n' "${group}" >&2
+      return 0
+    fi
     az group delete --subscription "${subscription}" --name "${group}" --yes --no-wait
   fi
 }
@@ -133,18 +140,20 @@ print_plan() {
   printf '     deployment-owned demo-audit-platform-tags at %s\n' "${platform_scope}"
   printf '     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at %s\n' "${landing_zones_scope}"
   printf '     deployment-owned demo-network-ingress, demo-private-access at %s\n' "${workload_scope}"
+  [[ "${role_assignments_enabled}" == true ]] && printf '     deployment-owned ordinary RBAC mappings at %s, %s, and %s\n' "${demo_root_scope}" "${connectivity_scope}" "${subscription_workload_scope}" || printf '     disabled/not-owned ordinary RBAC mappings\n'
   [[ "$(jq -r '.parameters.enableDefenderCspm.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-defender-cspm at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-defender-cspm\n'
   [[ "$(jq -r '.parameters.enableMicrosoftCloudSecurityBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-mcsb-baseline at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-mcsb-baseline\n'
   [[ "$(jq -r '.parameters.enableCisAzureFoundationsBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-cis-foundations at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-cis-foundations\n'
   [[ "$(jq -r '.parameters.enableNistSp80053Rev5.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-nist-800-53-r5 at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-nist-800-53-r5\n'
   [[ "$(jq -r '.parameters.enableTagInheritance.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-inherit-rg-tags at %s\n' "${landing_zones_scope}" || printf '     disabled/not-owned demo-inherit-rg-tags\n'
   if [[ "${critical_enabled}" == true ]]; then
-    printf '     deployment-owned demo-critical-private, demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}"
+    printf '     deployment-owned demo-critical-private at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}"
+    [[ "${nerc_cip_overlay_enabled}" == true ]] && printf '     deployment-owned demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}" || printf '     disabled/not-owned demo-nerc-cip-technical\n'
     [[ "${firewall_route_guardrails_enabled}" == true ]] && printf '     deployment-owned demo-critical-fw-routes at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}"
   else
     printf '     disabled/not-owned Critical Infrastructure assignments\n'
   fi
-  printf '     deployment-owned demo-firewall-routes at %s when firewall guardrails are enabled\n' "${workload_scope}"
+  [[ "${firewall_route_guardrails_enabled}" == true ]] && printf '     deployment-owned demo-firewall-routes at %s\n' "${workload_scope}" || printf '     disabled/not-owned demo-firewall-routes\n'
   jq -r '.parameters.approvedBackupVaults.value // [] | to_entries[] | "     deployment-owned demo-vm-backup-\(.key) at '"${landing_zones_scope}"'"' "${PARAMETER_FILE}"
   [[ -n "${workspace_scope}" ]] && printf '     deployment-owned remediating identity roles at %s; workspace is external/protected when supplied.\n' "${workspace_scope}"
   step_number=$((step_number + 1))
@@ -180,10 +189,9 @@ print_plan() {
   ' "${PARAMETER_FILE}"
   printf '  %d. deployment-owned custom initiatives and policy definitions are deleted after assignments.\n' "${step_number}"
   printf '     deployment-owned initiatives %s-required-rg-tags, %s-inherit-rg-tags, %s-network-ingress, %s-private-access, %s-data-protection, %s-backup-posture, %s-nerc-cip-technical-overlay at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
-  printf '     deployment-owned definitions %s-allowed-us-locations, %s-allowed-resource-types-all, %s-audit-public-ip, %s-public-mgmt-ingress, %s-require-subnet-nsg, %s-audit-paas-public-network, %s-audit-approved-firewall-routes, %s-block-expensive, %s-audit-storage-cmk-approved-key, %s-audit-platform-tags at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
+  printf '     deployment-owned definitions %s-allowed-us-locations, %s-allowed-resource-types-all, %s-require-workload-rg-tags, %s-audit-public-ip, %s-public-mgmt-ingress, %s-require-subnet-nsg, %s-audit-paas-public-network, %s-audit-approved-firewall-routes, %s-block-expensive, %s-audit-storage-cmk-approved-key, %s-audit-platform-tags at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
   step_number=$((step_number + 1))
   printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
-  [[ "${role_assignments_enabled}" == true ]] && printf '     deployment-owned ordinary RBAC mappings at %s, %s, and %s\n' "${demo_root_scope}" "${connectivity_scope}" "${subscription_workload_scope}" || printf '     disabled/not-owned ordinary RBAC mappings\n'
   step_number=$((step_number + 1))
   if [[ "${critical_enabled}" == 'true' && ${#critical_subscriptions[@]} -gt 0 ]]; then
     local critical_subscriptions_joined="${critical_subscriptions[0]}"

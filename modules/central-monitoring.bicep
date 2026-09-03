@@ -62,7 +62,7 @@ resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/config
 resource monitoringResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = if (createNewWorkspace) {
   name: resourceGroupName
   location: location
-  tags: tags
+  tags: union(tags, { ESLZLifecycleOwner: namePrefix })
 }
 
 module newWorkspace 'central-monitoring-workspace.bicep' = if (createNewWorkspace) {

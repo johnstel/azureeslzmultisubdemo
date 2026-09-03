@@ -95,6 +95,7 @@ $recoveryServicesVaultEnabled = Get-OptionalBoolValue 'deployRecoveryServicesVau
 $roleAssignmentsEnabled = Get-OptionalBoolValue 'deployRoleAssignments' $false
 $evidenceResourcesEnabled = Get-OptionalBoolValue 'deployEvidenceResources' $false
 $firewallRouteGuardrailsEnabled = Get-OptionalBoolValue 'enableFirewallRouteGuardrails' $false
+$nercCipOverlayEnabled = Get-OptionalBoolValue 'enableNercCipTechnicalOverlay' $false
 
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
@@ -182,6 +183,11 @@ function Remove-ResourceGroupIfNotProtected {
     }
     $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
     if ([string]$groupExists -eq 'true') {
+        $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
+        if ([string]$owner -cne $prefix) {
+            Write-Warning "SKIP: $Group is external/protected because ESLZLifecycleOwner does not match this demo root."
+            return
+        }
         & az group delete --subscription $Subscription --name $Group --yes --no-wait
         if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $Group." }
     }
@@ -219,6 +225,8 @@ Write-Host "     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, de
 Write-Host "     deployment-owned demo-audit-platform-tags at $platformScope"
 Write-Host "     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at $landingZonesScope"
 Write-Host "     deployment-owned demo-network-ingress, demo-private-access at $workloadScope"
+if ($roleAssignmentsEnabled) { Write-Host "     deployment-owned ordinary RBAC mappings at $demoRootScope, $connectivityScope, and $subscriptionWorkloadScope" }
+else { Write-Host '     disabled/not-owned ordinary RBAC mappings' }
 foreach ($optionalAssignment in @(
     @('enableDefenderCspm', 'demo-defender-cspm', $demoRootScope),
     @('enableMicrosoftCloudSecurityBenchmark', 'demo-mcsb-baseline', $demoRootScope),
@@ -230,11 +238,14 @@ foreach ($optionalAssignment in @(
     else { Write-Host "     disabled/not-owned $($optionalAssignment[1])" }
 }
 if ($criticalEnabled) {
-    Write-Host "     deployment-owned demo-critical-private, demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
+    Write-Host "     deployment-owned demo-critical-private at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
+    if ($nercCipOverlayEnabled) { Write-Host "     deployment-owned demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra" }
+    else { Write-Host '     disabled/not-owned demo-nerc-cip-technical' }
     if ($firewallRouteGuardrailsEnabled) { Write-Host "     deployment-owned demo-critical-fw-routes at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra" }
 }
 else { Write-Host '     disabled/not-owned Critical Infrastructure assignments' }
-Write-Host "     deployment-owned demo-firewall-routes at $workloadScope when firewall guardrails are enabled"
+if ($firewallRouteGuardrailsEnabled) { Write-Host "     deployment-owned demo-firewall-routes at $workloadScope" }
+else { Write-Host '     disabled/not-owned demo-firewall-routes' }
 for ($index = 0; $index -lt $approvedBackupVaults.Count; $index++) {
     Write-Host "     deployment-owned demo-vm-backup-$index at $landingZonesScope"
 }
@@ -264,10 +275,8 @@ if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
 }
 Write-Host '  4. deployment-owned custom initiatives and policy definitions are deleted after assignments.'
 Write-Host "     deployment-owned initiatives $prefix-required-rg-tags, $prefix-inherit-rg-tags, $prefix-network-ingress, $prefix-private-access, $prefix-data-protection, $prefix-backup-posture, $prefix-nerc-cip-technical-overlay at $demoRootScope"
-Write-Host "     deployment-owned definitions $prefix-allowed-us-locations, $prefix-allowed-resource-types-all, $prefix-audit-public-ip, $prefix-public-mgmt-ingress, $prefix-require-subnet-nsg, $prefix-audit-paas-public-network, $prefix-audit-approved-firewall-routes, $prefix-block-expensive, $prefix-audit-storage-cmk-approved-key, $prefix-audit-platform-tags at $demoRootScope"
+Write-Host "     deployment-owned definitions $prefix-allowed-us-locations, $prefix-allowed-resource-types-all, $prefix-require-workload-rg-tags, $prefix-audit-public-ip, $prefix-public-mgmt-ingress, $prefix-require-subnet-nsg, $prefix-audit-paas-public-network, $prefix-audit-approved-firewall-routes, $prefix-block-expensive, $prefix-audit-storage-cmk-approved-key, $prefix-audit-platform-tags at $demoRootScope"
 Write-Host "  5. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
-if ($roleAssignmentsEnabled) { Write-Host "     deployment-owned ordinary RBAC mappings at $demoRootScope, $connectivityScope, and $subscriptionWorkloadScope" }
-else { Write-Host '     disabled/not-owned ordinary RBAC mappings' }
 $stepNumber = 6
 if ($criticalEnabled -and $criticalSubscriptions.Count -gt 0) {
     $criticalSubscriptionsList = $criticalSubscriptions -join ', '

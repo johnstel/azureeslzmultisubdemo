@@ -17,7 +17,7 @@ var commonTags = {
 resource connectivityResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
   name: resourceGroupName
   location: location
-  tags: commonTags
+  tags: union(commonTags, { ESLZLifecycleOwner: namePrefix })
 }
 
 module networkEvidence 'evidence-network.bicep' = {
