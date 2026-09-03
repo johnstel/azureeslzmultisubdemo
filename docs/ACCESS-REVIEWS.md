@@ -91,12 +91,19 @@ unnecessary.** Business necessity is decided only by the reviewers named
 below.
 
 The report counts distinct Owner principals for every requested subscription
-and flags those above `maxOwnersPerSubscription`. Owner grants inherited from
-a management group are counted for each subscription that observed them, so
-`ownerPrincipalCount` is the reviewable total; `directOwnerPrincipalCount` and
-`inheritedOwnerPrincipalCount` split it for remediation. An inherited grant is
-attributed only where it was observed, because a management-group query alone
-does not prove which subscriptions it reaches.
+and flags those above `maxOwnersPerSubscription`. Only a grant that confers
+Owner over the whole subscription is counted: one scoped directly to the
+subscription (`directOwnerPrincipalCount`), or one inherited from a management
+group or the tenant root (`inheritedOwnerPrincipalCount`). Their sum,
+`ownerPrincipalCount`, is the reviewable total, and the split shows whether
+remediation belongs at the subscription or above it. An inherited grant is
+counted only for the subscriptions that observed it, because a management-group
+query alone does not prove which subscriptions it reaches.
+
+An Owner grant scoped to a resource group or a single resource is still
+reported as a finding, but it is deliberately excluded from these totals: it
+confers Owner only over that child scope, so counting it as a subscription
+Owner would overstate the blast radius and trip the threshold spuriously.
 
 ## Configurable review criteria
 
@@ -128,7 +135,9 @@ after any privileged-access incident or bootstrap change.
    [PIM-ready Azure RBAC](AZURE-RBAC-PIM.md).
 2. Use `ownerPrincipalCount`, which already includes inherited Owners, and
    read `inheritedOwnerPrincipalCount` to decide whether remediation belongs
-   at the subscription or at the management group.
+   at the subscription or at the management group. Review resource-group and
+   resource-scoped Owner findings separately; they are excluded from the
+   counts because they do not confer Owner over the subscription.
 3. For each subscription in `summary.subscriptionsExceedingOwnerThreshold`,
    record for every Owner principal whether it stays, is replaced by an
    eligible time-bound assignment, or is removed.

@@ -3343,8 +3343,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         ($accessReviewObservationsExpected | ConvertTo-Json -Depth 20 -Compress)) {
         Stop-Test 'The deduplicated inheritance classification changed unexpectedly.'
     }
-    if ($accessReviewObservationsReport.summary.assignmentsCollected -ne 9 -or
-        $accessReviewObservationsReport.summary.assignmentsEvaluated -ne 4 -or
+    if ($accessReviewObservationsReport.summary.assignmentsCollected -ne 10 -or
+        $accessReviewObservationsReport.summary.assignmentsEvaluated -ne 5 -or
         $accessReviewObservationsReport.summary.duplicateObservationsCollapsed -ne 5) {
         Stop-Test 'Repeated inherited observations were not deduplicated by assignment identity.'
     }
@@ -3366,6 +3366,27 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         $accessReviewOwnerCounts[1].directOwnerPrincipalCount -ne 0 -or
         $accessReviewOwnerCounts[1].inheritedOwnerPrincipalCount -ne 2) {
         Stop-Test 'Inherited Owner grants were not attributed to the requested subscriptions that observed them.'
+    }
+    # An Owner scoped to a resource group does not confer Owner over the
+    # subscription, so it stays a finding but never inflates the Owner totals.
+    $accessReviewChildOwners = @($accessReviewObservationsReport.findings |
+        Where-Object { $_.roleDefinitionName -eq 'Owner' -and $_.scopeType -eq 'resourceGroup' })
+    if ($accessReviewChildOwners.Count -ne 1 -or
+        (@($accessReviewChildOwners[0].observedInSubscriptions) -join ',') -ne $accessReviewSubscription) {
+        Stop-Test 'A resource-group-scoped Owner grant must remain a finding in the inventory.'
+    }
+    $accessReviewObservedOwners = @($accessReviewObservationsReport.findings |
+        Where-Object { $_.roleDefinitionName -eq 'Owner' -and
+            ($_.observedInSubscriptions -contains $accessReviewSubscription) } |
+        ForEach-Object { $_.principalId } | Sort-Object -Unique)
+    if ($accessReviewObservedOwners.Count -ne 4 -or $accessReviewOwnerCounts[0].ownerPrincipalCount -ne 3) {
+        Stop-Test 'A child-scoped Owner grant must not count towards the subscription Owner total.'
+    }
+    foreach ($accessReviewOwnerCount in $accessReviewOwnerCounts) {
+        if ($accessReviewOwnerCount.ownerPrincipalCount -ne
+            ($accessReviewOwnerCount.directOwnerPrincipalCount + $accessReviewOwnerCount.inheritedOwnerPrincipalCount)) {
+            Stop-Test 'Subscription Owner totals must be the sum of their direct and inherited parts.'
+        }
     }
 
     $accessReviewStrictCriteria = Join-Path $TempDir 'access-review-strict-criteria.json'

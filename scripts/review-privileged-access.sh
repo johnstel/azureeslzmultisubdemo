@@ -365,14 +365,19 @@ jq -n \
       })
     | sort_by([severity_rank(.severity), .scope, .roleDefinitionName, .principalId])) as $findings |
 
-  # Owner counts attribute every Owner grant that applies to a requested
-  # subscription, including one inherited from a management group, so the count
-  # needs no manual folding-in by the reviewer.
+  # Owner counts attribute every Owner grant that confers Owner over the whole
+  # subscription: one scoped directly to it, or one inherited from a management
+  # group or the tenant root. Resource-group and resource-scoped Owner grants
+  # stay findings but never count as subscription Owners, because they do not
+  # confer Owner over the subscription.
   ($subscriptions
     | map(. as $subscription |
       ($evaluated
         | map(select(
             .roleDefinitionName == "Owner"
+            and ((.scopeType == "subscription")
+              or (.scopeType == "managementGroup")
+              or (.scopeType == "tenantRoot"))
             and (.observedInSubscriptions | index($subscription)) != null))) as $ownerAssignments |
       ($ownerAssignments | map(select(.scopeType == "subscription"))) as $directOwners |
       ($ownerAssignments | map(select(.scopeType != "subscription"))) as $inheritedOwners |
@@ -461,11 +466,13 @@ jq -r '
     else "| (no requested subscriptions) | 0 | 0 | 0 | no |"
     end),
   "",
-  "Owner grants inherited from a management group are already counted for every",
-  "requested subscription that observed them, so these totals need no manual",
-  "folding-in. An inherited grant is attributed only where it was actually",
-  "observed; a management-group query alone cannot prove which subscriptions it",
-  "reaches.",
+  "These totals count only Owner grants that confer Owner over the whole",
+  "subscription: those scoped directly to it, and those inherited from a",
+  "management group or the tenant root. Inherited grants are already folded in",
+  "for every requested subscription that observed them, and are attributed only",
+  "where they were actually observed, because a management-group query alone",
+  "cannot prove which subscriptions it reaches. Owner grants scoped to a",
+  "resource group or a resource remain findings below but are excluded here.",
   "",
   "## Findings",
   "",

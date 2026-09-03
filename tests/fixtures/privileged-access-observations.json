@@ -32,6 +32,13 @@
           "principalType": "ServicePrincipal",
           "roleDefinitionName": "Key Vault Secrets User",
           "scope": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/demo-workload-rg"
+        },
+        {
+          "id": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/demo-workload-rg/providers/Microsoft.Authorization/roleAssignments/aaaaaaaa-4444-4444-8444-444444444444",
+          "principalId": "44444444-4444-4444-8444-444444444444",
+          "principalType": "User",
+          "roleDefinitionName": "Owner",
+          "scope": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/demo-workload-rg"
         }
       ]
     },

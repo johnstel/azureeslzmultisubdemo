@@ -577,12 +577,19 @@ $findings = @(
         )
 )
 
+# Owner counts attribute every Owner grant that confers Owner over the whole
+# subscription: one scoped directly to it, or one inherited from a management
+# group or the tenant root. Resource-group and resource-scoped Owner grants
+# stay findings but never count as subscription Owners, because they do not
+# confer Owner over the subscription.
 $ownerCounts = @()
 foreach ($subscription in $subscriptionIdList) {
     $ownerAssignments = @(
         $evaluated |
             Where-Object {
-                $_.roleDefinitionName -eq 'Owner' -and ($_.observedInSubscriptions -contains $subscription)
+                $_.roleDefinitionName -eq 'Owner' -and
+                ($_.scopeType -eq 'subscription' -or $_.scopeType -eq 'managementGroup' -or $_.scopeType -eq 'tenantRoot') -and
+                ($_.observedInSubscriptions -contains $subscription)
             }
     )
     $directOwners = @($ownerAssignments | Where-Object { $_.scopeType -eq 'subscription' })
@@ -683,11 +690,13 @@ else {
     $reportMarkdownLines.Add('| (no requested subscriptions) | 0 | 0 | 0 | no |')
 }
 $reportMarkdownLines.Add('')
-$reportMarkdownLines.Add('Owner grants inherited from a management group are already counted for every')
-$reportMarkdownLines.Add('requested subscription that observed them, so these totals need no manual')
-$reportMarkdownLines.Add('folding-in. An inherited grant is attributed only where it was actually')
-$reportMarkdownLines.Add('observed; a management-group query alone cannot prove which subscriptions it')
-$reportMarkdownLines.Add('reaches.')
+$reportMarkdownLines.Add('These totals count only Owner grants that confer Owner over the whole')
+$reportMarkdownLines.Add('subscription: those scoped directly to it, and those inherited from a')
+$reportMarkdownLines.Add('management group or the tenant root. Inherited grants are already folded in')
+$reportMarkdownLines.Add('for every requested subscription that observed them, and are attributed only')
+$reportMarkdownLines.Add('where they were actually observed, because a management-group query alone')
+$reportMarkdownLines.Add('cannot prove which subscriptions it reaches. Owner grants scoped to a')
+$reportMarkdownLines.Add('resource group or a resource remain findings below but are excluded here.')
 $reportMarkdownLines.Add('')
 $reportMarkdownLines.Add('## Findings')
 $reportMarkdownLines.Add('')

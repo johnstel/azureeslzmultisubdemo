@@ -2773,8 +2773,8 @@ diff -u "${TEMP_DIR}/access-review-observations-expected.json" \
   exit 1
 }
 jq -e --arg first "${access_review_subscription}" --arg second "${access_review_second_subscription}" '
-  .summary.assignmentsCollected == 9
-  and .summary.assignmentsEvaluated == 4
+  .summary.assignmentsCollected == 10
+  and .summary.assignmentsEvaluated == 5
   and .summary.duplicateObservationsCollapsed == 5
   and ([.findings[] | select(.scopeType == "managementGroup")] | length) == 2
   and all(.findings[] | select(.scopeType == "managementGroup");
@@ -2792,6 +2792,27 @@ jq -e --arg first "${access_review_subscription}" --arg second "${access_review_
       and .inheritedOwnerPrincipalCount == 2)
 ' "${access_review_observations_report}" >/dev/null || {
   printf 'ERROR: Inherited assignments were not deduplicated and attributed to the requested subscriptions.\n' >&2
+  exit 1
+}
+# An Owner scoped to a resource group does not confer Owner over the
+# subscription, so it stays a finding but never inflates the Owner totals.
+jq -e --arg first "${access_review_subscription}" '
+  ([.findings[]
+    | select(.roleDefinitionName == "Owner" and .scopeType == "resourceGroup")] as $childOwners
+  | ($childOwners | length) == 1
+    and ($childOwners[0].observedInSubscriptions == [$first])
+    and (
+      # The child-scoped Owner principal is observed in the subscription, yet
+      # the Owner total stays at the three subscription-wide Owner principals.
+      [.findings[]
+        | select(.roleDefinitionName == "Owner"
+          and ((.observedInSubscriptions | index($first)) != null))
+        | .principalId]
+      | unique | length == 4))
+  and all(.summary.subscriptionOwnerCounts[];
+    .ownerPrincipalCount == (.directOwnerPrincipalCount + .inheritedOwnerPrincipalCount))
+' "${access_review_observations_report}" >/dev/null || {
+  printf 'ERROR: A child-scoped Owner grant must remain a finding without counting as a subscription Owner.\n' >&2
   exit 1
 }
 
