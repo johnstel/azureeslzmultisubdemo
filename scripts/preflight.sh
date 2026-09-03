@@ -415,8 +415,10 @@ check_owned_resource_group_collision() {
     local owner
     owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
       || fail "Cannot read existing resource group ${group}; it is protected."
+    [[ -n "${owner}" ]] \
+      || fail "Resource group ${group} already exists without an ESLZLifecycleOwner marker; it is protected."
     [[ "${owner}" == "${name_prefix}" ]] \
-      || fail "Resource group ${group} already exists without this deployment's ESLZLifecycleOwner marker; it is protected."
+      || fail "Resource group ${group} belongs to a different ESLZLifecycleOwner; it is protected."
   fi
 }
 if parameter_is_true deployEvidenceResources; then
