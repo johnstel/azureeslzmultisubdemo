@@ -55,13 +55,13 @@ permission_set_allows_action() {
       if permission_pattern_matches "${action}" "${pattern}"; then
         allowed=true
       fi
-    done < <(printf '%s\n' "${permission_set}" | jq -r '((.actions // [])[]?, (.dataActions // [])[]?)' 2>/dev/null)
+    done < <(printf '%s\n' "${permission_set}" | jq -r '(.actions // [])[]?' 2>/dev/null)
     while IFS= read -r pattern; do
       [[ -n "${pattern}" ]] || continue
       if permission_pattern_matches "${action}" "${pattern}"; then
         denied=true
       fi
-    done < <(printf '%s\n' "${permission_set}" | jq -r '((.notActions // [])[]?, (.notDataActions // [])[]?)' 2>/dev/null)
+    done < <(printf '%s\n' "${permission_set}" | jq -r '(.notActions // [])[]?' 2>/dev/null)
     [[ "${allowed}" == 'true' && "${denied}" == 'false' ]] && return 0
   done < <(printf '%s\n' "${permissions_json}" | jq -c '.value[]?' 2>/dev/null)
 

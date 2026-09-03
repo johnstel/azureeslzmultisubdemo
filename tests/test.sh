@@ -134,6 +134,7 @@ EOF
   run_case permissions_pass pass '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
   run_case permissions_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":["microsoft.authorization/roleassignments/write"]}]}' '.parameters.deployRoleAssignments.value = true'
   run_case permissions_internal_wildcard_fail fail '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]}]}'
+  run_case permissions_data_actions_only_fail fail '{"value":[{"actions":[],"dataActions":["*"],"notActions":[]}]}'
   run_case permissions_separate_grant_pass pass '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]},{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write"],"notActions":[]}]}'
   run_case missing_policy_definition_write_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}'
   run_case backup_blank_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' '.parameters.approvedBackupVaults.value = [{"vaultResourceId":"","backupPolicyResourceId":""}]'

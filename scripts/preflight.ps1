@@ -68,7 +68,7 @@ function Test-ActionPermitted {
         $allowed = $false
         $denied = $false
         $allowedCandidates = @()
-        foreach ($propertyName in @('actions', 'dataActions')) {
+        foreach ($propertyName in @('actions')) {
             if ($null -ne $permissionSet.PSObject.Properties[$propertyName]) {
                 $allowedCandidates += @($permissionSet.$propertyName)
             }
@@ -80,7 +80,7 @@ function Test-ActionPermitted {
         }
 
         $deniedCandidates = @()
-        foreach ($propertyName in @('notActions', 'notDataActions')) {
+        foreach ($propertyName in @('notActions')) {
             if ($null -ne $permissionSet.PSObject.Properties[$propertyName]) {
                 $deniedCandidates += @($permissionSet.$propertyName)
             }
