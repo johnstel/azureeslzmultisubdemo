@@ -26,6 +26,48 @@ parameter_is_true() {
   [[ "$(optional_parameter_value "$1")" == 'true' ]]
 }
 
+permission_pattern_matches() {
+  local action="${1:-}"
+  local pattern="${2:-}"
+  [[ -n "${action}" && -n "${pattern}" ]] || return 1
+
+  local normalized_action normalized_pattern
+  normalized_action="$(printf '%s' "${action}" | tr '[:upper:]' '[:lower:]')"
+  normalized_pattern="$(printf '%s' "${pattern}" | tr '[:upper:]' '[:lower:]')"
+
+  [[ "${normalized_pattern}" == '*' ]] && return 0
+  [[ "${normalized_pattern}" == *'/*' ]] || [[ "${normalized_action}" == "${normalized_pattern}" ]] || return 1
+  local prefix="${normalized_pattern%/*}"
+  [[ "${normalized_action}" == "${prefix}" || "${normalized_action}" == "${prefix}/"* ]]
+}
+
+permission_set_allows_action() {
+  local action="${1:-}"
+  local permissions_json="${2:-}"
+  local allowed=false
+  local denied=false
+  local permission_set
+  local pattern
+
+  while IFS= read -r permission_set; do
+    [[ -n "${permission_set}" ]] || continue
+    while IFS= read -r pattern; do
+      [[ -n "${pattern}" ]] || continue
+      if permission_pattern_matches "${action}" "${pattern}"; then
+        allowed=true
+      fi
+    done < <(printf '%s\n' "${permission_set}" | jq -r '((.actions // [])[]?, (.dataActions // [])[]?)' 2>/dev/null)
+    while IFS= read -r pattern; do
+      [[ -n "${pattern}" ]] || continue
+      if permission_pattern_matches "${action}" "${pattern}"; then
+        denied=true
+      fi
+    done < <(printf '%s\n' "${permission_set}" | jq -r '((.notActions // [])[]?, (.notDataActions // [])[]?)' 2>/dev/null)
+  done < <(printf '%s\n' "${permissions_json}" | jq -c '.value[]?' 2>/dev/null)
+
+  [[ "${allowed}" == 'true' && "${denied}" == 'false' ]]
+}
+
 is_guid() {
   [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
 }
@@ -38,7 +80,7 @@ is_resource_id() {
   local subscription_id
   local actual_provider
   local actual_type
-  [[ "${value}" != *[[:space:]]* ]] || return 1
+  [[ "${value}" != *[[:space:]]* && "${value}" != */ ]] || return 1
   IFS='/' read -r -a segments <<<"${value}"
   [[ "${#segments[@]}" -eq 9 && -z "${segments[0]}" ]] || return 1
   [[ "$(printf '%s' "${segments[1]}" | tr '[:upper:]' '[:lower:]')" == 'subscriptions' && "$(printf '%s' "${segments[3]}" | tr '[:upper:]' '[:lower:]')" == 'resourcegroups' && "$(printf '%s' "${segments[5]}" | tr '[:upper:]' '[:lower:]')" == 'providers' ]] || return 1
@@ -63,7 +105,7 @@ is_ipv4_address() {
   local octet
   for octet in "${octets[@]}"; do
     [[ "${octet}" =~ ^[0-9]+$ ]] || return 1
-    (( octet >= 0 && octet <= 255 )) || return 1
+    (( 10#${octet} >= 0 && 10#${octet} <= 255 )) || return 1
   done
   return 0
 }
@@ -87,12 +129,17 @@ validate_resource_id_parameter() {
     || fail "${name} must be a canonical $2/$3 resource ID when supplied."
 }
 
-require_command az
+main() {
+  require_command az
 require_command jq
 [[ -f "${PARAMETER_FILE}" ]] || fail "Parameter file not found: ${PARAMETER_FILE}"
 
 jq -e '.parameters | type == "object"' "${PARAMETER_FILE}" >/dev/null \
   || fail 'Parameter file is not an ARM deployment-parameters JSON document.'
+jq -n --slurpfile expected "${PROJECT_DIR}/parameters/demo.parameters.template.json" --slurpfile actual "${PARAMETER_FILE}" '
+  def shape: .parameters | to_entries | map({name: .key, type: (.value.value | type)}) | sort_by(.name);
+  ($expected[0] | shape) == ($actual[0] | shape)
+' >/dev/null || fail 'Parameter file must expose the same parameter names and value types as the committed v2 profiles.'
 
 if jq -e '.. | strings | select(contains("REPLACE_WITH_"))' "${PARAMETER_FILE}" >/dev/null; then
   fail 'Parameter file still contains REPLACE_WITH_* placeholders.'
@@ -139,7 +186,8 @@ done
 
 private_access_service_categories=()
 while IFS= read -r service_category; do
-  [[ -n "${service_category}" ]] || continue
+  [[ -n "${service_category}" ]] \
+    || fail 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values.'
   [[ "${service_category}" == 'Storage' || "${service_category}" == 'KeyVault' ]] \
     || fail 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values.'
   for seen_service_category in "${private_access_service_categories[@]}"; do
@@ -156,7 +204,8 @@ validate_resource_id_parameter existingLogAnalyticsWorkspaceResourceId Microsoft
 validate_resource_id_parameter approvedFirewallResourceId Microsoft.Network azureFirewalls
 route_table_ids=()
 while IFS= read -r route_table_id; do
-  [[ -z "${route_table_id}" ]] && continue
+  [[ -n "${route_table_id}" ]] \
+    || fail 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
   is_resource_id "${route_table_id}" Microsoft.Network routeTables \
     || fail 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
   normalized_route_table_id="$(printf '%s' "${route_table_id}" | tr '[:upper:]' '[:lower:]')"
@@ -186,7 +235,8 @@ if parameter_is_true enableFirewallRouteGuardrails; then
     || fail 'enableFirewallRouteGuardrails requires approvedRouteTablePrefixes.'
   route_table_prefixes=()
   while IFS= read -r route_table_prefix; do
-    [[ -z "${route_table_prefix}" ]] && continue
+    [[ -n "${route_table_prefix}" ]] \
+      || fail 'approvedRouteTablePrefixes contains an invalid IPv4 CIDR.'
     is_ipv4_cidr "${route_table_prefix}" || fail 'approvedRouteTablePrefixes contains an invalid IPv4 CIDR.'
     normalized_route_table_prefix="$(printf '%s' "${route_table_prefix}" | tr '[:upper:]' '[:lower:]')"
     for seen_route_table_prefix in "${route_table_prefixes[@]}"; do
@@ -229,13 +279,13 @@ if parameter_is_true enableCriticalInfrastructure; then
   if [[ "${#critical_subscription_ids[@]}" -eq 0 ]]; then
     fail 'enableCriticalInfrastructure requires one or more criticalInfrastructureSubscriptionIds.'
   fi
-  for critical_subscription_id in "${critical_subscription_ids[@]}"; do
-    [[ "${critical_subscription_id}" != "${normalized_connectivity_subscription}" ]] \
-      || fail 'criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.'
-    [[ "${critical_subscription_id}" != "${normalized_workload_subscription}" ]] \
-      || fail 'criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.'
-  done
 fi
+for critical_subscription_id in "${critical_subscription_ids[@]}"; do
+  [[ "${critical_subscription_id}" != "${normalized_connectivity_subscription}" ]] \
+    || fail 'criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.'
+  [[ "${critical_subscription_id}" != "${normalized_workload_subscription}" ]] \
+    || fail 'criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.'
+done
 
 approved_backup_vault_count="$(jq -r '.parameters.approvedBackupVaults.value | length // 0' "${PARAMETER_FILE}")"
 while IFS=$'\t' read -r vault_id backup_policy_id; do
@@ -326,10 +376,12 @@ check_permission() {
   local permissions_json
   permissions_json="$(az rest --method get --url "https://management.azure.com${scope}/providers/Microsoft.Authorization/permissions?api-version=2015-07-01" --output json 2>/dev/null)" \
     || fail "Cannot determine effective permissions at ${scope}; request ${action} before deployment."
-  jq -e --arg action "${action}" '[.value[]?.actions[]? | ascii_downcase] | any(. == "*" or . == $action or (endswith("/*") and ($action | startswith(rtrimstr("/*")))))' <<<"${permissions_json}" >/dev/null \
+  permission_set_allows_action "${action}" "${permissions_json}" \
     || fail "The deployment caller lacks ${action} at ${scope}; grant the required role before deployment."
 }
 check_permission "${tenant_root_scope}" 'microsoft.authorization/policyassignments/write'
+check_permission "${tenant_root_scope}" 'microsoft.authorization/policydefinitions/write'
+check_permission "${tenant_root_scope}" 'microsoft.authorization/policysetdefinitions/write'
 if parameter_is_true deployRoleAssignments || parameter_is_true enableVmBackupRemediation || parameter_is_true grantVaultDiagnosticsWorkspaceAccess; then
   check_permission "${tenant_root_scope}" 'microsoft.authorization/roleassignments/write'
 fi
@@ -373,6 +425,9 @@ if [[ -n "${workspace_id}" ]]; then
   check_subscription "$(resource_subscription_id "${workspace_id}")" 'workspace'
   check_provider "$(resource_subscription_id "${workspace_id}")" Microsoft.OperationalInsights
   check_resource "${workspace_id}" Microsoft.OperationalInsights/workspaces
+  if parameter_is_true grantVaultDiagnosticsWorkspaceAccess; then
+    check_permission "${workspace_id}" 'microsoft.authorization/roleassignments/write'
+  fi
 fi
 firewall_id="$(optional_parameter_value approvedFirewallResourceId)"
 if [[ -n "${firewall_id}" ]]; then
@@ -392,6 +447,9 @@ while IFS=$'\t' read -r vault_id backup_policy_id; do
   check_provider "$(resource_subscription_id "${vault_id}")" Microsoft.RecoveryServices
   check_resource "${vault_id}" Microsoft.RecoveryServices/vaults
   check_resource "${backup_policy_id}" Microsoft.RecoveryServices/vaults/backupPolicies
+  if parameter_is_true enableVmBackupRemediation; then
+    check_permission "${vault_id}" 'microsoft.authorization/roleassignments/write'
+  fi
 done < <(jq -r '.parameters.approvedBackupVaults.value[]? | [.vaultResourceId, .backupPolicyResourceId] | @tsv' "${PARAMETER_FILE}")
 
 while IFS=$'\t' read -r kind definition_id major_version; do
@@ -414,3 +472,8 @@ printf '  Connectivity subscription: %s\n' "${connectivity_subscription}"
 printf '  Workload subscription: %s\n' "${workload_subscription}"
 printf '  Tenant deployment location: %s\n' "${deployment_location}"
 printf '  Entra group IDs: GUID format and uniqueness verified where supplied (directory group type is not queried).\n'
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

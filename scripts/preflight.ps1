@@ -42,6 +42,66 @@ function Test-ParameterTrue {
     return (Get-OptionalParameterValue $Name) -eq $true
 }
 
+function Test-ActionPatternMatch {
+    param(
+        [string]$Action,
+        [string]$Pattern
+    )
+    if ([string]::IsNullOrWhiteSpace($Action) -or [string]::IsNullOrWhiteSpace($Pattern)) {
+        return $false
+    }
+    $normalizedAction = $Action.Trim().ToLowerInvariant()
+    $normalizedPattern = $Pattern.Trim().ToLowerInvariant()
+    if ($normalizedPattern -eq '*') {
+        return $true
+    }
+    if ($normalizedPattern.EndsWith('/*', [System.StringComparison]::Ordinal)) {
+        $prefix = $normalizedPattern.Substring(0, $normalizedPattern.Length - 2)
+        return $normalizedAction.Equals($prefix, [System.StringComparison]::Ordinal) -or
+            $normalizedAction.StartsWith("$prefix/", [System.StringComparison]::Ordinal)
+    }
+    return $normalizedAction.Equals($normalizedPattern, [System.StringComparison]::Ordinal)
+}
+
+function Test-ActionPermitted {
+    param(
+        [string]$Action,
+        $Permissions
+    )
+    if ($null -eq $Permissions -or $null -eq $Permissions.value) {
+        return $false
+    }
+    $allowed = $false
+    $denied = $false
+    foreach ($permissionSet in @($Permissions.value)) {
+        if ($null -eq $permissionSet) { continue }
+        $allowedCandidates = @()
+        foreach ($propertyName in @('actions', 'dataActions')) {
+            if ($null -ne $permissionSet.PSObject.Properties[$propertyName]) {
+                $allowedCandidates += @($permissionSet.$propertyName)
+            }
+        }
+        foreach ($candidate in $allowedCandidates) {
+            if ($null -ne $candidate -and (Test-ActionPatternMatch -Action $Action -Pattern ([string]$candidate))) {
+                $allowed = $true
+            }
+        }
+
+        $deniedCandidates = @()
+        foreach ($propertyName in @('notActions', 'notDataActions')) {
+            if ($null -ne $permissionSet.PSObject.Properties[$propertyName]) {
+                $deniedCandidates += @($permissionSet.$propertyName)
+            }
+        }
+        foreach ($candidate in $deniedCandidates) {
+            if ($null -ne $candidate -and (Test-ActionPatternMatch -Action $Action -Pattern ([string]$candidate))) {
+                $denied = $true
+            }
+        }
+    }
+    return $allowed -and -not $denied
+}
+
 function Test-GuidShape {
     param([string]$Value)
     return $Value -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
@@ -53,7 +113,7 @@ function Test-ResourceId {
         [string]$Provider,
         [string]$Type
     )
-    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -ne $Value.Trim()) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -ne $Value.Trim() -or $Value.EndsWith('/')) { return $false }
     $segments = $Value.Split('/')
     return $segments.Count -eq 9 -and $segments[0] -eq '' -and
         $segments[1] -ieq 'subscriptions' -and (Test-GuidShape $segments[2]) -and
@@ -64,7 +124,14 @@ function Test-ResourceId {
 
 function Get-ResourceSubscriptionId {
     param([string]$ResourceId)
-    return $ResourceId.Split('/')[2]
+    if ([string]::IsNullOrWhiteSpace($ResourceId)) {
+        return $null
+    }
+    $segments = $ResourceId.Trim().Split('/')
+    if ($segments.Length -lt 3) {
+        return $null
+    }
+    return $segments[2]
 }
 
 function Test-Ipv4Address {
@@ -112,7 +179,8 @@ function Invoke-AzJson {
     return (($output -join [Environment]::NewLine) | ConvertFrom-Json)
 }
 
-if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
+function Invoke-Preflight {
+    if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
     Stop-Preflight "Required command 'az' is not installed."
 }
 if (-not (Test-Path -LiteralPath $ParameterFile -PathType Leaf)) {
@@ -129,6 +197,16 @@ catch {
 
 if ($null -eq $script:ParameterDocument.parameters) {
     Stop-Preflight 'Parameter file is not an ARM deployment-parameters JSON document.'
+}
+$profileDocument = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
+$profileShape = @($profileDocument.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+    '{0}:{1}' -f $_.Name, $_.Value.value.GetType().FullName
+})
+$parameterShape = @($script:ParameterDocument.parameters.PSObject.Properties | Sort-Object Name | ForEach-Object {
+    '{0}:{1}' -f $_.Name, $_.Value.value.GetType().FullName
+})
+if (Compare-Object $profileShape $parameterShape) {
+    Stop-Preflight 'Parameter file must expose the same parameter names and value types as the committed v2 profiles.'
 }
 if ($parameterText -match 'REPLACE_WITH_') {
     Stop-Preflight 'Parameter file still contains REPLACE_WITH_* placeholders.'
@@ -204,16 +282,14 @@ $routeTableIds = @(Get-OptionalParameterValue approvedRouteTableResourceIds)
 $seenRouteTableIds = @{}
 foreach ($routeTableId in $routeTableIds) {
     $routeTableIdText = [string]$routeTableId
-    if (-not [string]::IsNullOrWhiteSpace($routeTableIdText)) {
-        if (-not (Test-ResourceId $routeTableIdText Microsoft.Network routeTables)) {
-            Stop-Preflight 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
-        }
-        $normalizedRouteTableId = $routeTableIdText.ToLowerInvariant()
-        if ($seenRouteTableIds.ContainsKey($normalizedRouteTableId)) {
-            Stop-Preflight 'approvedRouteTableResourceIds contains duplicate Microsoft.Network/routeTables resource IDs.'
-        }
-        $seenRouteTableIds[$normalizedRouteTableId] = $true
+    if ([string]::IsNullOrWhiteSpace($routeTableIdText) -or -not (Test-ResourceId $routeTableIdText Microsoft.Network routeTables)) {
+        Stop-Preflight 'approvedRouteTableResourceIds contains an invalid Microsoft.Network/routeTables resource ID.'
     }
+    $normalizedRouteTableId = $routeTableIdText.ToLowerInvariant()
+    if ($seenRouteTableIds.ContainsKey($normalizedRouteTableId)) {
+        Stop-Preflight 'approvedRouteTableResourceIds contains duplicate Microsoft.Network/routeTables resource IDs.'
+    }
+    $seenRouteTableIds[$normalizedRouteTableId] = $true
 }
 $keyVaultUris = Get-OptionalParameterValue approvedCustomerManagedKeyVaultUris
 if ($null -ne $keyVaultUris) {
@@ -243,14 +319,12 @@ if (Test-ParameterTrue enableFirewallRouteGuardrails) {
     $seenRouteTablePrefixes = @{}
     foreach ($routeTablePrefix in $routeTablePrefixes) {
         $routeTablePrefixText = [string]$routeTablePrefix
-        if (-not [string]::IsNullOrWhiteSpace($routeTablePrefixText)) {
-            if (-not (Test-Ipv4Cidr $routeTablePrefixText)) { Stop-Preflight 'approvedRouteTablePrefixes contains an invalid IPv4 CIDR.' }
-            $normalizedRouteTablePrefix = $routeTablePrefixText.ToLowerInvariant()
-            if ($seenRouteTablePrefixes.ContainsKey($normalizedRouteTablePrefix)) {
-                Stop-Preflight 'approvedRouteTablePrefixes contains duplicate IPv4 CIDR values.'
-            }
-            $seenRouteTablePrefixes[$normalizedRouteTablePrefix] = $true
+        if ([string]::IsNullOrWhiteSpace($routeTablePrefixText) -or -not (Test-Ipv4Cidr $routeTablePrefixText)) { Stop-Preflight 'approvedRouteTablePrefixes contains an invalid IPv4 CIDR.' }
+        $normalizedRouteTablePrefix = $routeTablePrefixText.ToLowerInvariant()
+        if ($seenRouteTablePrefixes.ContainsKey($normalizedRouteTablePrefix)) {
+            Stop-Preflight 'approvedRouteTablePrefixes contains duplicate IPv4 CIDR values.'
         }
+        $seenRouteTablePrefixes[$normalizedRouteTablePrefix] = $true
     }
 }
 if ((Test-ParameterTrue deployCentralLogAnalytics) -and -not [string]::IsNullOrWhiteSpace([string](Get-OptionalParameterValue existingLogAnalyticsWorkspaceResourceId))) {
@@ -283,10 +357,10 @@ if (Test-ParameterTrue enableCriticalInfrastructure) {
     if ($criticalSubscriptions.Count -eq 0) {
         Stop-Preflight 'enableCriticalInfrastructure requires one or more criticalInfrastructureSubscriptionIds.'
     }
-    foreach ($criticalSubscription in $criticalSubscriptions) {
-        if ($criticalSubscription -eq $connectivitySubscription.ToLowerInvariant() -or $criticalSubscription -eq $workloadSubscription.ToLowerInvariant()) {
-            Stop-Preflight 'criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.'
-        }
+}
+foreach ($criticalSubscription in $criticalSubscriptions) {
+    if ($criticalSubscription -eq $connectivitySubscription.ToLowerInvariant() -or $criticalSubscription -eq $workloadSubscription.ToLowerInvariant()) {
+        Stop-Preflight 'criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId.'
     }
 }
 
@@ -393,17 +467,13 @@ function Test-EffectivePermission {
     if ($null -eq $permissions) {
         Stop-Preflight "Cannot determine effective permissions at $Scope; request $Action before deployment."
     }
-    $normalizedAction = $Action.ToLowerInvariant()
-    $granted = @($permissions.value | ForEach-Object { $_.actions } | ForEach-Object { [string]$_ } | Where-Object {
-        $candidate = $_.ToLowerInvariant()
-        $candidate -eq '*' -or $candidate -eq $normalizedAction -or
-        ($candidate.EndsWith('/*') -and $normalizedAction.StartsWith($candidate.Substring(0, $candidate.Length - 1)))
-    }).Count -gt 0
-    if (-not $granted) {
+    if (-not (Test-ActionPermitted -Action $Action -Permissions $permissions)) {
         Stop-Preflight "The deployment caller lacks $Action at $Scope; grant the required role before deployment."
     }
 }
 Test-EffectivePermission $tenantRootScope 'microsoft.authorization/policyassignments/write'
+Test-EffectivePermission $tenantRootScope 'microsoft.authorization/policydefinitions/write'
+Test-EffectivePermission $tenantRootScope 'microsoft.authorization/policysetdefinitions/write'
 if ((Test-ParameterTrue deployRoleAssignments) -or (Test-ParameterTrue enableVmBackupRemediation) -or (Test-ParameterTrue grantVaultDiagnosticsWorkspaceAccess)) {
     Test-EffectivePermission $tenantRootScope 'microsoft.authorization/roleassignments/write'
 }
@@ -453,6 +523,9 @@ if (-not [string]::IsNullOrWhiteSpace($workspaceId)) {
     Test-Subscription $workspaceSubscriptionId 'workspace'
     Test-ProviderRegistration $workspaceSubscriptionId Microsoft.OperationalInsights
     Test-ReferencedResource $workspaceId Microsoft.OperationalInsights/workspaces
+    if (Test-ParameterTrue grantVaultDiagnosticsWorkspaceAccess) {
+        Test-EffectivePermission $workspaceId 'microsoft.authorization/roleassignments/write'
+    }
 }
 $firewallId = [string](Get-OptionalParameterValue approvedFirewallResourceId)
 if (-not [string]::IsNullOrWhiteSpace($firewallId)) {
@@ -463,18 +536,27 @@ if (-not [string]::IsNullOrWhiteSpace($firewallId)) {
 }
 if ($null -ne $routeTableIds) {
     foreach ($routeTableId in @($routeTableIds)) {
-        $routeTableSubscriptionId = Get-ResourceSubscriptionId ([string]$routeTableId)
+        $routeTableIdText = [string]$routeTableId
+        if ([string]::IsNullOrWhiteSpace($routeTableIdText)) { continue }
+        $routeTableSubscriptionId = Get-ResourceSubscriptionId $routeTableIdText
+        if ([string]::IsNullOrWhiteSpace($routeTableSubscriptionId)) { continue }
         Test-Subscription $routeTableSubscriptionId 'route-table'
         Test-ProviderRegistration $routeTableSubscriptionId Microsoft.Network
-        Test-ReferencedResource ([string]$routeTableId) Microsoft.Network/routeTables
+        Test-ReferencedResource $routeTableIdText Microsoft.Network/routeTables
     }
 }
 foreach ($approvedBackupVault in $approvedBackupVaults) {
-    $backupVaultSubscriptionId = Get-ResourceSubscriptionId ([string]$approvedBackupVault.vaultResourceId)
+    $vaultResourceId = [string]$approvedBackupVault.vaultResourceId
+    if ([string]::IsNullOrWhiteSpace($vaultResourceId)) { continue }
+    $backupVaultSubscriptionId = Get-ResourceSubscriptionId $vaultResourceId
+    if ([string]::IsNullOrWhiteSpace($backupVaultSubscriptionId)) { continue }
     Test-Subscription $backupVaultSubscriptionId 'backup-vault'
     Test-ProviderRegistration $backupVaultSubscriptionId Microsoft.RecoveryServices
-    Test-ReferencedResource ([string]$approvedBackupVault.vaultResourceId) Microsoft.RecoveryServices/vaults
+    Test-ReferencedResource $vaultResourceId Microsoft.RecoveryServices/vaults
     Test-ReferencedResource ([string]$approvedBackupVault.backupPolicyResourceId) Microsoft.RecoveryServices/vaults/backupPolicies
+    if (Test-ParameterTrue enableVmBackupRemediation) {
+        Test-EffectivePermission $vaultResourceId 'microsoft.authorization/roleassignments/write'
+    }
 }
 
 foreach ($control in @($ProjectDir | ForEach-Object { (Get-Content -LiteralPath (Join-Path $_ 'policy/control-catalog.json') -Raw | ConvertFrom-Json).controls })) {
@@ -501,3 +583,8 @@ Write-Host "  Connectivity subscription: $connectivitySubscription"
 Write-Host "  Workload subscription: $workloadSubscription"
 Write-Host "  Tenant deployment location: $deploymentLocation"
 Write-Host '  Entra group IDs: GUID format and uniqueness verified where supplied (directory group type is not queried).'
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-Preflight
+}

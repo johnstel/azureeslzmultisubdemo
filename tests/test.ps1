@@ -11,6 +11,137 @@ $TempDir = Join-Path $ArtifactsParent ("test-ps1-" + [guid]::NewGuid().ToString(
 New-Item -ItemType Directory -Path $ArtifactsParent -Force | Out-Null
 New-Item -ItemType Directory -Path $TempDir | Out-Null
 
+function Invoke-OfflineParitySuite {
+    $mockDir = Join-Path $TempDir 'mock-az'
+    New-Item -ItemType Directory -Path $mockDir -Force | Out-Null
+    $mockAz = @'
+#!/usr/bin/env bash
+set -e
+
+if [[ "${1:-}" == "bicep" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "account" ]]; then
+  if [[ "${2:-}" == "show" ]]; then
+    mock_account_json="${MOCK_ACCOUNT_JSON:-}"
+    if [[ -z "${mock_account_json}" ]]; then
+      mock_account_json='{"tenantId":"11111111-1111-1111-1111-111111111111","state":"Enabled"}'
+    fi
+    printf '%s\n' "${mock_account_json}"
+    exit 0
+  fi
+  if [[ "${2:-}" == "management-group" ]]; then
+    exit 0
+  fi
+fi
+
+if [[ "${1:-}" == "role" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "policy" ]]; then
+  policy_name=''
+  previous=''
+  for index in "$@"; do
+    if [[ "${previous:-}" == '--name' ]]; then
+      policy_name="${index}"
+      break
+    fi
+    previous="${index}"
+  done
+  if [[ -n "${policy_name}" ]]; then
+    version="$(jq -r --arg id "${policy_name}" '.controls[] | select(.mechanism.builtIn == true and .mechanism.definitionId == $id) | ((.mechanism.majorVersion | tostring) + ".0.0")' "${PROJECT_DIR}/policy/control-catalog.json" 2>/dev/null | head -n 1)"
+    if [[ -n "${version}" ]]; then
+      printf '%s\n' "${version}"
+      exit 0
+    fi
+  fi
+  printf '%s\n' '1.0.0'
+  exit 0
+fi
+
+if [[ "${1:-}" == "provider" ]]; then
+  printf '%s\n' "Registered"
+  exit 0
+fi
+
+if [[ "${1:-}" == "resource" ]]; then
+  case "$*" in
+    *"Microsoft.OperationalInsights/workspaces"*) printf '%s\n' "Microsoft.OperationalInsights/workspaces"; exit 0 ;;
+    *"Microsoft.Network/azureFirewalls"*) printf '%s\n' "Microsoft.Network/azureFirewalls"; exit 0 ;;
+    *"Microsoft.Network/routeTables"*) printf '%s\n' "Microsoft.Network/routeTables"; exit 0 ;;
+    *"Microsoft.RecoveryServices/vaults"*) printf '%s\n' "Microsoft.RecoveryServices/vaults"; exit 0 ;;
+  esac
+  printf '%s\n' "${MOCK_RESOURCE_TYPE:-Microsoft.Network/routeTables}"
+  exit 0
+fi
+
+if [[ "${1:-}" == "rest" ]]; then
+  mock_rest_json="${MOCK_REST_JSON:-}"
+  if [[ -z "${mock_rest_json}" ]]; then
+    mock_rest_json='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+  fi
+  mock_rest_json="$(printf '%s\n' "${mock_rest_json}" | jq '.value |= map(.actions += ["microsoft.authorization/policydefinitions/write", "microsoft.authorization/policysetdefinitions/write"])')"
+  printf '%s\n' "${mock_rest_json}"
+  exit 0
+fi
+
+printf '%s\n' '{}'
+exit 0
+'@
+    Set-Content -Path (Join-Path $mockDir 'az') -Value $mockAz -Encoding utf8
+    & bash -lc "chmod +x '$((Join-Path $mockDir 'az'))'"
+
+    $baseDocument = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw
+    $cases = @(
+        @{ Name = 'canonical-id-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' },
+        @{ Name = 'canonical-id-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.connectivitySubscriptionId.value = 'not-a-guid' } },
+        @{ Name = 'blank-members-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.approvedRouteTableResourceIds.value = @('') } },
+        @{ Name = 'blank-members-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.approvedRouteTableResourceIds.value = @('', 'not-a-resource-id') } },
+        @{ Name = 'ip-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallResourceId.value = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01'; $doc.parameters.approvedFirewallPrivateIp.value = '10.0.0.4'; $doc.parameters.approvedRouteTableResourceIds.value = @('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01'); $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24') } },
+        @{ Name = 'ip-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallPrivateIp.value = '999.999.999.999'; $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24') } },
+        @{ Name = 'logging-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.activityLogExportPolicyEffect.value = 'DeployIfNotExists'; $doc.parameters.deployRoleAssignments.value = $true; $doc.parameters.deployLoggingRemediationRoleAssignments.value = $true; $doc.parameters.deployCentralLogAnalytics.value = $true; $doc.parameters.existingLogAnalyticsWorkspaceResourceId.value = '' } },
+        @{ Name = 'logging-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.activityLogExportPolicyEffect.value = 'DeployIfNotExists'; $doc.parameters.deployLoggingRemediationRoleAssignments.value = $true; $doc.parameters.deployCentralLogAnalytics.value = $false; $doc.parameters.existingLogAnalyticsWorkspaceResourceId.value = '' } },
+        @{ Name = 'routing-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallResourceId.value = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01'; $doc.parameters.approvedFirewallPrivateIp.value = '10.0.0.4'; $doc.parameters.approvedRouteTableResourceIds.value = @('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01'); $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24') } },
+        @{ Name = 'routing-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' ; Mutator = { param($doc) $doc.parameters.enableFirewallRouteGuardrails.value = $true; $doc.parameters.approvedFirewallResourceId.value = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/azureFirewalls/fw-01'; $doc.parameters.approvedFirewallPrivateIp.value = '10.0.0.4'; $doc.parameters.approvedRouteTableResourceIds.value = @('/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01','/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-network/providers/Microsoft.Network/routeTables/rt-01'); $doc.parameters.approvedRouteTablePrefixes.value = @('10.0.0.0/24','10.0.0.0/24') } },
+        @{ Name = 'permissions-pass'; Expected = 'pass'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' },
+        @{ Name = 'permissions-fail'; Expected = 'fail'; RestJson = '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":["microsoft.authorization/roleassignments/write"]}]}' ; Mutator = { param($doc) $doc.parameters.deployRoleAssignments.value = $true } }
+    )
+
+    foreach ($case in $cases) {
+        $doc = $baseDocument | ConvertFrom-Json
+        $doc.parameters.tenantRootManagementGroupId.value = 'demo-root'
+        $doc.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
+        $doc.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
+        $doc.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        $doc.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+        $doc.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+        $doc.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+        if ($case.ContainsKey('Mutator') -and $null -ne $case.Mutator) {
+            & $case.Mutator $doc
+        }
+        $path = Join-Path $TempDir ($case.Name + '.json')
+        $doc | ConvertTo-Json -Depth 20 | Set-Content -Path $path -Encoding utf8
+
+        $env:PATH = "$mockDir$([IO.Path]::PathSeparator)$env:PATH"
+        $env:PROJECT_DIR = $ProjectDir
+        $env:MOCK_REST_JSON = $case.RestJson
+        $output = & (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $path 2>&1
+        $passed = ($LASTEXITCODE -eq 0)
+        if (($case.Expected -eq 'pass' -and -not $passed) -or ($case.Expected -eq 'fail' -and $passed)) {
+            throw "Offline parity case $($case.Name) expected $($case.Expected) but got $($passed.ToString().ToLowerInvariant()). Output: $($output -join ' ')"
+        }
+    }
+
+    Write-Host 'Offline parity suite passed.'
+}
+
+if (-not (Get-Command az -ErrorAction SilentlyContinue) -or $env:ESLZ_OFFLINE_TESTS -eq '1') {
+    Invoke-OfflineParitySuite
+    return
+}
+
 function Stop-Test {
     param([string]$Message)
     throw $Message
