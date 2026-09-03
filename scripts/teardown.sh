@@ -34,6 +34,8 @@ workload_group="$(value workloadContributorsGroupObjectId)"
 auditors_group="$(value readOnlyAuditorsGroupObjectId)"
 # Optional: defaults to false when absent so older parameter files remain safe to tear down.
 central_log_analytics_enabled="$(jq -r '.parameters.deployCentralLogAnalytics.value // false' "${PARAMETER_FILE}")"
+recovery_services_vault_enabled="$(jq -r '.parameters.deployRecoveryServicesVault.value // false' "${PARAMETER_FILE}")"
+role_assignments_enabled="$(jq -r '.parameters.deployRoleAssignments.value // false' "${PARAMETER_FILE}")"
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
 # by this script, regardless of any naming collision with a generated resource group name.
@@ -58,6 +60,7 @@ workload_scope="/providers/Microsoft.Management/managementGroups/${prefix}-${arc
 connectivity_scope="/subscriptions/${connectivity_subscription}"
 subscription_workload_scope="/subscriptions/${workload_subscription}"
 monitoring_resource_group="rg-${prefix}-monitoring"
+backup_resource_group="rg-${prefix}-backup"
 # The monitoring resource group is only repository-owned (and thus safe to delete) when a
 # new workspace was requested without also supplying an existing workspace resource ID. This
 # mirrors the conflict guard in modules/central-monitoring.bicep: a conflicting configuration
@@ -115,13 +118,16 @@ print_plan() {
   if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
     printf '  %da. Delete the demo-created monitoring resource group %s (deployCentralLogAnalytics=true and no existing workspace supplied).\n' "$((step_number - 1))" "${monitoring_resource_group}"
   fi
+  if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
+    printf '  %db. Delete the demo-created backup resource group %s.\n' "$((step_number - 1))" "${backup_resource_group}"
+  fi
   if [[ -n "${existing_workspace_resource_group}" ]]; then
     printf '\nNOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group %s in subscription %s is protected and will never be deleted by this script, even if its name collides with a group above.\n' \
       "${existing_workspace_resource_group}" "${existing_workspace_subscription}"
   fi
-  printf '  %d. Delete only the five permanent lower-privilege demo role assignments for the four operator/auditor groups at their documented scopes.\n' "${step_number}"
+  printf '  %d. Delete deployment-owned policy exemptions, remediating assignments and their role mappings, then all other demo policy assignments.\n' "${step_number}"
   step_number=$((step_number + 1))
-  printf '  %d. Delete demo policy assignments, the tagging initiative, and custom policy definitions.\n' "${step_number}"
+  printf '  %d. Delete deployment-owned custom initiatives and policy definitions after their assignments.\n' "${step_number}"
   step_number=$((step_number + 1))
   printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
   step_number=$((step_number + 1))
@@ -142,7 +148,7 @@ print_plan() {
       "${step_number}" "${prefix}" "${prefix}" "${prefix}" "${archetype}" "${prefix}" "${prefix}"
   fi
   printf '\nNOTE: Owner eligibility is managed only through the separate one-shot PIM artifact. This teardown never discovers or removes it; submit a new, separately reviewed AdminRemove request for each existing schedule and verify removal in PIM.\n'
-  printf '\nSubscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.\n'
+  printf '\nOnly objects named by this deployment and optional resource groups enabled in this parameter file are deployment-owned. Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted. Subscriptions and Entra groups are never deleted.\n'
 }
 
 delete_role_mapping() {
@@ -155,7 +161,48 @@ delete_role_mapping() {
 delete_policy_assignment() {
   local assignment_name="$1"
   local scope="$2"
+  local principal_id role_assignment_id
+  principal_id="$(az policy assignment show --name "${assignment_name}" --scope "${scope}" --query identity.principalId --output tsv 2>/dev/null || true)"
+  if [[ -n "${principal_id}" && "${principal_id}" != 'null' ]]; then
+    while IFS= read -r role_assignment_id; do
+      [[ -n "${role_assignment_id}" ]] && az role assignment delete --ids "${role_assignment_id}" 2>/dev/null || true
+    done < <(az role assignment list --assignee "${principal_id}" --query '[].id' --output tsv 2>/dev/null || true)
+  fi
   az policy assignment delete --name "${assignment_name}" --scope "${scope}" 2>/dev/null || true
+}
+
+delete_policy_exemptions() {
+  while IFS= read -r exemption; do
+    local exemption_name assignment_id exemption_scope
+    exemption_name="$(printf '%s' "${exemption}" | jq -er '.exemptionName')"
+    assignment_id="$(printf '%s' "${exemption}" | jq -er '.policyAssignmentId')"
+    exemption_scope="${assignment_id%/providers/Microsoft.Authorization/policyAssignments/*}"
+    [[ "${exemption_scope}" != "${assignment_id}" ]] || continue
+    az policy exemption delete --name "${exemption_name}" --scope "${exemption_scope}" 2>/dev/null || true
+  done < <(jq -c '.parameters.policyExemptions.value // [] | .[]' "${PARAMETER_FILE}")
+}
+
+delete_demo_policy_assignments() {
+  local scope assignment_name
+  for scope in "${demo_root_scope}" "${platform_scope}" "${landing_zones_scope}" "${workload_scope}"; do
+    for assignment_name in \
+      demo-allowed-us-locs demo-audit-public-ip demo-deploy-restrictions \
+      demo-network-ingress demo-private-access demo-data-protection \
+      demo-block-expensive demo-audit-platform-tags demo-require-rg-tags \
+      demo-defender-cspm demo-defender-servers demo-defender-storage \
+      demo-audit-vuln-assess demo-audit-ama-windows demo-audit-ama-linux \
+      demo-inherit-rg-tags demo-mcsb-baseline demo-cis-foundations \
+      demo-nist-800-53-r5 demo-backup-posture demo-vault-diagnostics \
+      demo-activity-logs demo-resource-diags; do
+      delete_policy_assignment "${assignment_name}" "${scope}"
+    done
+  done
+  if [[ "${critical_enabled}" == 'true' ]]; then
+    local critical_scope="/providers/Microsoft.Management/managementGroups/${prefix}-criticalinfra"
+    for assignment_name in demo-critical-private demo-critical-fw-routes demo-nerc-cip-technical; do
+      delete_policy_assignment "${assignment_name}" "${critical_scope}"
+    done
+  fi
 }
 
 print_plan
@@ -190,34 +237,68 @@ delete_resource_group_if_not_protected "${workload_subscription}" "rg-${prefix}-
 if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
   delete_resource_group_if_not_protected "${connectivity_subscription}" "${monitoring_resource_group}"
 fi
+if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
+  delete_resource_group_if_not_protected "${workload_subscription}" "${backup_resource_group}"
+fi
 wait_for_resource_group_deletion_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"
 wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
 if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
   wait_for_resource_group_deletion_if_not_protected "${connectivity_subscription}" "${monitoring_resource_group}"
 fi
+if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
+  wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "${backup_resource_group}"
+fi
 
-delete_role_mapping "${governance_group}" 'Management Group Contributor' "${demo_root_scope}"
-delete_role_mapping "${governance_group}" 'Resource Policy Contributor' "${demo_root_scope}"
-delete_role_mapping "${auditors_group}" 'Reader' "${demo_root_scope}"
-delete_role_mapping "${network_group}" 'Network Contributor' "${connectivity_scope}"
-delete_role_mapping "${workload_group}" 'Contributor' "${subscription_workload_scope}"
+if [[ "${role_assignments_enabled}" == 'true' ]]; then
+  delete_role_mapping "${governance_group}" 'Management Group Contributor' "${demo_root_scope}"
+  delete_role_mapping "${governance_group}" 'Resource Policy Contributor' "${demo_root_scope}"
+  delete_role_mapping "${auditors_group}" 'Reader' "${demo_root_scope}"
+  delete_role_mapping "${network_group}" 'Network Contributor' "${connectivity_scope}"
+  delete_role_mapping "${workload_group}" 'Contributor' "${subscription_workload_scope}"
+fi
 
+delete_policy_exemptions
 delete_policy_assignment 'demo-require-rg-tags' "${landing_zones_scope}"
 delete_policy_assignment 'demo-require-rg-tags' "${workload_scope}"
 delete_policy_assignment 'demo-audit-platform-tags' "${platform_scope}"
 delete_policy_assignment 'demo-block-expensive' "${demo_root_scope}"
 delete_policy_assignment 'demo-audit-public-ip' "${demo_root_scope}"
 delete_policy_assignment 'demo-allowed-us-locations' "${demo_root_scope}"
+delete_demo_policy_assignments
 
 for policy_name in \
+  "${prefix}-allowed-us-locations" \
+  "${prefix}-allowed-resource-types-all" \
   "${prefix}-require-workload-rg-tags" \
+  "${prefix}-inherit-rg-tags" \
+  "${prefix}-network-ingress" \
+  "${prefix}-private-access" \
+  "${prefix}-data-protection" \
+  "${prefix}-deploy-restrictions" \
+  "${prefix}-backup-posture" \
+  "${prefix}-nerc-cip-technical-overlay" \
   "${prefix}-audit-platform-tags" \
   "${prefix}-block-expensive" \
   "${prefix}-audit-public-ip" \
-  "${prefix}-allowed-us-locations"; do
+  "${prefix}-public-mgmt-ingress" \
+  "${prefix}-require-subnet-nsg" \
+  "${prefix}-audit-paas-public-network" \
+  "${prefix}-audit-approved-firewall-routes" \
+  "${prefix}-audit-storage-cmk-approved-key"; do
   az policy definition delete --name "${policy_name}" --management-group "${prefix}" 2>/dev/null || true
 done
 az policy set-definition delete --name "${prefix}-required-rg-tags" --management-group "${prefix}" 2>/dev/null || true
+for initiative_name in \
+  "${prefix}-required-rg-tags" \
+  "${prefix}-inherit-rg-tags" \
+  "${prefix}-network-ingress" \
+  "${prefix}-private-access" \
+  "${prefix}-data-protection" \
+  "${prefix}-deploy-restrictions" \
+  "${prefix}-backup-posture" \
+  "${prefix}-nerc-cip-technical-overlay"; do
+  az policy set-definition delete --name "${initiative_name}" --management-group "${prefix}" 2>/dev/null || true
+done
 
 az account management-group subscription add --name "${tenant_root}" --subscription "${connectivity_subscription}"
 az account management-group subscription add --name "${tenant_root}" --subscription "${workload_subscription}"

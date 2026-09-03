@@ -5,14 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PARAMETER_FILE="${1:-${PROJECT_DIR}/parameters/demo.parameters.json}"
 
+"${SCRIPT_DIR}/preflight.sh" "${PARAMETER_FILE}"
+"${SCRIPT_DIR}/what-if.sh" "${PARAMETER_FILE}"
+
 if [[ "${ESLZ_DEPLOY_CONFIRMATION:-}" != 'DEPLOY-ESLZ-DEMO' ]]; then
   printf 'Deployment is locked.\n' >&2
   printf 'Set ESLZ_DEPLOY_CONFIRMATION=DEPLOY-ESLZ-DEMO only after reviewing what-if.\n' >&2
   exit 2
 fi
-
-"${SCRIPT_DIR}/preflight.sh" "${PARAMETER_FILE}"
-"${SCRIPT_DIR}/what-if.sh" "${PARAMETER_FILE}"
 
 demo_root="$(jq -er '.parameters.namePrefix.value' "${PARAMETER_FILE}")"
 connectivity_subscription="$(jq -er '.parameters.connectivitySubscriptionId.value' "${PARAMETER_FILE}")"
@@ -35,4 +35,3 @@ az deployment tenant create \
   --location "${deployment_location}" \
   --template-file "${PROJECT_DIR}/main.bicep" \
   --parameters "@${PARAMETER_FILE}"
-

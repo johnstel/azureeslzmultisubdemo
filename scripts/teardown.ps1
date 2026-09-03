@@ -83,6 +83,8 @@ $workloadGroup = Get-Value 'workloadContributorsGroupObjectId'
 $auditorsGroup = Get-Value 'readOnlyAuditorsGroupObjectId'
 # Optional: defaults to $false when absent so older parameter files remain safe to tear down.
 $centralLogAnalyticsEnabled = Get-OptionalBoolValue 'deployCentralLogAnalytics' $false
+$recoveryServicesVaultEnabled = Get-OptionalBoolValue 'deployRecoveryServicesVault' $false
+$roleAssignmentsEnabled = Get-OptionalBoolValue 'deployRoleAssignments' $false
 
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
@@ -121,6 +123,7 @@ $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$arch
 $connectivityScope = "/subscriptions/$connectivitySubscription"
 $subscriptionWorkloadScope = "/subscriptions/$workloadSubscription"
 $monitoringResourceGroupName = "rg-$prefix-monitoring"
+$backupResourceGroupName = "rg-$prefix-backup"
 # The monitoring resource group is only repository-owned (and thus safe to delete) when a
 # new workspace was requested without also supplying an existing workspace resource ID. This
 # mirrors the conflict guard in modules/central-monitoring.bicep: a conflicting configuration
@@ -178,12 +181,15 @@ Write-Host "  1. Delete resource groups rg-$prefix-connectivity and rg-$prefix-$
 if ($monitoringGroupIsRepoOwned) {
     Write-Host "  1a. Delete the demo-created monitoring resource group $monitoringResourceGroupName (deployCentralLogAnalytics=true and no existing workspace supplied)."
 }
+if ($recoveryServicesVaultEnabled) {
+    Write-Host "  1b. Delete the demo-created backup resource group $backupResourceGroupName."
+}
 if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
     Write-Host ''
     Write-Host "NOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group $existingWorkspaceResourceGroup in subscription $existingWorkspaceSubscription is protected and will never be deleted by this script, even if its name collides with a group above."
 }
-Write-Host '  2. Delete only the five permanent lower-privilege demo role assignments for the four operator/auditor groups at their documented scopes.'
-Write-Host '  3. Delete demo policy assignments, the tagging initiative, and custom policy definitions.'
+Write-Host '  2. Delete deployment-owned policy exemptions, remediating assignments and their role mappings, then all other demo policy assignments.'
+Write-Host '  3. Delete deployment-owned custom initiatives and policy definitions after their assignments.'
 Write-Host "  4. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
 $stepNumber = 5
 if ($criticalEnabled -and $criticalSubscriptions.Count -gt 0) {
@@ -200,7 +206,7 @@ else {
 Write-Host ''
 Write-Host 'NOTE: Owner eligibility is managed only through the separate one-shot PIM artifact. This teardown never discovers or removes it; submit a new, separately reviewed AdminRemove request for each existing schedule and verify removal in PIM.'
 Write-Host ''
-Write-Host 'Subscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.'
+Write-Host 'Only objects named by this deployment and optional resource groups enabled in this parameter file are deployment-owned. Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted. Subscriptions and Entra groups are never deleted.'
 
 if (-not $Execute) {
     Write-Host ''
@@ -234,7 +240,53 @@ function Remove-PolicyAssignment {
         [string]$AssignmentName,
         [string]$Scope
     )
+    $principalId = & az policy assignment show --name $AssignmentName --scope $Scope --query identity.principalId --output tsv 2>$null
+    if (-not [string]::IsNullOrWhiteSpace([string]$principalId) -and [string]$principalId -ne 'null') {
+        $roleAssignmentIds = & az role assignment list --assignee $principalId --query '[].id' --output tsv 2>$null
+        foreach ($roleAssignmentId in @($roleAssignmentIds)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$roleAssignmentId)) {
+                & az role assignment delete --ids $roleAssignmentId 2>$null
+            }
+        }
+    }
     & az policy assignment delete --name $AssignmentName --scope $Scope 2>$null
+}
+
+function Remove-PolicyExemptions {
+    foreach ($exemption in @($parameters.parameters.policyExemptions.value)) {
+        if ($null -eq $exemption) { continue }
+        $assignmentId = [string]$exemption.policyAssignmentId
+        $marker = '/providers/Microsoft.Authorization/policyAssignments/'
+        $markerIndex = $assignmentId.IndexOf($marker, [StringComparison]::OrdinalIgnoreCase)
+        if ($markerIndex -ge 0) {
+            & az policy exemption delete --name ([string]$exemption.exemptionName) --scope $assignmentId.Substring(0, $markerIndex) 2>$null
+        }
+    }
+}
+
+function Remove-DemoPolicyAssignments {
+    $scopes = @($demoRootScope, $platformScope, $landingZonesScope, $workloadScope)
+    $assignmentNames = @(
+        'demo-allowed-us-locs', 'demo-audit-public-ip', 'demo-deploy-restrictions',
+        'demo-network-ingress', 'demo-private-access', 'demo-data-protection',
+        'demo-block-expensive', 'demo-audit-platform-tags', 'demo-require-rg-tags',
+        'demo-defender-cspm', 'demo-defender-servers', 'demo-defender-storage',
+        'demo-audit-vuln-assess', 'demo-audit-ama-windows', 'demo-audit-ama-linux',
+        'demo-inherit-rg-tags', 'demo-mcsb-baseline', 'demo-cis-foundations',
+        'demo-nist-800-53-r5', 'demo-backup-posture', 'demo-vault-diagnostics',
+        'demo-activity-logs', 'demo-resource-diags'
+    )
+    foreach ($scope in $scopes) {
+        foreach ($assignmentName in $assignmentNames) {
+            Remove-PolicyAssignment $assignmentName $scope
+        }
+    }
+    if ($criticalEnabled) {
+        $criticalScope = "/providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
+        foreach ($assignmentName in @('demo-critical-private', 'demo-critical-fw-routes', 'demo-nerc-cip-technical')) {
+            Remove-PolicyAssignment $assignmentName $criticalScope
+        }
+    }
 }
 
 $connectivityResourceGroup = "rg-$prefix-connectivity"
@@ -249,37 +301,71 @@ Remove-ResourceGroupIfNotProtected -Subscription $workloadSubscription -Group $w
 if ($monitoringGroupIsRepoOwned) {
     Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $monitoringResourceGroupName
 }
+if ($recoveryServicesVaultEnabled) {
+    Remove-ResourceGroupIfNotProtected -Subscription $workloadSubscription -Group $backupResourceGroupName
+}
 
 Wait-ResourceGroupDeletionIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup
 Wait-ResourceGroupDeletionIfNotProtected -Subscription $workloadSubscription -Group $workloadResourceGroup
 if ($monitoringGroupIsRepoOwned) {
     Wait-ResourceGroupDeletionIfNotProtected -Subscription $connectivitySubscription -Group $monitoringResourceGroupName
 }
+if ($recoveryServicesVaultEnabled) {
+    Wait-ResourceGroupDeletionIfNotProtected -Subscription $workloadSubscription -Group $backupResourceGroupName
+}
 
-Remove-RoleMapping $governanceGroup 'Management Group Contributor' $demoRootScope
-Remove-RoleMapping $governanceGroup 'Resource Policy Contributor' $demoRootScope
-Remove-RoleMapping $auditorsGroup 'Reader' $demoRootScope
-Remove-RoleMapping $networkGroup 'Network Contributor' $connectivityScope
-Remove-RoleMapping $workloadGroup 'Contributor' $subscriptionWorkloadScope
+if ($roleAssignmentsEnabled) {
+    Remove-RoleMapping $governanceGroup 'Management Group Contributor' $demoRootScope
+    Remove-RoleMapping $governanceGroup 'Resource Policy Contributor' $demoRootScope
+    Remove-RoleMapping $auditorsGroup 'Reader' $demoRootScope
+    Remove-RoleMapping $networkGroup 'Network Contributor' $connectivityScope
+    Remove-RoleMapping $workloadGroup 'Contributor' $subscriptionWorkloadScope
+}
 
+Remove-PolicyExemptions
 Remove-PolicyAssignment 'demo-require-rg-tags' $landingZonesScope
 Remove-PolicyAssignment 'demo-require-rg-tags' $workloadScope
 Remove-PolicyAssignment 'demo-audit-platform-tags' $platformScope
 Remove-PolicyAssignment 'demo-block-expensive' $demoRootScope
 Remove-PolicyAssignment 'demo-audit-public-ip' $demoRootScope
-Remove-PolicyAssignment 'demo-allowed-us-locations' $demoRootScope
+Remove-PolicyAssignment 'demo-allowed-us-locs' $demoRootScope
+Remove-DemoPolicyAssignments
 
 $policyNames = @(
+    "$prefix-allowed-us-locations",
+    "$prefix-allowed-resource-types-all",
     "$prefix-require-workload-rg-tags",
+    "$prefix-inherit-rg-tags",
+    "$prefix-network-ingress",
+    "$prefix-private-access",
+    "$prefix-data-protection",
+    "$prefix-deploy-restrictions",
+    "$prefix-backup-posture",
+    "$prefix-nerc-cip-technical-overlay",
     "$prefix-audit-platform-tags",
     "$prefix-block-expensive",
     "$prefix-audit-public-ip",
-    "$prefix-allowed-us-locations"
+    "$prefix-public-mgmt-ingress",
+    "$prefix-require-subnet-nsg",
+    "$prefix-audit-paas-public-network",
+    "$prefix-audit-approved-firewall-routes",
+    "$prefix-audit-storage-cmk-approved-key"
 )
 foreach ($policyName in $policyNames) {
     & az policy definition delete --name $policyName --management-group $prefix 2>$null
 }
-& az policy set-definition delete --name "$prefix-required-rg-tags" --management-group $prefix 2>$null
+foreach ($initiativeName in @(
+    "$prefix-required-rg-tags",
+    "$prefix-inherit-rg-tags",
+    "$prefix-network-ingress",
+    "$prefix-private-access",
+    "$prefix-data-protection",
+    "$prefix-deploy-restrictions",
+    "$prefix-backup-posture",
+    "$prefix-nerc-cip-technical-overlay"
+)) {
+    & az policy set-definition delete --name $initiativeName --management-group $prefix 2>$null
+}
 
 & az account management-group subscription add --name $tenantRoot --subscription $connectivitySubscription
 if ($LASTEXITCODE -ne 0) { Stop-Teardown 'Failed to move the connectivity subscription.' }

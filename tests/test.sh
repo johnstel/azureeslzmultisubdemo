@@ -941,6 +941,21 @@ rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.sh"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
+for deployment_script in "${PROJECT_DIR}/scripts/deploy.sh" "${PROJECT_DIR}/scripts/deploy.ps1"; do
+  preflight_line="$(rg -n 'preflight\.(sh|ps1)' "${deployment_script}" | head -1 | cut -d: -f1)"
+  what_if_line="$(rg -n 'what-if\.(sh|ps1)' "${deployment_script}" | head -1 | cut -d: -f1)"
+  confirmation_line="$(rg -n 'DEPLOY-ESLZ-DEMO' "${deployment_script}" | head -1 | cut -d: -f1)"
+  [[ -n "${preflight_line}" && -n "${what_if_line}" && -n "${confirmation_line}" &&
+    "${preflight_line}" -lt "${confirmation_line}" && "${what_if_line}" -lt "${confirmation_line}" ]] || {
+    printf 'ERROR: %s must run preflight and tenant what-if before the deployment confirmation gate.\n' "${deployment_script}" >&2
+    exit 1
+  }
+done
+for teardown_script in "${PROJECT_DIR}/scripts/teardown.sh" "${PROJECT_DIR}/scripts/teardown.ps1"; do
+  rg -q 'policy exemption delete' "${teardown_script}"
+  rg -q 'role assignment list --assignee' "${teardown_script}"
+  rg -q 'Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted' "${teardown_script}"
+done
 
 printf '8/29 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"

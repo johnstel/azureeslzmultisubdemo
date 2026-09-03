@@ -1181,6 +1181,28 @@ exit $LASTEXITCODE
     if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw) -notmatch 'DELETE-ESLZ-DEMO') {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
+    foreach ($deploymentScript in @('scripts/deploy.sh', 'scripts/deploy.ps1')) {
+        $lines = Get-Content -LiteralPath (Join-Path $ProjectDir $deploymentScript)
+        $preflightLine = (($lines | Select-String -Pattern 'preflight\.(sh|ps1)' | Select-Object -First 1).LineNumber)
+        $whatIfLine = (($lines | Select-String -Pattern 'what-if\.(sh|ps1)' | Select-Object -First 1).LineNumber)
+        $confirmationLine = (($lines | Select-String -Pattern 'DEPLOY-ESLZ-DEMO' | Select-Object -First 1).LineNumber)
+        if ($null -eq $preflightLine -or $null -eq $whatIfLine -or $null -eq $confirmationLine -or
+            $preflightLine -ge $confirmationLine -or $whatIfLine -ge $confirmationLine) {
+            Stop-Test "$deploymentScript must run preflight and tenant what-if before the deployment confirmation gate."
+        }
+    }
+    foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {
+        $text = Get-Content -LiteralPath (Join-Path $ProjectDir $teardownScript) -Raw
+        foreach ($requiredText in @(
+            'policy exemption delete',
+            'role assignment list --assignee',
+            'Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted'
+        )) {
+            if (-not $text.Contains($requiredText)) {
+                Stop-Test "$teardownScript is missing v2 lifecycle coverage: $requiredText"
+            }
+        }
+    }
 
     Write-Host '8/29 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
