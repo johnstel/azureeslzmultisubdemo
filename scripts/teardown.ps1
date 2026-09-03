@@ -257,10 +257,11 @@ function Remove-PolicyExemptions {
     foreach ($exemption in @($parameters.parameters.policyExemptions.value)) {
         if ($null -eq $exemption) { continue }
         $assignmentId = [string]$exemption.policyAssignmentId
+        $exemptionName = [string]$exemption.exemptionName
         $marker = '/providers/Microsoft.Authorization/policyAssignments/'
         $markerIndex = $assignmentId.IndexOf($marker, [StringComparison]::OrdinalIgnoreCase)
-        if ($markerIndex -ge 0) {
-            & az policy exemption delete --name ([string]$exemption.exemptionName) --scope $assignmentId.Substring(0, $markerIndex) 2>$null
+        if ($markerIndex -ge 0 -and -not [string]::IsNullOrWhiteSpace($exemptionName)) {
+            & az policy exemption delete --name $exemptionName --scope $assignmentId.Substring(0, $markerIndex) 2>$null
         }
     }
 }
@@ -336,13 +337,6 @@ $policyNames = @(
     "$prefix-allowed-us-locations",
     "$prefix-allowed-resource-types-all",
     "$prefix-require-workload-rg-tags",
-    "$prefix-inherit-rg-tags",
-    "$prefix-network-ingress",
-    "$prefix-private-access",
-    "$prefix-data-protection",
-    "$prefix-deploy-restrictions",
-    "$prefix-backup-posture",
-    "$prefix-nerc-cip-technical-overlay",
     "$prefix-audit-platform-tags",
     "$prefix-block-expensive",
     "$prefix-audit-public-ip",

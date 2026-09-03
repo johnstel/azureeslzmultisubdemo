@@ -120,7 +120,9 @@ print_plan() {
   fi
   if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
     local backup_step_suffix='a'
-    [[ "${monitoring_group_is_repo_owned}" == 'true' ]] && backup_step_suffix='b'
+    if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
+      backup_step_suffix='b'
+    fi
     printf '  %d%s. Delete the demo-created backup resource group %s.\n' "$((step_number - 1))" "${backup_step_suffix}" "${backup_resource_group}"
   fi
   if [[ -n "${existing_workspace_resource_group}" ]]; then
@@ -167,7 +169,9 @@ delete_policy_assignment() {
   principal_id="$(az policy assignment show --name "${assignment_name}" --scope "${scope}" --query identity.principalId --output tsv 2>/dev/null || true)"
   if [[ -n "${principal_id}" && "${principal_id}" != 'null' ]]; then
     while IFS= read -r role_assignment_id; do
-      [[ -n "${role_assignment_id}" ]] && az role assignment delete --ids "${role_assignment_id}" 2>/dev/null || true
+      if [[ -n "${role_assignment_id}" ]]; then
+        az role assignment delete --ids "${role_assignment_id}" 2>/dev/null || true
+      fi
     done < <(az role assignment list --assignee "${principal_id}" --scope "${scope}" --query '[].id' --output tsv 2>/dev/null || true)
   fi
   az policy assignment delete --name "${assignment_name}" --scope "${scope}" 2>/dev/null || true
@@ -175,12 +179,16 @@ delete_policy_assignment() {
 
 delete_policy_exemptions() {
   while IFS= read -r exemption; do
-    local exemption_name assignment_id exemption_scope
+    local exemption_name assignment_id lower_assignment_id exemption_scope marker marker_suffix scope_length
     exemption_name="$(printf '%s' "${exemption}" | jq -r '.exemptionName // empty')"
     assignment_id="$(printf '%s' "${exemption}" | jq -r '.policyAssignmentId // empty')"
     [[ -n "${exemption_name}" && -n "${assignment_id}" ]] || continue
-    exemption_scope="${assignment_id%/providers/Microsoft.Authorization/policyAssignments/*}"
-    [[ "${exemption_scope}" != "${assignment_id}" ]] || continue
+    lower_assignment_id="$(printf '%s' "${assignment_id}" | tr '[:upper:]' '[:lower:]')"
+    marker='/providers/microsoft.authorization/policyassignments/'
+    marker_suffix="${lower_assignment_id#*"${marker}"}"
+    [[ "${marker_suffix}" != "${lower_assignment_id}" ]] || continue
+    scope_length=$((${#assignment_id} - ${#marker} - ${#marker_suffix}))
+    exemption_scope="${assignment_id:0:${scope_length}}"
     az policy exemption delete --name "${exemption_name}" --scope "${exemption_scope}" 2>/dev/null || true
   done < <(jq -c '.parameters.policyExemptions.value // [] | .[]' "${PARAMETER_FILE}")
 }
