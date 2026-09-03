@@ -207,6 +207,12 @@
     "nercCipSspIdTagValue": {
       "value": ""
     },
+    "nercCipVaultDoubleEncryptionRequired": {
+      "value": true
+    },
+    "nercCipVaultCheckAlwaysOnSoftDeleteOnly": {
+      "value": true
+    },
     "activityLogExportPolicyEffect": {
       "value": "Disabled"
     },

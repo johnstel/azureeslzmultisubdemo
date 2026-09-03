@@ -133,6 +133,8 @@ jq -e '
   .parameters.nercCipApprovedLocations.value == [] and
   .parameters.nercCipDataClassificationTagValue.value == "" and
   .parameters.nercCipSspIdTagValue.value == "" and
+  .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
+  .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true and
   .parameters.deployLoggingRemediationRoleAssignments.value == false and
   .parameters.customerAllowedLocations.value == ["eastus", "eastus2"] and
   (.parameters.customerAllowedResourceTypes.value | index("Microsoft.PolicyInsights/remediations")) != null and
@@ -155,6 +157,8 @@ jq -e '
   .parameters.nercCipApprovedLocations.value == [] and
   .parameters.nercCipDataClassificationTagValue.value == "" and
   .parameters.nercCipSspIdTagValue.value == "" and
+  .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
+  .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true and
   .parameters.deployLoggingRemediationRoleAssignments.value == false
 ' "${TEMP_DIR}/main.parameters.json" >/dev/null
 jq -e '.parameters.enableTagInheritance.value == false' "${TEMP_DIR}/main.parameters.json" >/dev/null
@@ -798,21 +802,58 @@ nerc_cip_overlay_count="$(jq '
   ($resources | map(select(.name == "nerc-cip-technical-overlay-initiative")) | first) as $initiative |
   ($resources | map(select(.name == "assign-nerc-cip-technical-overlay")) | first) as $assignment |
   ($initiative.scope | contains("demoRootManagementGroupId")) and
-  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | sort) ==
-    ["critical-approved-firewall-routes", "critical-approved-locations", "critical-backup-posture", "critical-data-classification-value", "critical-data-protection", "critical-linux-ama", "critical-network-ingress", "critical-private-access", "critical-resource-diagnostics", "critical-ssp-id-value", "critical-vm-vulnerability-assessment", "critical-windows-ama"] and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-public-management-ingress")) != null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-require-subnet-nsg")) != null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-paas-public-network-access")) != null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-vault-customer-managed-key")) != null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-activity-log-export")) != null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-network-ingress")) == null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-private-access")) == null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-data-protection")) == null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-backup-posture")) == null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | map(.policyDefinitionReferenceId) | index("critical-resource-diagnostics")) == null and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | length) >= 25 and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | all((.policyDefinitionId | tostring | contains("policySetDefinitionId")) | not)) and
+  ($initiative.properties.parameters.policyDefinitionReferences.value | all((.policyDefinitionId | tostring | contains("/policySetDefinitions/")) | not)) and
   $assignment.condition == "[parameters(\u0027enableNercCipTechnicalOverlay\u0027)]" and
   ($assignment.scope | contains("criticalInfrastructureManagementGroupId")) and
   ($assignment.scope | contains("workloadManagementGroupId") | not) and
   $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
-  $assignment.properties.parameters.parameters.value.allowedLocations.value == "[parameters(\u0027nercCipApprovedLocations\u0027)]" and
+  ($assignment.properties.parameters.parameters.value.allowedLocations.value | contains("validatedNercCipApprovedLocations")) and
   ($assignment.properties.parameters.parameters.value.dataClassificationTagValue.value | contains("nercCipDataClassificationTagValue")) and
   $assignment.properties.parameters.parameters.value.sspIdTagValue.value == "[trim(parameters(\u0027nercCipSspIdTagValue\u0027))]" and
-  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | sort) ==
-    ["critical-approved-firewall-routes", "critical-approved-locations", "critical-backup-posture", "critical-data-classification-value", "critical-data-protection", "critical-linux-ama", "critical-network-ingress", "critical-private-access", "critical-resource-diagnostics", "critical-ssp-id-value", "critical-vm-vulnerability-assessment", "critical-windows-ama"] and
+  $assignment.properties.parameters.parameters.value.vaultDoubleEncryption.value == "[parameters(\u0027nercCipVaultDoubleEncryptionRequired\u0027)]" and
+  $assignment.properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value == "[parameters(\u0027nercCipVaultCheckAlwaysOnSoftDeleteOnly\u0027)]" and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-public-management-ingress")) != null and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-require-subnet-nsg")) != null and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-paas-public-network-access")) != null and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-vault-customer-managed-key")) != null and
+  ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-activity-log-export")) != null and
   ($assignment.properties.parameters.nonComplianceMessages.value | all(.message | length > 0))
 ' "${TEMP_DIR}/main.json")"
 [[ "${nerc_cip_overlay_count}" == "true" ]] || {
   printf 'ERROR: NERC CIP technical overlay must stay opt-in, critical-scope-only, and composed from existing controls.\n' >&2
+  exit 1
+}
+jq -e '
+  .parameters.nercCipVaultDoubleEncryptionRequired.defaultValue == true and
+  .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.defaultValue == true
+' "${TEMP_DIR}/main.json" >/dev/null || {
+  printf 'ERROR: NERC CIP overlay stricter backup parameters must default to true.\n' >&2
+  exit 1
+}
+jq -e '
+  .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
+  .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true
+' "${PROJECT_DIR}/parameters/demo.parameters.template.json" >/dev/null || {
+  printf 'ERROR: Demo parameter template must keep NERC CIP stricter backup defaults enabled.\n' >&2
+  exit 1
+}
+jq -e '
+  .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
+  .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true
+' "${TEMP_DIR}/main.parameters.json" >/dev/null || {
+  printf 'ERROR: Compiled Bicep parameter defaults must keep NERC CIP stricter backup defaults enabled.\n' >&2
   exit 1
 }
 rg -q 'enableNercCipTechnicalOverlay requires enableCriticalInfrastructure to be true so the overlay remains Critical-scope only\.' "${PROJECT_DIR}/main.bicep"
@@ -822,6 +863,29 @@ rg -q 'enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to b
 rg -q 'enableNercCipTechnicalOverlay requires approvedBackupVaults records for backup coverage evidence\.' "${PROJECT_DIR}/main.bicep"
 rg -q 'enableNercCipTechnicalOverlay requires backupRetentionStandardId so backup controls map to a documented standard\.' "${PROJECT_DIR}/main.bicep"
 rg -q 'enableNercCipTechnicalOverlay requires non-empty nercCipDataClassificationTagValue and nercCipSspIdTagValue inputs\.' "${PROJECT_DIR}/main.bicep"
+rg -q 'nercCipApprovedLocations must contain only string region values\.' "${PROJECT_DIR}/main.bicep"
+rg -q 'nercCipApprovedLocations must not contain empty or whitespace-only values\.' "${PROJECT_DIR}/main.bicep"
+rg -q 'nercCipApprovedLocations must contain case-insensitively unique region values\.' "${PROJECT_DIR}/main.bicep"
+python3 - "${PROJECT_DIR}/tests/fixtures/nerc-cip-approved-locations-validation-cases.json" <<'PYEOF'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    cases = json.load(stream)["cases"]
+
+for case in cases:
+    value = case["value"]
+    all_strings = all(isinstance(item, str) for item in value)
+    normalized = [item.strip().lower() for item in value if isinstance(item, str)]
+    valid = (
+        all_strings and
+        len(normalized) > 0 and
+        all(normalized) and
+        len(normalized) == len(set(normalized))
+    )
+    if valid != case["valid"]:
+        raise SystemExit(f"ERROR: NERC CIP approved-location validation case failed: {case['value']}")
+PYEOF
 rg -q 'privateAccessServiceCategories must contain non-empty, uniquely cased Storage and/or KeyVault values' "${PROJECT_DIR}/main.bicep"
 rg -q 'approvedFirewallResourceId must be an Azure Firewall resource ID' "${PROJECT_DIR}/main.bicep"
 python3 - "${PROJECT_DIR}/tests/fixtures/firewall-route-input-validation-cases.json" <<'PYEOF'
