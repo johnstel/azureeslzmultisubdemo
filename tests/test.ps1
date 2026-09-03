@@ -219,9 +219,9 @@ case "${1}" in
         ;;
       show)
         case "$*" in
-          *"rg-demo-monitoring"*) printf '%s\n' 'demo'; exit 0 ;;
-          *"rg-demo-connectivity"*) printf '%s\n' 'demo'; exit 0 ;;
-          *"rg-demo-workloads-demo"*) printf '%s\n' 'demo'; exit 0 ;;
+          *"rg-demo-monitoring"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-connectivity"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *) printf '%s\n' ''; exit 0 ;;
         esac
         ;;
@@ -267,20 +267,31 @@ exit 0
     @'
 @echo off
 echo az %* >> "%MOCK_AZ_LOG%"
-echo %* | findstr /I /C:"policy assignment show" /C:"demo-nerc-cip-technical" >nul && (
-  echo nerc-assignment-principal
+set "args=%*"
+if "%MOCK_AZ_OWNER%"=="" (set "owner=demo") else (set "owner=%MOCK_AZ_OWNER%")
+if /I "%~1 %~2 %~3"=="policy assignment show" (
+  echo %args% | findstr /I /C:"demo-nerc-cip-technical" >nul
+  if not errorlevel 1 (
+    echo nerc-assignment-principal
+  ) else (
+    echo null
+  )
   exit /b 0
 )
-echo %* | findstr /I /C:"role assignment list" /C:"nerc-assignment-principal" /C:"ws-protected" >nul && (
+if /I "%~1 %~2 %~3"=="role assignment list" (
+  echo %args% | findstr /I /C:"nerc-assignment-principal" >nul || exit /b 0
+  echo %args% | findstr /I /C:"ws-protected" >nul || exit /b 0
   echo NERC-ROLE-ASSIGNMENT-ID
   exit /b 0
 )
-echo %* | findstr /I /C:"group exists" >nul && (
-  echo true
+if /I "%~1 %~2"=="group exists" (
+  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" >nul
+  if errorlevel 1 (echo false) else (echo true)
   exit /b 0
 )
-echo %* | findstr /I /C:"group show" >nul && (
-  echo demo
+if /I "%~1 %~2"=="group show" (
+  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" >nul
+  if errorlevel 1 (echo.) else (echo %owner%)
   exit /b 0
 )
 exit /b 0
@@ -347,6 +358,32 @@ exit $LASTEXITCODE
         if ($line -match 'az group delete .*rg-demo-connectivity' -or $line -match 'az group wait .*rg-demo-connectivity') {
             throw "PowerShell teardown fixture attempted to delete or wait on the protected evidence resource group: $line"
         }
+    }
+
+    $mismatchedOwnerLog = Join-Path $fixtureDir 'mismatched-owner.log'
+    $mismatchedOwnerPreviousPath = $env:PATH
+    $mismatchedOwnerPreviousMockLog = $env:MOCK_AZ_LOG
+    $mismatchedOwnerPreviousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+    $previousOwner = $env:MOCK_AZ_OWNER
+    try {
+        $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$mismatchedOwnerPreviousPath"
+        $env:MOCK_AZ_LOG = $mismatchedOwnerLog
+        $env:MOCK_AZ_OWNER = 'external'
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        $mismatchedOwnerOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation 'demo' 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "PowerShell teardown fixture failed for a mismatched resource-group owner marker. Output: $($mismatchedOwnerOutput -join ' ')"
+        }
+    }
+    finally {
+        $env:PATH = $mismatchedOwnerPreviousPath
+        if ($null -eq $mismatchedOwnerPreviousMockLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $mismatchedOwnerPreviousMockLog }
+        if ($null -eq $mismatchedOwnerPreviousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $mismatchedOwnerPreviousConfirmation }
+        if ($null -eq $previousOwner) { Remove-Item Env:MOCK_AZ_OWNER -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_OWNER = $previousOwner }
+    }
+    $mismatchedOwnerText = Get-Content -LiteralPath $mismatchedOwnerLog -Raw
+    if ($mismatchedOwnerText -match 'az group (delete|wait).*--name rg-demo-(monitoring|connectivity|workloads-demo)') {
+        throw "PowerShell teardown fixture acted on a mismatched-owner resource group: $mismatchedOwnerText"
     }
 
     foreach ($case in @(

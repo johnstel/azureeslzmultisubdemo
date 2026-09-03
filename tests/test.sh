@@ -193,9 +193,9 @@ case "${1}" in
         ;;
       show)
         case "$*" in
-          *"rg-demo-monitoring"*) printf '%s\n' 'demo'; exit 0 ;;
-          *"rg-demo-connectivity"*) printf '%s\n' 'demo'; exit 0 ;;
-          *"rg-demo-workloads-demo"*) printf '%s\n' 'demo'; exit 0 ;;
+          *"rg-demo-monitoring"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-connectivity"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
           *) printf '%s\n' ''; exit 0 ;;
         esac
         ;;
@@ -307,6 +307,20 @@ for idx, line in enumerate(lines):
         raise SystemExit(f'Bash teardown fixture deleted protected evidence resource group: {line}')
     if 'az group wait' in line and '--name rg-demo-connectivity' in line:
         raise SystemExit(f'Bash teardown fixture waited on protected evidence resource group: {line}')
+PY
+
+  local mismatched_owner_log="${fixture_dir}/mismatched-owner.log"
+  : > "${mismatched_owner_log}"
+  PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${mismatched_owner_log}" MOCK_AZ_OWNER=external ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+    bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1 || {
+      printf 'ERROR: Bash teardown fixture failed for a mismatched resource-group owner marker.\n' >&2
+      return 1
+    }
+  python3 - "${mismatched_owner_log}" <<'PY'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+if re.search(r'az group (delete|wait).*--name rg-demo-(monitoring|connectivity|workloads-demo)', text):
+    raise SystemExit(f'Bash teardown fixture acted on a mismatched-owner resource group: {text}')
 PY
 
   if command -v pwsh >/dev/null 2>&1; then
