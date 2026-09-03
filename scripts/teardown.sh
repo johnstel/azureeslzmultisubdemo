@@ -122,13 +122,28 @@ print_plan() {
   local step_number=1
   printf 'TEARDOWN PLAN (reverse dependency order)\n'
   printf '  %d. deployment-owned policy exemptions:\n' "${step_number}"
-  jq -r '.parameters.policyExemptions.value // [] | .[] | "     deployment-owned exemption \(.exemptionName) at \(.exemptionScopeType)"' "${PARAMETER_FILE}"
+  jq -r '.parameters.policyExemptions.value // [] | .[] |
+    if .exemptionScopeType == "managementGroup" then "     deployment-owned exemption \(.exemptionName) at /providers/Microsoft.Management/managementGroups/\(.managementGroupName)"
+    elif .exemptionScopeType == "subscription" then "     deployment-owned exemption \(.exemptionName) at /subscriptions/\(.subscriptionId)"
+    elif .exemptionScopeType == "resourceGroup" then "     deployment-owned exemption \(.exemptionName) at /subscriptions/\(.subscriptionId)/resourceGroups/\(.resourceGroupName)"
+    else "     disabled/not-owned invalid exemption \(.exemptionName // "")" end' "${PARAMETER_FILE}"
   step_number=$((step_number + 1))
   printf '  %d. deployment-owned assignments and remediating identity role mappings:\n' "${step_number}"
-  printf '     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-defender-cspm, demo-mcsb-baseline, demo-cis-foundations, demo-nist-800-53-r5, demo-activity-logs, demo-resource-diags at %s\n' "${demo_root_scope}"
+  printf '     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-activity-logs, demo-resource-diags at %s\n' "${demo_root_scope}"
   printf '     deployment-owned demo-audit-platform-tags at %s\n' "${platform_scope}"
-  printf '     deployment-owned demo-data-protection, demo-require-rg-tags, demo-defender-servers, demo-defender-storage, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-inherit-rg-tags, demo-backup-posture, demo-vault-diagnostics at %s\n' "${landing_zones_scope}"
+  printf '     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at %s\n' "${landing_zones_scope}"
   printf '     deployment-owned demo-network-ingress, demo-private-access at %s\n' "${workload_scope}"
+  [[ "$(jq -r '.parameters.enableDefenderCspm.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-defender-cspm at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-defender-cspm\n'
+  [[ "$(jq -r '.parameters.enableMicrosoftCloudSecurityBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-mcsb-baseline at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-mcsb-baseline\n'
+  [[ "$(jq -r '.parameters.enableCisAzureFoundationsBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-cis-foundations at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-cis-foundations\n'
+  [[ "$(jq -r '.parameters.enableNistSp80053Rev5.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-nist-800-53-r5 at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-nist-800-53-r5\n'
+  [[ "$(jq -r '.parameters.enableTagInheritance.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-inherit-rg-tags at %s\n' "${landing_zones_scope}" || printf '     disabled/not-owned demo-inherit-rg-tags\n'
+  if [[ "${critical_enabled}" == true ]]; then
+    printf '     deployment-owned demo-critical-private, demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}"
+    [[ "${firewall_route_guardrails_enabled}" == true ]] && printf '     deployment-owned demo-critical-fw-routes at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}"
+  else
+    printf '     disabled/not-owned Critical Infrastructure assignments\n'
+  fi
   printf '     deployment-owned demo-firewall-routes at %s when firewall guardrails are enabled\n' "${workload_scope}"
   jq -r '.parameters.approvedBackupVaults.value // [] | to_entries[] | "     deployment-owned demo-vm-backup-\(.key) at '"${landing_zones_scope}"'"' "${PARAMETER_FILE}"
   [[ -n "${workspace_scope}" ]] && printf '     deployment-owned remediating identity roles at %s; workspace is external/protected when supplied.\n' "${workspace_scope}"
@@ -164,8 +179,11 @@ print_plan() {
     "     external/protected \(. )"
   ' "${PARAMETER_FILE}"
   printf '  %d. deployment-owned custom initiatives and policy definitions are deleted after assignments.\n' "${step_number}"
+  printf '     deployment-owned initiatives %s-required-rg-tags, %s-inherit-rg-tags, %s-network-ingress, %s-private-access, %s-data-protection, %s-backup-posture, %s-nerc-cip-technical-overlay at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
+  printf '     deployment-owned definitions %s-allowed-us-locations, %s-allowed-resource-types-all, %s-audit-public-ip, %s-public-mgmt-ingress, %s-require-subnet-nsg, %s-audit-paas-public-network, %s-audit-approved-firewall-routes, %s-block-expensive, %s-audit-storage-cmk-approved-key, %s-audit-platform-tags at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
   step_number=$((step_number + 1))
   printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
+  [[ "${role_assignments_enabled}" == true ]] && printf '     deployment-owned ordinary RBAC mappings at %s, %s, and %s\n' "${demo_root_scope}" "${connectivity_scope}" "${subscription_workload_scope}" || printf '     disabled/not-owned ordinary RBAC mappings\n'
   step_number=$((step_number + 1))
   if [[ "${critical_enabled}" == 'true' && ${#critical_subscriptions[@]} -gt 0 ]]; then
     local critical_subscriptions_joined="${critical_subscriptions[0]}"

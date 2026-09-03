@@ -2161,26 +2161,24 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    if (Get-Command bash -ErrorAction SilentlyContinue) {
-        if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
-        New-Item -ItemType File -Path $azCallLog | Out-Null
-        $originalPath = $env:PATH
-        $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
-        $env:AZ_CALL_LOG = $azCallLog
-        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
-        $ps1Script = Join-Path $ProjectDir 'scripts/teardown.ps1'
-        $nestedOutput = & bash -c "echo 'eslz-demo' | pwsh -NoLogo -NoProfile -File '$wrapperScript' -ParameterFile '$whitespaceParamFile' -ExpectedMockDir '$mockBinDir' -TeardownScript '$ps1Script'" 2>&1
-        $nestedExitCode = $LASTEXITCODE
-        $env:PATH = $originalPath
-        Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
-        Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
-        if ($nestedExitCode -ne 0) {
-            Stop-Test "teardown.ps1 safety test failed: az did not resolve to the temporary mock directory (or teardown.ps1 failed unexpectedly). Nested output: $nestedOutput"
-        }
-        $azCalls = Get-Content -LiteralPath $azCallLog -Raw
-        if ($azCalls -match 'rg-eslz-demo-monitoring') {
-            Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
-        }
+    if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
+    New-Item -ItemType File -Path $azCallLog | Out-Null
+    $originalPath = $env:PATH
+    $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
+    $env:AZ_CALL_LOG = $azCallLog
+    $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+    $ps1Script = Join-Path $ProjectDir 'scripts/teardown.ps1'
+    $nestedOutput = 'eslz-demo' | & pwsh -NoLogo -NoProfile -File $wrapperScript -ParameterFile $whitespaceParamFile -ExpectedMockDir $mockBinDir -TeardownScript $ps1Script 2>&1
+    $nestedExitCode = $LASTEXITCODE
+    $env:PATH = $originalPath
+    Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
+    Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+    if ($nestedExitCode -ne 0) {
+        Stop-Test "teardown.ps1 safety test failed: az did not resolve to the temporary mock directory (or teardown.ps1 failed unexpectedly). Nested output: $nestedOutput"
+    }
+    $azCalls = Get-Content -LiteralPath $azCallLog -Raw
+    if ($azCalls -match 'rg-eslz-demo-monitoring') {
+        Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
         foreach ($requiredCall in @(
             'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
             'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra',

@@ -203,13 +203,37 @@ function Wait-ResourceGroupDeletionIfNotProtected {
 Write-Host 'TEARDOWN PLAN (reverse dependency order)'
 Write-Host '  1. deployment-owned policy exemptions:'
 foreach ($exemption in $policyExemptions) {
-    if ($null -ne $exemption) { Write-Host "     deployment-owned exemption $($exemption.exemptionName) at $($exemption.exemptionScopeType)" }
+    if ($null -ne $exemption) {
+        $exemptionScope = switch ([string]$exemption.exemptionScopeType) {
+            'managementGroup' { "/providers/Microsoft.Management/managementGroups/$($exemption.managementGroupName)" }
+            'subscription' { "/subscriptions/$($exemption.subscriptionId)" }
+            'resourceGroup' { "/subscriptions/$($exemption.subscriptionId)/resourceGroups/$($exemption.resourceGroupName)" }
+            default { '' }
+        }
+        if ($exemptionScope.Length -gt 0) { Write-Host "     deployment-owned exemption $($exemption.exemptionName) at $exemptionScope" }
+        else { Write-Host "     disabled/not-owned invalid exemption $($exemption.exemptionName)" }
+    }
 }
 Write-Host '  2. deployment-owned assignments and remediating identity role mappings:'
-Write-Host "     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-defender-cspm, demo-mcsb-baseline, demo-cis-foundations, demo-nist-800-53-r5, demo-activity-logs, demo-resource-diags at $demoRootScope"
+Write-Host "     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-activity-logs, demo-resource-diags at $demoRootScope"
 Write-Host "     deployment-owned demo-audit-platform-tags at $platformScope"
-Write-Host "     deployment-owned demo-data-protection, demo-require-rg-tags, demo-defender-servers, demo-defender-storage, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-inherit-rg-tags, demo-backup-posture, demo-vault-diagnostics at $landingZonesScope"
+Write-Host "     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at $landingZonesScope"
 Write-Host "     deployment-owned demo-network-ingress, demo-private-access at $workloadScope"
+foreach ($optionalAssignment in @(
+    @('enableDefenderCspm', 'demo-defender-cspm', $demoRootScope),
+    @('enableMicrosoftCloudSecurityBenchmark', 'demo-mcsb-baseline', $demoRootScope),
+    @('enableCisAzureFoundationsBenchmark', 'demo-cis-foundations', $demoRootScope),
+    @('enableNistSp80053Rev5', 'demo-nist-800-53-r5', $demoRootScope),
+    @('enableTagInheritance', 'demo-inherit-rg-tags', $landingZonesScope)
+)) {
+    if (Get-OptionalBoolValue $optionalAssignment[0] $false) { Write-Host "     deployment-owned $($optionalAssignment[1]) at $($optionalAssignment[2])" }
+    else { Write-Host "     disabled/not-owned $($optionalAssignment[1])" }
+}
+if ($criticalEnabled) {
+    Write-Host "     deployment-owned demo-critical-private, demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
+    if ($firewallRouteGuardrailsEnabled) { Write-Host "     deployment-owned demo-critical-fw-routes at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra" }
+}
+else { Write-Host '     disabled/not-owned Critical Infrastructure assignments' }
 Write-Host "     deployment-owned demo-firewall-routes at $workloadScope when firewall guardrails are enabled"
 for ($index = 0; $index -lt $approvedBackupVaults.Count; $index++) {
     Write-Host "     deployment-owned demo-vm-backup-$index at $landingZonesScope"
@@ -239,7 +263,11 @@ if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
     Write-Host "NOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group $existingWorkspaceResourceGroup in subscription $existingWorkspaceSubscription is protected and will never be deleted by this script, even if its name collides with a group above."
 }
 Write-Host '  4. deployment-owned custom initiatives and policy definitions are deleted after assignments.'
+Write-Host "     deployment-owned initiatives $prefix-required-rg-tags, $prefix-inherit-rg-tags, $prefix-network-ingress, $prefix-private-access, $prefix-data-protection, $prefix-backup-posture, $prefix-nerc-cip-technical-overlay at $demoRootScope"
+Write-Host "     deployment-owned definitions $prefix-allowed-us-locations, $prefix-allowed-resource-types-all, $prefix-audit-public-ip, $prefix-public-mgmt-ingress, $prefix-require-subnet-nsg, $prefix-audit-paas-public-network, $prefix-audit-approved-firewall-routes, $prefix-block-expensive, $prefix-audit-storage-cmk-approved-key, $prefix-audit-platform-tags at $demoRootScope"
 Write-Host "  5. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
+if ($roleAssignmentsEnabled) { Write-Host "     deployment-owned ordinary RBAC mappings at $demoRootScope, $connectivityScope, and $subscriptionWorkloadScope" }
+else { Write-Host '     disabled/not-owned ordinary RBAC mappings' }
 $stepNumber = 6
 if ($criticalEnabled -and $criticalSubscriptions.Count -gt 0) {
     $criticalSubscriptionsList = $criticalSubscriptions -join ', '
