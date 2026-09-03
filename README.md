@@ -699,7 +699,9 @@ This project never silently enables Defender plans, configures Microsoft
 Sentinel analytics/incidents, or claims that any of these controls alone
 prove Microsoft Cloud Security Benchmark (MCSB) or
 regulatory-compliance-dashboard compliance; see `docs/CONTROL-MATRIX.md` for
-the full REQ-DEF-01 through REQ-DEF-09 mapping, including why the
+the full REQ-DEF-01 through REQ-DEF-09 mapping, and
+`docs/NERC-CIP-MATRIX.md` for NERC CIP shared-responsibility evidence
+boundaries, including why the
 all-or-nothing "Configure Microsoft Defender for Cloud plans" initiative and
 the deprecated Log Analytics (MMA) auto-provisioning policy are intentionally
 never assigned. REQ-DEF-09 separately documents Foundational CSPM — the free
@@ -987,6 +989,7 @@ docs/
   ENTRA-CONDITIONAL-ACCESS-PIM.md
   AZURE-RBAC-PIM.md
   ACCESS-REVIEWS.md
+  NERC-CIP-MATRIX.md
 identity/
   azure-rbac/
     owner-eligibility-request.bicep
