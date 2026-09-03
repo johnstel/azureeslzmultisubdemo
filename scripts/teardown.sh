@@ -39,6 +39,8 @@ role_assignments_enabled="$(jq -r '.parameters.deployRoleAssignments.value // fa
 evidence_resources_enabled="$(jq -r '.parameters.deployEvidenceResources.value // false' "${PARAMETER_FILE}")"
 firewall_route_guardrails_enabled="$(jq -r '.parameters.enableFirewallRouteGuardrails.value // false' "${PARAMETER_FILE}")"
 nerc_cip_overlay_enabled="$(jq -r '.parameters.enableNercCipTechnicalOverlay.value // false' "${PARAMETER_FILE}")"
+vm_backup_remediation_enabled="$(jq -r '.parameters.enableVmBackupRemediation.value // false' "${PARAMETER_FILE}")"
+vault_diagnostics_enabled="$(jq -r '.parameters.enableVaultDiagnostics.value // false' "${PARAMETER_FILE}")"
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
 # by this script, regardless of any naming collision with a generated resource group name.
@@ -101,32 +103,30 @@ delete_resource_group_if_not_protected() {
   local group="$2"
   if is_protected_existing_workspace_group "${subscription}" "${group}"; then
     printf 'SKIP: %s matches the supplied existingLogAnalyticsWorkspaceResourceId resource group; it is never deleted by this script.\n' "${group}" >&2
-    return 0
+    return 1
   fi
   if az group exists --subscription "${subscription}" --name "${group}" --output tsv | grep -qi true; then
     local owner
     owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
-      || { printf 'ERROR: Cannot read ownership marker for %s; it is protected.\n' "${group}" >&2; return 0; }
+      || { printf 'ERROR: Cannot read ownership marker for %s; it is protected.\n' "${group}" >&2; return 1; }
     if [[ -z "${owner}" ]]; then
       printf 'SKIP: %s is external/protected because ESLZLifecycleOwner is absent.\n' "${group}" >&2
-      return 0
+      return 1
     fi
     if [[ "${owner}" != "${prefix}" ]]; then
       printf 'SKIP: %s is external/protected because ESLZLifecycleOwner does not match this demo root.\n' "${group}" >&2
-      return 0
+      return 1
     fi
     az group delete --subscription "${subscription}" --name "${group}" --yes --no-wait
-  fi
-}
-
-# Waits for deletion of the named resource group unless it is the protected
-# existing-workspace resource group, in which case there is nothing to wait for.
-wait_for_resource_group_deletion_if_not_protected() {
-  local subscription="$1"
-  local group="$2"
-  if is_protected_existing_workspace_group "${subscription}" "${group}"; then
     return 0
   fi
+  return 1
+}
+
+# Waits only after this script successfully started resource-group deletion.
+wait_for_resource_group_deletion() {
+  local subscription="$1"
+  local group="$2"
   az group wait --subscription "${subscription}" --name "${group}" --deleted --interval 10 --timeout 900 2>/dev/null || true
 }
 
@@ -146,11 +146,16 @@ print_plan() {
   printf '     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at %s\n' "${landing_zones_scope}"
   printf '     deployment-owned demo-network-ingress, demo-private-access at %s\n' "${workload_scope}"
   [[ "${role_assignments_enabled}" == true ]] && printf '     deployment-owned ordinary RBAC mappings at %s, %s, and %s\n' "${demo_root_scope}" "${connectivity_scope}" "${subscription_workload_scope}" || printf '     disabled/not-owned ordinary RBAC mappings\n'
-  [[ "$(jq -r '.parameters.enableDefenderCspm.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-defender-cspm at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-defender-cspm\n'
+  [[ "$(jq -r '.parameters.enableDefenderCspm.value // false' "${PARAMETER_FILE}")" == true ]] && defender_cspm_effect='DeployIfNotExists' || defender_cspm_effect='Disabled'
+  [[ "$(jq -r '.parameters.enableDefenderForServers.value // false' "${PARAMETER_FILE}")" == true ]] && defender_servers_effect='DeployIfNotExists' || defender_servers_effect='Disabled'
+  [[ "$(jq -r '.parameters.enableDefenderForStorage.value // false' "${PARAMETER_FILE}")" == true ]] && defender_storage_effect='DeployIfNotExists' || defender_storage_effect='Disabled'
+  printf '     deployment-owned demo-defender-cspm at %s (effect: %s)\n' "${demo_root_scope}" "${defender_cspm_effect}"
+  printf '     deployment-owned demo-defender-servers at %s (effect: %s); demo-defender-storage at %s (effect: %s)\n' "${landing_zones_scope}" "${defender_servers_effect}" "${landing_zones_scope}" "${defender_storage_effect}"
   [[ "$(jq -r '.parameters.enableMicrosoftCloudSecurityBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-mcsb-baseline at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-mcsb-baseline\n'
   [[ "$(jq -r '.parameters.enableCisAzureFoundationsBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-cis-foundations at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-cis-foundations\n'
   [[ "$(jq -r '.parameters.enableNistSp80053Rev5.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-nist-800-53-r5 at %s\n' "${demo_root_scope}" || printf '     disabled/not-owned demo-nist-800-53-r5\n'
   [[ "$(jq -r '.parameters.enableTagInheritance.value // false' "${PARAMETER_FILE}")" == true ]] && printf '     deployment-owned demo-inherit-rg-tags at %s\n' "${landing_zones_scope}" || printf '     disabled/not-owned demo-inherit-rg-tags\n'
+  [[ "${vault_diagnostics_enabled}" == true ]] && printf '     deployment-owned demo-vault-diagnostics at %s\n' "${landing_zones_scope}" || printf '     disabled/not-owned demo-vault-diagnostics\n'
   if [[ "${critical_enabled}" == true ]]; then
     printf '     deployment-owned demo-critical-private at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}"
     [[ "${nerc_cip_overlay_enabled}" == true ]] && printf '     deployment-owned demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/%s-criticalinfra\n' "${prefix}" || printf '     disabled/not-owned demo-nerc-cip-technical\n'
@@ -159,7 +164,11 @@ print_plan() {
     printf '     disabled/not-owned Critical Infrastructure assignments\n'
   fi
   [[ "${firewall_route_guardrails_enabled}" == true ]] && printf '     deployment-owned demo-firewall-routes at %s\n' "${workload_scope}" || printf '     disabled/not-owned demo-firewall-routes\n'
-  jq -r '.parameters.approvedBackupVaults.value // [] | to_entries[] | "     deployment-owned demo-vm-backup-\(.key) at '"${landing_zones_scope}"'"' "${PARAMETER_FILE}"
+  if [[ "${vm_backup_remediation_enabled}" == true ]]; then
+    jq -r '.parameters.approvedBackupVaults.value // [] | to_entries[] | "     deployment-owned demo-vm-backup-\(.key) at '"${landing_zones_scope}"'"' "${PARAMETER_FILE}"
+  else
+    printf '     disabled/not-owned dynamic demo-vm-backup assignments\n'
+  fi
   [[ -n "${workspace_scope}" ]] && printf '     deployment-owned remediating identity roles at %s; workspace is external/protected when supplied.\n' "${workspace_scope}"
   step_number=$((step_number + 1))
   printf '  %d. deployment-owned optional resource groups:\n' "${step_number}"
@@ -193,7 +202,7 @@ print_plan() {
     "     external/protected \(. )"
   ' "${PARAMETER_FILE}"
   printf '  %d. deployment-owned custom initiatives and policy definitions are deleted after assignments.\n' "${step_number}"
-  printf '     deployment-owned initiatives %s-required-rg-tags, %s-inherit-rg-tags, %s-network-ingress, %s-private-access, %s-data-protection, %s-backup-posture, %s-nerc-cip-technical-overlay at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
+  printf '     deployment-owned initiatives %s-required-rg-tags, %s-inherit-rg-tags, %s-network-ingress, %s-private-access, %s-data-protection, %s-deploy-restrictions, %s-backup-posture, %s-nerc-cip-technical-overlay at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
   printf '     deployment-owned definitions %s-allowed-us-locations, %s-allowed-resource-types-all, %s-require-workload-rg-tags, %s-audit-public-ip, %s-public-mgmt-ingress, %s-require-subnet-nsg, %s-audit-paas-public-network, %s-audit-approved-firewall-routes, %s-block-expensive, %s-audit-storage-cmk-approved-key, %s-audit-platform-tags at %s\n' "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${prefix}" "${demo_root_scope}"
   step_number=$((step_number + 1))
   printf '  %d. Move subscriptions %s and %s back to %s.\n' "${step_number}" "${connectivity_subscription}" "${workload_subscription}" "${tenant_root}"
@@ -266,24 +275,27 @@ delete_demo_policy_assignments() {
   local owned_assignments=(
     "demo-allowed-us-locs|${demo_root_scope}" "demo-audit-public-ip|${demo_root_scope}"
     "demo-block-expensive|${demo_root_scope}" "demo-defender-cspm|${demo_root_scope}"
-    "demo-mcsb-baseline|${demo_root_scope}" "demo-cis-foundations|${demo_root_scope}"
-    "demo-nist-800-53-r5|${demo_root_scope}" "demo-activity-logs|${demo_root_scope}"
+    "demo-activity-logs|${demo_root_scope}"
     "demo-resource-diags|${demo_root_scope}" "demo-audit-platform-tags|${platform_scope}"
     "demo-data-protection|${landing_zones_scope}" "demo-require-rg-tags|${landing_zones_scope}"
     "demo-defender-servers|${landing_zones_scope}" "demo-defender-storage|${landing_zones_scope}"
     "demo-audit-vuln-assess|${landing_zones_scope}" "demo-audit-ama-windows|${landing_zones_scope}"
-    "demo-audit-ama-linux|${landing_zones_scope}" "demo-inherit-rg-tags|${landing_zones_scope}"
-    "demo-backup-posture|${landing_zones_scope}" "demo-vault-diagnostics|${landing_zones_scope}"
+    "demo-audit-ama-linux|${landing_zones_scope}"
+    "demo-backup-posture|${landing_zones_scope}"
     "demo-network-ingress|${workload_scope}" "demo-private-access|${workload_scope}"
   )
   for assignment in "${owned_assignments[@]}"; do
     delete_policy_assignment "${assignment%%|*}" "${assignment#*|}" "${workspace_scope}"
   done
+  [[ "$(jq -r '.parameters.enableMicrosoftCloudSecurityBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && delete_policy_assignment 'demo-mcsb-baseline' "${demo_root_scope}" "${workspace_scope}"
+  [[ "$(jq -r '.parameters.enableCisAzureFoundationsBenchmark.value // false' "${PARAMETER_FILE}")" == true ]] && delete_policy_assignment 'demo-cis-foundations' "${demo_root_scope}" "${workspace_scope}"
+  [[ "$(jq -r '.parameters.enableNistSp80053Rev5.value // false' "${PARAMETER_FILE}")" == true ]] && delete_policy_assignment 'demo-nist-800-53-r5' "${demo_root_scope}" "${workspace_scope}"
+  [[ "$(jq -r '.parameters.enableTagInheritance.value // false' "${PARAMETER_FILE}")" == true ]] && delete_policy_assignment 'demo-inherit-rg-tags' "${landing_zones_scope}" "${workspace_scope}"
+  [[ "${vault_diagnostics_enabled}" == true ]] && delete_policy_assignment 'demo-vault-diagnostics' "${landing_zones_scope}" "${workspace_scope}"
   if [[ "${critical_enabled}" == 'true' ]]; then
     local critical_scope="/providers/Microsoft.Management/managementGroups/${prefix}-criticalinfra"
-    for assignment_name in demo-critical-private demo-nerc-cip-technical; do
-      delete_policy_assignment "${assignment_name}" "${critical_scope}" "${workspace_scope}"
-    done
+    delete_policy_assignment 'demo-critical-private' "${critical_scope}" "${workspace_scope}"
+    [[ "${nerc_cip_overlay_enabled}" == true ]] && delete_policy_assignment 'demo-nerc-cip-technical' "${critical_scope}" "${workspace_scope}"
   fi
   if [[ "${firewall_route_guardrails_enabled}" == 'true' ]]; then
     delete_policy_assignment 'demo-firewall-routes' "${workload_scope}" "${workspace_scope}"
@@ -292,9 +304,11 @@ delete_demo_policy_assignments() {
     fi
   fi
   local backup_index
-  while IFS= read -r backup_index; do
-    delete_policy_assignment "demo-vm-backup-${backup_index}" "${landing_zones_scope}" "${workspace_scope}"
-  done < <(jq -r '.parameters.approvedBackupVaults.value // [] | keys[]' "${PARAMETER_FILE}")
+  if [[ "${vm_backup_remediation_enabled}" == true ]]; then
+    while IFS= read -r backup_index; do
+      delete_policy_assignment "demo-vm-backup-${backup_index}" "${landing_zones_scope}" "${workspace_scope}"
+    done < <(jq -r '.parameters.approvedBackupVaults.value // [] | keys[]' "${PARAMETER_FILE}")
+  fi
 }
 
 print_plan
@@ -332,29 +346,30 @@ fi
 delete_demo_policy_assignments
 
 if [[ "${evidence_resources_enabled}" == 'true' ]]; then
-  delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"
-  delete_resource_group_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
+  delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity" && wait_for_resource_group_deletion "${connectivity_subscription}" "rg-${prefix}-connectivity"
+  delete_resource_group_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo" && wait_for_resource_group_deletion "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
 fi
 # Only delete the monitoring resource group when this repository created it (no conflicting
 # existing workspace was supplied). A supplied existing workspace/resource group is never
 # owned by this demo and must never be deleted here, even by name collision.
 if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
-  delete_resource_group_if_not_protected "${connectivity_subscription}" "${monitoring_resource_group}"
+  delete_resource_group_if_not_protected "${connectivity_subscription}" "${monitoring_resource_group}" && wait_for_resource_group_deletion "${connectivity_subscription}" "${monitoring_resource_group}"
 fi
 if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
-  delete_resource_group_if_not_protected "${workload_subscription}" "${backup_resource_group}"
-fi
-if [[ "${evidence_resources_enabled}" == 'true' ]]; then
-  wait_for_resource_group_deletion_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"
-  wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "rg-${prefix}-${archetype}-demo"
-fi
-if [[ "${monitoring_group_is_repo_owned}" == 'true' ]]; then
-  wait_for_resource_group_deletion_if_not_protected "${connectivity_subscription}" "${monitoring_resource_group}"
-fi
-if [[ "${recovery_services_vault_enabled}" == 'true' ]]; then
-  wait_for_resource_group_deletion_if_not_protected "${workload_subscription}" "${backup_resource_group}"
+  delete_resource_group_if_not_protected "${workload_subscription}" "${backup_resource_group}" && wait_for_resource_group_deletion "${workload_subscription}" "${backup_resource_group}"
 fi
 
+for initiative_name in \
+  "${prefix}-required-rg-tags" \
+  "${prefix}-inherit-rg-tags" \
+  "${prefix}-network-ingress" \
+  "${prefix}-private-access" \
+  "${prefix}-data-protection" \
+  "${prefix}-deploy-restrictions" \
+  "${prefix}-backup-posture" \
+  "${prefix}-nerc-cip-technical-overlay"; do
+  az policy set-definition delete --name "${initiative_name}" --management-group "${prefix}" 2>/dev/null || true
+done
 for policy_name in \
   "${prefix}-allowed-us-locations" \
   "${prefix}-allowed-resource-types-all" \
@@ -368,18 +383,6 @@ for policy_name in \
   "${prefix}-audit-approved-firewall-routes" \
   "${prefix}-audit-storage-cmk-approved-key"; do
   az policy definition delete --name "${policy_name}" --management-group "${prefix}" 2>/dev/null || true
-done
-az policy set-definition delete --name "${prefix}-required-rg-tags" --management-group "${prefix}" 2>/dev/null || true
-for initiative_name in \
-  "${prefix}-required-rg-tags" \
-  "${prefix}-inherit-rg-tags" \
-  "${prefix}-network-ingress" \
-  "${prefix}-private-access" \
-  "${prefix}-data-protection" \
-  "${prefix}-deploy-restrictions" \
-  "${prefix}-backup-posture" \
-  "${prefix}-nerc-cip-technical-overlay"; do
-  az policy set-definition delete --name "${initiative_name}" --management-group "${prefix}" 2>/dev/null || true
 done
 
 az account management-group subscription add --name "${tenant_root}" --subscription "${connectivity_subscription}"

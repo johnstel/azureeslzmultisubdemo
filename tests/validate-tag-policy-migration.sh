@@ -184,7 +184,10 @@ if grep -Fq 'demo-require-rg-tags|${workload_scope}' "${PROJECT_DIR}/scripts/tea
   printf 'ERROR: Bash teardown must not delete the resource-group tags assignment at the workload scope.\n' >&2
   exit 1
 fi
-grep -Fq 'policy set-definition delete --name "${prefix}-required-rg-tags" --management-group "${prefix}"' "${PROJECT_DIR}/scripts/teardown.sh"
+if ! grep -Fq '"${prefix}-required-rg-tags" \' "${PROJECT_DIR}/scripts/teardown.sh"; then
+  printf 'ERROR: Bash teardown must delete the required resource-group tags initiative.\n' >&2
+  exit 1
+fi
 if grep -Fq 'demo-require-workload-rg-tags' "${PROJECT_DIR}/scripts/teardown.sh"; then
   printf 'ERROR: Bash teardown still targets the nonexistent legacy assignment name.\n' >&2
   exit 1
