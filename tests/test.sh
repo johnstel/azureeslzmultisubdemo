@@ -3054,4 +3054,334 @@ jq -e --arg vaultPrefix "${backup_vault_prefix}" '
   exit 1
 }
 
+printf '29/29 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
+access_review_script="${PROJECT_DIR}/scripts/review-privileged-access.sh"
+access_review_ps_script="${PROJECT_DIR}/scripts/review-privileged-access.ps1"
+access_review_criteria="${PROJECT_DIR}/policy/access-review-criteria.json"
+access_review_assignments="${PROJECT_DIR}/tests/fixtures/privileged-access-assignments.json"
+access_review_expected="${PROJECT_DIR}/tests/fixtures/privileged-access-expected-report.json"
+access_review_observations="${PROJECT_DIR}/tests/fixtures/privileged-access-observations.json"
+access_review_observations_expected="${PROJECT_DIR}/tests/fixtures/privileged-access-expected-observations-report.json"
+access_review_tenant='44444444-4444-4444-8444-444444444444'
+access_review_subscription='22222222-2222-4222-8222-222222222222'
+access_review_second_subscription='66666666-6666-4666-8666-666666666666'
+for access_review_file in "${access_review_script}" "${access_review_ps_script}" "${access_review_criteria}" \
+  "${access_review_assignments}" "${access_review_expected}" "${access_review_observations}" \
+  "${access_review_observations_expected}"; do
+  [[ -f "${access_review_file}" ]] || {
+    printf 'ERROR: Missing privileged access review artifact: %s\n' "${access_review_file}" >&2
+    exit 1
+  }
+done
+if rg -n 'az (role assignment (create|delete|update)|ad (app|sp|group) (create|delete|update)|deployment|rest --method)' \
+  "${access_review_script}" "${access_review_ps_script}"; then
+  printf 'ERROR: The privileged access review scripts must stay read-only.\n' >&2
+  exit 1
+fi
+access_review_out="${TEMP_DIR}/access-review"
+"${access_review_script}" \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --management-group demo-root \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_out}" >/dev/null
+access_review_report="$(ls "${access_review_out}"/privileged-access-review-*.json)"
+[[ -f "${access_review_report}" ]] || {
+  printf 'ERROR: The privileged access review produced no JSON report.\n' >&2
+  exit 1
+}
+[[ -f "${access_review_report%.json}.md" ]] || {
+  printf 'ERROR: The privileged access review produced no Markdown report.\n' >&2
+  exit 1
+}
+jq -S 'del(.generatedOn)' "${access_review_report}" > "${TEMP_DIR}/access-review-actual.json"
+jq -S '.' "${access_review_expected}" > "${TEMP_DIR}/access-review-expected.json"
+diff -u "${TEMP_DIR}/access-review-expected.json" "${TEMP_DIR}/access-review-actual.json" || {
+  printf 'ERROR: The privileged access review classification changed unexpectedly.\n' >&2
+  exit 1
+}
+jq -e '
+  (.generatedOn | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+  and .mode == "offline-file"
+  and (.findings | length) > 0
+  and all(.findings[]; .reviewAction == "manual-review-required")
+  and ([.findings[] | select(.principalType == "ServicePrincipal" and .roleDefinitionName == "Owner")]
+    | all(.severity == "high" and (.reasons | index("direct-non-human-principal-assignment") != null)))
+  and (.. | strings | test("password|secret|clientSecret"; "i") | not)
+' "${access_review_report}" >/dev/null || {
+  printf 'ERROR: The privileged access review report shape or safety expectations are invalid.\n' >&2
+  exit 1
+}
+# The generated reports contain directory identifiers and must never be tracked.
+git -C "${PROJECT_DIR}" check-ignore -q "${PROJECT_DIR}/.access-reviews/privileged-access-review-example.json" || {
+  printf 'ERROR: Locally generated access-review reports must be ignored by source control.\n' >&2
+  exit 1
+}
+
+# Every direct service-principal or managed-identity grant must appear in the
+# inventory, including narrow, lower-privilege ones that are only ranked low.
+jq -e '
+  ([.findings[] | select(.principalType == "ServicePrincipal" or .principalType == "MSI")] | length)
+    == .summary.nonHumanAssignmentCount
+  and (
+    [.findings[]
+      | select(.principalId == "88888888-8888-4888-8888-888888888888"
+        and .roleDefinitionName == "Storage Blob Data Reader")]
+    | length == 1
+      and (.[0].severity == "low")
+      and (.[0].scopeType == "resource")
+      and ((.[0].reasons | index("direct-non-human-principal-assignment")) != null)
+  )
+' "${access_review_report}" >/dev/null || {
+  printf 'ERROR: Direct service-principal and managed-identity grants must always be surfaced.\n' >&2
+  exit 1
+}
+
+# Subscription queries use --include-inherited, so the same management-group
+# assignment is observed repeatedly; it must collapse to one finding while the
+# observing subscriptions stay attributed.
+access_review_observations_out="${TEMP_DIR}/access-review-observations"
+"${access_review_script}" \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --subscription-id "${access_review_second_subscription}" \
+  --management-group demo-root \
+  --assignments-file "${access_review_observations}" \
+  --output-dir "${access_review_observations_out}" >/dev/null
+access_review_observations_report="$(ls "${access_review_observations_out}"/privileged-access-review-*.json)"
+jq -S 'del(.generatedOn)' "${access_review_observations_report}" \
+  > "${TEMP_DIR}/access-review-observations-actual.json"
+jq -S '.' "${access_review_observations_expected}" \
+  > "${TEMP_DIR}/access-review-observations-expected.json"
+diff -u "${TEMP_DIR}/access-review-observations-expected.json" \
+  "${TEMP_DIR}/access-review-observations-actual.json" || {
+  printf 'ERROR: The deduplicated inheritance classification changed unexpectedly.\n' >&2
+  exit 1
+}
+jq -e --arg first "${access_review_subscription}" --arg second "${access_review_second_subscription}" '
+  .summary.assignmentsCollected == 10
+  and .summary.assignmentsEvaluated == 5
+  and .summary.duplicateObservationsCollapsed == 5
+  and ([.findings[] | select(.scopeType == "managementGroup")] | length) == 2
+  and all(.findings[] | select(.scopeType == "managementGroup");
+    .observedInSubscriptions == [$first, $second])
+  and (
+    [.findings[] | select(.principalId == "77777777-7777-4777-8777-777777777777")]
+    | length == 1 and (.[0].observedInSubscriptions == [$first, $second])
+  )
+  and ((.summary.subscriptionOwnerCounts | map(.subscriptionId)) == [$first, $second])
+  and (.summary.subscriptionOwnerCounts[0]
+    | .ownerPrincipalCount == 3 and .directOwnerPrincipalCount == 1
+      and .inheritedOwnerPrincipalCount == 2)
+  and (.summary.subscriptionOwnerCounts[1]
+    | .ownerPrincipalCount == 2 and .directOwnerPrincipalCount == 0
+      and .inheritedOwnerPrincipalCount == 2)
+' "${access_review_observations_report}" >/dev/null || {
+  printf 'ERROR: Inherited assignments were not deduplicated and attributed to the requested subscriptions.\n' >&2
+  exit 1
+}
+# An Owner scoped to a resource group does not confer Owner over the
+# subscription, so it stays a finding but never inflates the Owner totals.
+jq -e --arg first "${access_review_subscription}" '
+  ([.findings[]
+    | select(.roleDefinitionName == "Owner" and .scopeType == "resourceGroup")] as $childOwners
+  | ($childOwners | length) == 1
+    and ($childOwners[0].observedInSubscriptions == [$first])
+    and (
+      # The child-scoped Owner principal is observed in the subscription, yet
+      # the Owner total stays at the three subscription-wide Owner principals.
+      [.findings[]
+        | select(.roleDefinitionName == "Owner"
+          and ((.observedInSubscriptions | index($first)) != null))
+        | .principalId]
+      | unique | length == 4))
+  and all(.summary.subscriptionOwnerCounts[];
+    .ownerPrincipalCount == (.directOwnerPrincipalCount + .inheritedOwnerPrincipalCount))
+' "${access_review_observations_report}" >/dev/null || {
+  printf 'ERROR: A child-scoped Owner grant must remain a finding without counting as a subscription Owner.\n' >&2
+  exit 1
+}
+
+access_review_strict_criteria="${TEMP_DIR}/access-review-strict-criteria.json"
+jq '.maxOwnersPerSubscription = 1' "${access_review_criteria}" > "${access_review_strict_criteria}"
+access_review_strict_out="${TEMP_DIR}/access-review-strict"
+"${access_review_script}" \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --criteria-file "${access_review_strict_criteria}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_strict_out}" >/dev/null
+jq -e --arg subscription "${access_review_subscription}" '
+  .summary.subscriptionsExceedingOwnerThreshold == [$subscription]
+  and (.summary.subscriptionOwnerCounts[0] | .ownerPrincipalCount == 2 and .exceedsThreshold)
+  and .criteria.maxOwnersPerSubscription == 1
+' "$(ls "${access_review_strict_out}"/privileged-access-review-*.json)" >/dev/null || {
+  printf 'ERROR: The configurable Owner-count threshold was not honoured.\n' >&2
+  exit 1
+}
+
+expect_access_review_failure() {
+  local description="$1"
+  shift
+  local output
+  if output="$("${access_review_script}" "$@" 2>&1)"; then
+    printf 'ERROR: The privileged access review accepted %s.\n' "${description}" >&2
+    exit 1
+  fi
+  printf '%s' "${output}" | grep -q 'ERROR:' || {
+    printf 'ERROR: The privileged access review rejected %s without an explicit error.\n' "${description}" >&2
+    exit 1
+  }
+}
+
+access_review_negative_out="${TEMP_DIR}/access-review-negative"
+expect_access_review_failure 'a missing tenant context' \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+expect_access_review_failure 'a missing subscription context' \
+  --tenant-id "${access_review_tenant}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+expect_access_review_failure 'a non-canonical subscription GUID' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id 'not-a-guid' \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+expect_access_review_failure 'a duplicate subscription' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+access_review_bad_assignments="${TEMP_DIR}/access-review-bad-assignments.json"
+jq '.[0] |= del(.principalType)' "${access_review_assignments}" > "${access_review_bad_assignments}"
+expect_access_review_failure 'an assignment without a principal type' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_bad_assignments}" \
+  --output-dir "${access_review_negative_out}"
+access_review_bad_observations="${TEMP_DIR}/access-review-bad-observations.json"
+jq '.observations[0].source.kind = "resourceGroup"' "${access_review_observations}" \
+  > "${access_review_bad_observations}"
+expect_access_review_failure 'an observation with an unsupported source kind' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --assignments-file "${access_review_bad_observations}" \
+  --output-dir "${access_review_negative_out}"
+access_review_bad_criteria="${TEMP_DIR}/access-review-bad-criteria.json"
+jq '.highPrivilegeRoleNames = []' "${access_review_criteria}" > "${access_review_bad_criteria}"
+expect_access_review_failure 'an empty high-privilege role list' \
+  --tenant-id "${access_review_tenant}" \
+  --subscription-id "${access_review_subscription}" \
+  --criteria-file "${access_review_bad_criteria}" \
+  --assignments-file "${access_review_assignments}" \
+  --output-dir "${access_review_negative_out}"
+
+access_review_mock_bin="${TEMP_DIR}/access-review-mockbin"
+mkdir -p "${access_review_mock_bin}"
+cat > "${access_review_mock_bin}/az" <<'MOCKACCESSREVIEWAZ'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${ACCESS_REVIEW_AZ_CALL_LOG}"
+if [[ "$1" == 'account' && "$2" == 'show' ]]; then
+  printf '%s\n' "${MOCK_SIGNED_IN_TENANT}"
+  exit 0
+fi
+if [[ "$1" == 'role' && "$2" == 'assignment' && "$3" == 'list' ]]; then
+  cat "${MOCK_ASSIGNMENTS_FILE}"
+  exit 0
+fi
+exit 1
+MOCKACCESSREVIEWAZ
+chmod +x "${access_review_mock_bin}/az"
+access_review_az_log="${TEMP_DIR}/access-review-az-calls.log"
+: > "${access_review_az_log}"
+access_review_live_out="${TEMP_DIR}/access-review-live"
+if ! PATH="${access_review_mock_bin}:${PATH}" \
+  ACCESS_REVIEW_AZ_CALL_LOG="${access_review_az_log}" \
+  MOCK_SIGNED_IN_TENANT="${access_review_tenant}" \
+  MOCK_ASSIGNMENTS_FILE="${access_review_assignments}" \
+  "${access_review_script}" \
+    --tenant-id "${access_review_tenant}" \
+    --subscription-id "${access_review_subscription}" \
+    --output-dir "${access_review_live_out}" >/dev/null; then
+  printf 'ERROR: The privileged access review failed against a read-only Azure CLI mock.\n' >&2
+  exit 1
+fi
+jq -e '.mode == "live-read-only" and .summary.assignmentsEvaluated == 8' \
+  "$(ls "${access_review_live_out}"/privileged-access-review-*.json)" >/dev/null || {
+  printf 'ERROR: The live read-only mode did not evaluate the collected assignments.\n' >&2
+  exit 1
+}
+[[ ! -e "${access_review_live_out}/.collected-assignments.json" ]] || {
+  printf 'ERROR: The privileged access review must not leave collected assignments behind.\n' >&2
+  exit 1
+}
+if ! grep -q '^account show --query tenantId --output tsv$' "${access_review_az_log}"; then
+  printf 'ERROR: The privileged access review must verify the signed-in tenant before reading assignments.\n' >&2
+  exit 1
+fi
+access_review_unexpected_calls="$(grep -Ev '^(account show|role assignment list) ' "${access_review_az_log}" || true)"
+if [[ -n "${access_review_unexpected_calls//[[:space:]]/}" ]]; then
+  printf 'ERROR: The privileged access review invoked an Azure CLI command that is not read-only.\n' >&2
+  printf '%s\n' "${access_review_unexpected_calls}" >&2
+  exit 1
+fi
+: > "${access_review_az_log}"
+if PATH="${access_review_mock_bin}:${PATH}" \
+  ACCESS_REVIEW_AZ_CALL_LOG="${access_review_az_log}" \
+  MOCK_SIGNED_IN_TENANT='55555555-5555-4555-8555-555555555555' \
+  MOCK_ASSIGNMENTS_FILE="${access_review_assignments}" \
+  "${access_review_script}" \
+    --tenant-id "${access_review_tenant}" \
+    --subscription-id "${access_review_subscription}" \
+    --output-dir "${TEMP_DIR}/access-review-wrong-tenant" >/dev/null 2>&1; then
+  printf 'ERROR: The privileged access review accepted a signed-in tenant that does not match --tenant-id.\n' >&2
+  exit 1
+fi
+if grep -q 'role assignment list' "${access_review_az_log}"; then
+  printf 'ERROR: The privileged access review read assignments from a mismatched tenant.\n' >&2
+  exit 1
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+  printf '    Confirm the PowerShell review produces an identical report...\n'
+  access_review_ps_out="${TEMP_DIR}/access-review-pwsh"
+  pwsh -NoLogo -NoProfile -File "${access_review_ps_script}" \
+    -TenantId "${access_review_tenant}" \
+    -SubscriptionId "${access_review_subscription}" \
+    -ManagementGroupId demo-root \
+    -AssignmentsFile "${access_review_assignments}" \
+    -OutputDirectory "${access_review_ps_out}" >/dev/null
+  jq -S 'del(.generatedOn)' "$(ls "${access_review_ps_out}"/privileged-access-review-*.json)" \
+    > "${TEMP_DIR}/access-review-pwsh-actual.json"
+  diff -u "${TEMP_DIR}/access-review-expected.json" "${TEMP_DIR}/access-review-pwsh-actual.json" || {
+    printf 'ERROR: The PowerShell privileged access review report differs from the Bash report.\n' >&2
+    exit 1
+  }
+  access_review_ps_observations_out="${TEMP_DIR}/access-review-pwsh-observations"
+  pwsh -NoLogo -NoProfile -File "${access_review_ps_script}" \
+    -TenantId "${access_review_tenant}" \
+    -SubscriptionId "${access_review_subscription}","${access_review_second_subscription}" \
+    -ManagementGroupId demo-root \
+    -AssignmentsFile "${access_review_observations}" \
+    -OutputDirectory "${access_review_ps_observations_out}" >/dev/null
+  jq -S 'del(.generatedOn)' \
+    "$(ls "${access_review_ps_observations_out}"/privileged-access-review-*.json)" \
+    > "${TEMP_DIR}/access-review-pwsh-observations-actual.json"
+  diff -u "${TEMP_DIR}/access-review-observations-expected.json" \
+    "${TEMP_DIR}/access-review-pwsh-observations-actual.json" || {
+    printf 'ERROR: The PowerShell deduplicated inheritance report differs from the Bash report.\n' >&2
+    exit 1
+  }
+else
+  printf '    (No pwsh interpreter found on PATH; tests/test.ps1 covers the PowerShell review.)\n'
+fi
+
+rg -q 'reviewCadenceDays' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Defender CSPM CIEM' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Evidence retention' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Subscription Owner-count review' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+rg -q 'Remediation decision workflow' "${PROJECT_DIR}/docs/ACCESS-REVIEWS.md"
+
 printf '\nAll local validation and safety tests passed.\n'

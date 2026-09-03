@@ -1,0 +1,163 @@
+{
+  "schemaVersion": "1.0",
+  "mode": "offline-file",
+  "tenantId": "44444444-4444-4444-8444-444444444444",
+  "subscriptionIds": [
+    "22222222-2222-4222-8222-222222222222",
+    "66666666-6666-4666-8666-666666666666"
+  ],
+  "managementGroupIds": [
+    "demo-root"
+  ],
+  "criteria": {
+    "criteriaVersion": "1.0.0",
+    "reviewCadenceDays": 90,
+    "maxOwnersPerSubscription": 3,
+    "highPrivilegeRoleNames": [
+      "Owner",
+      "User Access Administrator",
+      "Role Based Access Control Administrator"
+    ],
+    "elevatedRoleNames": [
+      "Contributor",
+      "Management Group Contributor",
+      "Resource Policy Contributor",
+      "Network Contributor",
+      "Security Admin",
+      "Key Vault Administrator"
+    ],
+    "nonHumanPrincipalTypes": [
+      "ServicePrincipal",
+      "MSI"
+    ],
+    "broadScopeTypes": [
+      "tenantRoot",
+      "managementGroup",
+      "subscription"
+    ]
+  },
+  "summary": {
+    "assignmentsCollected": 10,
+    "assignmentsEvaluated": 5,
+    "duplicateObservationsCollapsed": 5,
+    "findingCount": 5,
+    "highSeverityFindingCount": 3,
+    "mediumSeverityFindingCount": 1,
+    "lowSeverityFindingCount": 1,
+    "nonHumanAssignmentCount": 2,
+    "nonHumanHighPrivilegeAssignmentCount": 1,
+    "managementGroupScopedAssignmentCount": 2,
+    "subscriptionOwnerCounts": [
+      {
+        "subscriptionId": "22222222-2222-4222-8222-222222222222",
+        "ownerPrincipalCount": 3,
+        "directOwnerPrincipalCount": 1,
+        "inheritedOwnerPrincipalCount": 2,
+        "exceedsThreshold": false
+      },
+      {
+        "subscriptionId": "66666666-6666-4666-8666-666666666666",
+        "ownerPrincipalCount": 2,
+        "directOwnerPrincipalCount": 0,
+        "inheritedOwnerPrincipalCount": 2,
+        "exceedsThreshold": false
+      }
+    ],
+    "subscriptionsExceedingOwnerThreshold": []
+  },
+  "findings": [
+    {
+      "assignmentId": "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/roleAssignments/aaaaaaaa-1111-4111-8111-111111111111",
+      "principalId": "11111111-1111-4111-8111-111111111111",
+      "principalType": "ServicePrincipal",
+      "roleDefinitionName": "Owner",
+      "scope": "/providers/Microsoft.Management/managementGroups/demo-root",
+      "scopeType": "managementGroup",
+      "subscriptionId": null,
+      "observedInSubscriptions": [
+        "22222222-2222-4222-8222-222222222222",
+        "66666666-6666-4666-8666-666666666666"
+      ],
+      "severity": "high",
+      "reasons": [
+        "high-privilege-role",
+        "direct-non-human-principal-assignment",
+        "broad-scope"
+      ],
+      "reviewAction": "manual-review-required"
+    },
+    {
+      "assignmentId": "/providers/Microsoft.Management/managementGroups/demo-root/providers/Microsoft.Authorization/roleAssignments/aaaaaaaa-9999-4999-8999-999999999999",
+      "principalId": "99999999-9999-4999-8999-999999999999",
+      "principalType": "User",
+      "roleDefinitionName": "Owner",
+      "scope": "/providers/Microsoft.Management/managementGroups/demo-root",
+      "scopeType": "managementGroup",
+      "subscriptionId": null,
+      "observedInSubscriptions": [
+        "22222222-2222-4222-8222-222222222222",
+        "66666666-6666-4666-8666-666666666666"
+      ],
+      "severity": "high",
+      "reasons": [
+        "high-privilege-role",
+        "broad-scope"
+      ],
+      "reviewAction": "manual-review-required"
+    },
+    {
+      "assignmentId": "/subscriptions/22222222-2222-4222-8222-222222222222/providers/Microsoft.Authorization/roleAssignments/aaaaaaaa-2222-4222-8222-222222222222",
+      "principalId": "33333333-3333-4333-8333-333333333333",
+      "principalType": "User",
+      "roleDefinitionName": "Owner",
+      "scope": "/subscriptions/22222222-2222-4222-8222-222222222222",
+      "scopeType": "subscription",
+      "subscriptionId": "22222222-2222-4222-8222-222222222222",
+      "observedInSubscriptions": [
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      "severity": "high",
+      "reasons": [
+        "high-privilege-role",
+        "broad-scope"
+      ],
+      "reviewAction": "manual-review-required"
+    },
+    {
+      "assignmentId": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/demo-workload-rg/providers/Microsoft.Authorization/roleAssignments/aaaaaaaa-4444-4444-8444-444444444444",
+      "principalId": "44444444-4444-4444-8444-444444444444",
+      "principalType": "User",
+      "roleDefinitionName": "Owner",
+      "scope": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/demo-workload-rg",
+      "scopeType": "resourceGroup",
+      "subscriptionId": "22222222-2222-4222-8222-222222222222",
+      "observedInSubscriptions": [
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      "severity": "medium",
+      "reasons": [
+        "high-privilege-role"
+      ],
+      "reviewAction": "manual-review-required"
+    },
+    {
+      "assignmentId": null,
+      "principalId": "77777777-7777-4777-8777-777777777777",
+      "principalType": "ServicePrincipal",
+      "roleDefinitionName": "Key Vault Secrets User",
+      "scope": "/subscriptions/22222222-2222-4222-8222-222222222222/resourceGroups/demo-workload-rg",
+      "scopeType": "resourceGroup",
+      "subscriptionId": "22222222-2222-4222-8222-222222222222",
+      "observedInSubscriptions": [
+        "22222222-2222-4222-8222-222222222222",
+        "66666666-6666-4666-8666-666666666666"
+      ],
+      "severity": "low",
+      "reasons": [
+        "unclassified-role",
+        "direct-non-human-principal-assignment"
+      ],
+      "reviewAction": "manual-review-required"
+    }
+  ]
+}

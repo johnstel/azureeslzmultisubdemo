@@ -3698,6 +3698,232 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }).Count -ne 0) {
         Stop-Test 'The approved existing-vault integration path did not compile to the expected parameter values.'
     }
+    Write-Host '29/29 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
+    $accessReviewScript = Join-Path $ProjectDir 'scripts/review-privileged-access.ps1'
+    $accessReviewCriteria = Join-Path $ProjectDir 'policy/access-review-criteria.json'
+    $accessReviewAssignments = Join-Path $ProjectDir 'tests/fixtures/privileged-access-assignments.json'
+    $accessReviewExpectedFile = Join-Path $ProjectDir 'tests/fixtures/privileged-access-expected-report.json'
+    $accessReviewObservations = Join-Path $ProjectDir 'tests/fixtures/privileged-access-observations.json'
+    $accessReviewObservationsExpectedFile = Join-Path $ProjectDir 'tests/fixtures/privileged-access-expected-observations-report.json'
+    $accessReviewTenant = '44444444-4444-4444-8444-444444444444'
+    $accessReviewSubscription = '22222222-2222-4222-8222-222222222222'
+    $accessReviewSecondSubscription = '66666666-6666-4666-8666-666666666666'
+    foreach ($accessReviewFile in @($accessReviewScript, $accessReviewCriteria, $accessReviewAssignments,
+            $accessReviewExpectedFile, $accessReviewObservations, $accessReviewObservationsExpectedFile)) {
+        if (-not (Test-Path -LiteralPath $accessReviewFile -PathType Leaf)) {
+            Stop-Test "Missing privileged access review artifact: $accessReviewFile"
+        }
+    }
+    $accessReviewScriptText = Get-Content -LiteralPath $accessReviewScript -Raw
+    if ($accessReviewScriptText -match 'az (role assignment (create|delete|update)|ad (app|sp|group) (create|delete|update)|deployment|rest --method)') {
+        Stop-Test 'The privileged access review script must stay read-only.'
+    }
+
+    $accessReviewOut = Join-Path $TempDir 'access-review'
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $accessReviewScript `
+        -TenantId $accessReviewTenant `
+        -SubscriptionId $accessReviewSubscription `
+        -ManagementGroupId 'demo-root' `
+        -AssignmentsFile $accessReviewAssignments `
+        -OutputDirectory $accessReviewOut | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test 'The privileged access review failed against the offline fixture.'
+    }
+    $accessReviewReportFile = @(Get-ChildItem -LiteralPath $accessReviewOut -Filter 'privileged-access-review-*.json')
+    if ($accessReviewReportFile.Count -ne 1) {
+        Stop-Test 'The privileged access review must write exactly one JSON report per run.'
+    }
+    $accessReviewMarkdown = [System.IO.Path]::ChangeExtension($accessReviewReportFile[0].FullName, '.md')
+    if (-not (Test-Path -LiteralPath $accessReviewMarkdown -PathType Leaf)) {
+        Stop-Test 'The privileged access review produced no Markdown report.'
+    }
+    $accessReviewReportText = Get-Content -LiteralPath $accessReviewReportFile[0].FullName -Raw
+    $accessReviewReport = $accessReviewReportText | ConvertFrom-Json -Depth 20
+    $accessReviewExpected = Get-Content -LiteralPath $accessReviewExpectedFile -Raw | ConvertFrom-Json -Depth 20
+    # ConvertFrom-Json coerces ISO-8601 strings to [datetime], so assert the
+    # stored UTC timestamp against the raw report text instead.
+    if ($accessReviewReportText -notmatch '"generatedOn": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"') {
+        Stop-Test 'The privileged access review report must record a UTC generation timestamp.'
+    }
+    $accessReviewReport.PSObject.Properties.Remove('generatedOn')
+    $accessReviewActualJson = $accessReviewReport | ConvertTo-Json -Depth 20 -Compress
+    $accessReviewExpectedJson = $accessReviewExpected | ConvertTo-Json -Depth 20 -Compress
+    if ($accessReviewActualJson -cne $accessReviewExpectedJson) {
+        Stop-Test "The privileged access review classification changed unexpectedly: $accessReviewActualJson"
+    }
+    if ($accessReviewReport.mode -ne 'offline-file' -or $accessReviewReport.findings.Count -lt 1) {
+        Stop-Test 'The offline privileged access review produced no findings.'
+    }
+    foreach ($accessReviewFinding in $accessReviewReport.findings) {
+        if ($accessReviewFinding.reviewAction -ne 'manual-review-required') {
+            Stop-Test 'Every privileged access finding must require a manual review decision.'
+        }
+        if ($accessReviewFinding.principalType -eq 'ServicePrincipal' -and $accessReviewFinding.roleDefinitionName -eq 'Owner' -and
+            ($accessReviewFinding.severity -ne 'high' -or $accessReviewFinding.reasons -notcontains 'direct-non-human-principal-assignment')) {
+            Stop-Test 'A direct service-principal Owner grant must be surfaced as a high-severity finding.'
+        }
+    }
+
+    # Every direct service-principal or managed-identity grant must appear in
+    # the inventory, including narrow, lower-privilege ones ranked low.
+    $accessReviewNonHuman = @($accessReviewReport.findings |
+        Where-Object { $_.principalType -in @('ServicePrincipal', 'MSI') })
+    if ($accessReviewNonHuman.Count -ne $accessReviewReport.summary.nonHumanAssignmentCount) {
+        Stop-Test 'Every direct service-principal and managed-identity grant must be surfaced as a finding.'
+    }
+    $accessReviewNarrowGrant = @($accessReviewReport.findings |
+        Where-Object { $_.principalId -eq '88888888-8888-4888-8888-888888888888' -and
+            $_.roleDefinitionName -eq 'Storage Blob Data Reader' })
+    if ($accessReviewNarrowGrant.Count -ne 1 -or $accessReviewNarrowGrant[0].severity -ne 'low' -or
+        $accessReviewNarrowGrant[0].scopeType -ne 'resource' -or
+        $accessReviewNarrowGrant[0].reasons -notcontains 'direct-non-human-principal-assignment') {
+        Stop-Test 'A narrow service-principal grant must be surfaced as a low-severity finding, not dropped.'
+    }
+
+    # Subscription queries use inherited results, so one management-group
+    # assignment is observed repeatedly; it must collapse to a single finding
+    # while the observing subscriptions stay attributed.
+    $accessReviewObservationsOut = Join-Path $TempDir 'access-review-observations'
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $accessReviewScript `
+        -TenantId $accessReviewTenant `
+        -SubscriptionId "$accessReviewSubscription,$accessReviewSecondSubscription" `
+        -ManagementGroupId 'demo-root' `
+        -AssignmentsFile $accessReviewObservations `
+        -OutputDirectory $accessReviewObservationsOut | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test 'The privileged access review failed against the inheritance fixture.'
+    }
+    $accessReviewObservationsReport = Get-Content -LiteralPath (
+        @(Get-ChildItem -LiteralPath $accessReviewObservationsOut -Filter 'privileged-access-review-*.json')[0].FullName) -Raw |
+        ConvertFrom-Json -Depth 20
+    $accessReviewObservationsExpected = Get-Content -LiteralPath $accessReviewObservationsExpectedFile -Raw |
+        ConvertFrom-Json -Depth 20
+    $accessReviewObservationsReport.PSObject.Properties.Remove('generatedOn')
+    if (($accessReviewObservationsReport | ConvertTo-Json -Depth 20 -Compress) -cne
+        ($accessReviewObservationsExpected | ConvertTo-Json -Depth 20 -Compress)) {
+        Stop-Test 'The deduplicated inheritance classification changed unexpectedly.'
+    }
+    if ($accessReviewObservationsReport.summary.assignmentsCollected -ne 10 -or
+        $accessReviewObservationsReport.summary.assignmentsEvaluated -ne 5 -or
+        $accessReviewObservationsReport.summary.duplicateObservationsCollapsed -ne 5) {
+        Stop-Test 'Repeated inherited observations were not deduplicated by assignment identity.'
+    }
+    foreach ($accessReviewInherited in @($accessReviewObservationsReport.findings |
+            Where-Object { $_.scopeType -eq 'managementGroup' })) {
+        if (@($accessReviewInherited.observedInSubscriptions) -join ',' -ne
+            "$accessReviewSubscription,$accessReviewSecondSubscription") {
+            Stop-Test 'An inherited finding must record every requested subscription that observed it.'
+        }
+    }
+    $accessReviewOwnerCounts = @($accessReviewObservationsReport.summary.subscriptionOwnerCounts)
+    if ($accessReviewOwnerCounts.Count -ne 2 -or
+        $accessReviewOwnerCounts[0].subscriptionId -ne $accessReviewSubscription -or
+        $accessReviewOwnerCounts[0].ownerPrincipalCount -ne 3 -or
+        $accessReviewOwnerCounts[0].directOwnerPrincipalCount -ne 1 -or
+        $accessReviewOwnerCounts[0].inheritedOwnerPrincipalCount -ne 2 -or
+        $accessReviewOwnerCounts[1].subscriptionId -ne $accessReviewSecondSubscription -or
+        $accessReviewOwnerCounts[1].ownerPrincipalCount -ne 2 -or
+        $accessReviewOwnerCounts[1].directOwnerPrincipalCount -ne 0 -or
+        $accessReviewOwnerCounts[1].inheritedOwnerPrincipalCount -ne 2) {
+        Stop-Test 'Inherited Owner grants were not attributed to the requested subscriptions that observed them.'
+    }
+    # An Owner scoped to a resource group does not confer Owner over the
+    # subscription, so it stays a finding but never inflates the Owner totals.
+    $accessReviewChildOwners = @($accessReviewObservationsReport.findings |
+        Where-Object { $_.roleDefinitionName -eq 'Owner' -and $_.scopeType -eq 'resourceGroup' })
+    if ($accessReviewChildOwners.Count -ne 1 -or
+        (@($accessReviewChildOwners[0].observedInSubscriptions) -join ',') -ne $accessReviewSubscription) {
+        Stop-Test 'A resource-group-scoped Owner grant must remain a finding in the inventory.'
+    }
+    $accessReviewObservedOwners = @($accessReviewObservationsReport.findings |
+        Where-Object { $_.roleDefinitionName -eq 'Owner' -and
+            ($_.observedInSubscriptions -contains $accessReviewSubscription) } |
+        ForEach-Object { $_.principalId } | Sort-Object -Unique)
+    if ($accessReviewObservedOwners.Count -ne 4 -or $accessReviewOwnerCounts[0].ownerPrincipalCount -ne 3) {
+        Stop-Test 'A child-scoped Owner grant must not count towards the subscription Owner total.'
+    }
+    foreach ($accessReviewOwnerCount in $accessReviewOwnerCounts) {
+        if ($accessReviewOwnerCount.ownerPrincipalCount -ne
+            ($accessReviewOwnerCount.directOwnerPrincipalCount + $accessReviewOwnerCount.inheritedOwnerPrincipalCount)) {
+            Stop-Test 'Subscription Owner totals must be the sum of their direct and inherited parts.'
+        }
+    }
+
+    $accessReviewStrictCriteria = Join-Path $TempDir 'access-review-strict-criteria.json'
+    $accessReviewCriteriaDocument = Get-Content -LiteralPath $accessReviewCriteria -Raw | ConvertFrom-Json -Depth 20
+    $accessReviewCriteriaDocument.maxOwnersPerSubscription = 1
+    $accessReviewCriteriaDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewStrictCriteria -Encoding utf8NoBOM
+    $accessReviewStrictOut = Join-Path $TempDir 'access-review-strict'
+    & pwsh -NoLogo -NoProfile -NonInteractive -File $accessReviewScript `
+        -TenantId $accessReviewTenant `
+        -SubscriptionId $accessReviewSubscription `
+        -CriteriaFile $accessReviewStrictCriteria `
+        -AssignmentsFile $accessReviewAssignments `
+        -OutputDirectory $accessReviewStrictOut | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Test 'The privileged access review failed with a stricter Owner threshold.'
+    }
+    $accessReviewStrictReport = Get-Content -LiteralPath (
+        @(Get-ChildItem -LiteralPath $accessReviewStrictOut -Filter 'privileged-access-review-*.json')[0].FullName) -Raw |
+        ConvertFrom-Json -Depth 20
+    if (@($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) -ne @($accessReviewSubscription) -or
+        $accessReviewStrictReport.criteria.maxOwnersPerSubscription -ne 1 -or
+        $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].ownerPrincipalCount -ne 2 -or
+        -not $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].exceedsThreshold) {
+        Stop-Test 'The configurable Owner-count threshold was not honoured.'
+    }
+
+    $accessReviewNegativeOut = Join-Path $TempDir 'access-review-negative'
+    $accessReviewBadAssignments = Join-Path $TempDir 'access-review-bad-assignments.json'
+    $accessReviewAssignmentsDocument = @(Get-Content -LiteralPath $accessReviewAssignments -Raw | ConvertFrom-Json -Depth 20)
+    $accessReviewAssignmentsDocument[0].PSObject.Properties.Remove('principalType')
+    $accessReviewAssignmentsDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewBadAssignments -Encoding utf8NoBOM
+    $accessReviewBadObservations = Join-Path $TempDir 'access-review-bad-observations.json'
+    $accessReviewObservationsDocument = Get-Content -LiteralPath $accessReviewObservations -Raw | ConvertFrom-Json -Depth 20
+    $accessReviewObservationsDocument.observations[0].source.kind = 'resourceGroup'
+    $accessReviewObservationsDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewBadObservations -Encoding utf8NoBOM
+    $accessReviewBadCriteria = Join-Path $TempDir 'access-review-bad-criteria.json'
+    $accessReviewCriteriaDocument = Get-Content -LiteralPath $accessReviewCriteria -Raw | ConvertFrom-Json -Depth 20
+    $accessReviewCriteriaDocument.highPrivilegeRoleNames = @()
+    $accessReviewCriteriaDocument | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $accessReviewBadCriteria -Encoding utf8NoBOM
+    $accessReviewNegativeCases = @(
+        @{ Description = 'a missing tenant context'; Arguments = @(
+            '-SubscriptionId', $accessReviewSubscription,
+            '-AssignmentsFile', $accessReviewAssignments) },
+        @{ Description = 'a non-canonical subscription GUID'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', 'not-a-guid',
+            '-AssignmentsFile', $accessReviewAssignments) },
+        @{ Description = 'a duplicate subscription'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', "$accessReviewSubscription,$accessReviewSubscription",
+            '-AssignmentsFile', $accessReviewAssignments) },
+        @{ Description = 'an assignment without a principal type'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', $accessReviewSubscription,
+            '-AssignmentsFile', $accessReviewBadAssignments) },
+        @{ Description = 'an observation with an unsupported source kind'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', $accessReviewSubscription,
+            '-AssignmentsFile', $accessReviewBadObservations) },
+        @{ Description = 'an empty high-privilege role list'; Arguments = @(
+            '-TenantId', $accessReviewTenant,
+            '-SubscriptionId', $accessReviewSubscription,
+            '-CriteriaFile', $accessReviewBadCriteria,
+            '-AssignmentsFile', $accessReviewAssignments) }
+    )
+    foreach ($accessReviewCase in $accessReviewNegativeCases) {
+        $accessReviewArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $accessReviewScript) +
+            $accessReviewCase.Arguments + @('-OutputDirectory', $accessReviewNegativeOut)
+        & pwsh @accessReviewArguments 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Stop-Test "The privileged access review accepted $($accessReviewCase.Description)."
+        }
+    }
 
     Write-Host ''
     Write-Host 'All Windows PowerShell validation and safety tests passed.'
