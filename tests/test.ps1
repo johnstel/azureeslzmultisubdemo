@@ -174,6 +174,8 @@ try {
         Stop-Test 'Azure CLI is required for Bicep validation.'
     }
 
+    Invoke-OfflineParitySuite
+
     Write-Host '1/29 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()

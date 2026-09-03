@@ -297,13 +297,13 @@ jq -e '
   .parameters.approvedFirewallPrivateIp.value == "" and
   .parameters.approvedRouteTableResourceIds.value == [] and
   .parameters.approvedRouteTablePrefixes.value == [] and
- .parameters.enableNercCipTechnicalOverlay.value == false and
- .parameters.nercCipApprovedLocations.value == [] and
- .parameters.nercCipDataClassificationTagValue.value == "" and
- .parameters.nercCipSspIdTagValue.value == "" and
- .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
- .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true and
- .parameters.deployLoggingRemediationRoleAssignments.value == false
+  .parameters.enableNercCipTechnicalOverlay.value == false and
+  .parameters.nercCipApprovedLocations.value == [] and
+  .parameters.nercCipDataClassificationTagValue.value == "" and
+  .parameters.nercCipSspIdTagValue.value == "" and
+  .parameters.nercCipVaultDoubleEncryptionRequired.value == true and
+  .parameters.nercCipVaultCheckAlwaysOnSoftDeleteOnly.value == true and
+  .parameters.deployLoggingRemediationRoleAssignments.value == false
 ' "${TEMP_DIR}/main.parameters.json" >/dev/null
 jq -e '
  .parameters.deployLoggingRemediationRoleAssignments.value == false and
