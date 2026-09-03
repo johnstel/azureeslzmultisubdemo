@@ -1212,6 +1212,15 @@ exit $LASTEXITCODE
                 Stop-Test "$teardownScript does not clean up $assignmentName."
             }
         }
+        if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/root-deployment-restrictions.bicep') -Raw).Contains("assignmentName: 'demo-deploy-restrictions'")) {
+            Stop-Test 'Nested root-deployment-restrictions assignment inventory is missing.'
+        }
+        if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-deploy-restrictions|${demo_root_scope}')) {
+            Stop-Test 'Bash teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
+        }
+        if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains("@('demo-deploy-restrictions', `$demoRootScope)")) {
+            Stop-Test 'PowerShell teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
+        }
     }
     foreach ($requiredText in @('exemptionScopeType', 'deployEvidenceResources')) {
         foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {

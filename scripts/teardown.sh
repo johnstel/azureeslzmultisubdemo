@@ -105,7 +105,12 @@ delete_resource_group_if_not_protected() {
     printf 'SKIP: %s matches the supplied existingLogAnalyticsWorkspaceResourceId resource group; it is never deleted by this script.\n' "${group}" >&2
     return 1
   fi
-  if az group exists --subscription "${subscription}" --name "${group}" --output tsv | grep -qi true; then
+  local group_exists
+  if ! group_exists="$(az group exists --subscription "${subscription}" --name "${group}" --output tsv)"; then
+    printf 'ERROR: Cannot determine whether resource group %s exists.\n' "${group}" >&2
+    exit 1
+  fi
+  if printf '%s\n' "${group_exists}" | grep -qi true; then
     local owner
     owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
       || { printf 'ERROR: Cannot read ownership marker for %s; it is protected.\n' "${group}" >&2; return 1; }
@@ -117,7 +122,8 @@ delete_resource_group_if_not_protected() {
       printf 'SKIP: %s is external/protected because ESLZLifecycleOwner does not match this demo root.\n' "${group}" >&2
       return 1
     fi
-    az group delete --subscription "${subscription}" --name "${group}" --yes --no-wait
+    az group delete --subscription "${subscription}" --name "${group}" --yes --no-wait \
+      || { printf 'ERROR: Failed to start deletion of resource group %s.\n' "${group}" >&2; exit 1; }
     return 0
   fi
   return 1
@@ -127,7 +133,17 @@ delete_resource_group_if_not_protected() {
 wait_for_resource_group_deletion() {
   local subscription="$1"
   local group="$2"
-  az group wait --subscription "${subscription}" --name "${group}" --deleted --interval 10 --timeout 900 2>/dev/null || true
+  if ! az group wait --subscription "${subscription}" --name "${group}" --deleted --interval 10 --timeout 900; then
+    local group_exists
+    if ! group_exists="$(az group exists --subscription "${subscription}" --name "${group}" --output tsv)"; then
+      printf 'ERROR: Cannot determine whether resource group %s was deleted.\n' "${group}" >&2
+      exit 1
+    fi
+    if printf '%s\n' "${group_exists}" | grep -qi true; then
+      printf 'ERROR: Failed waiting for resource group %s deletion.\n' "${group}" >&2
+      exit 1
+    fi
+  fi
 }
 
 print_plan() {
@@ -142,6 +158,7 @@ print_plan() {
   step_number=$((step_number + 1))
   printf '  %d. deployment-owned assignments and remediating identity role mappings:\n' "${step_number}"
   printf '     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-activity-logs, demo-resource-diags at %s\n' "${demo_root_scope}"
+  printf '     deployment-owned demo-deploy-restrictions at %s\n' "${demo_root_scope}"
   printf '     deployment-owned demo-audit-platform-tags at %s\n' "${platform_scope}"
   printf '     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at %s\n' "${landing_zones_scope}"
   printf '     deployment-owned demo-network-ingress, demo-private-access at %s\n' "${workload_scope}"
@@ -275,7 +292,7 @@ delete_demo_policy_assignments() {
   local owned_assignments=(
     "demo-allowed-us-locs|${demo_root_scope}" "demo-audit-public-ip|${demo_root_scope}"
     "demo-block-expensive|${demo_root_scope}" "demo-defender-cspm|${demo_root_scope}"
-    "demo-activity-logs|${demo_root_scope}"
+    "demo-activity-logs|${demo_root_scope}" "demo-deploy-restrictions|${demo_root_scope}"
     "demo-resource-diags|${demo_root_scope}" "demo-audit-platform-tags|${platform_scope}"
     "demo-data-protection|${landing_zones_scope}" "demo-require-rg-tags|${landing_zones_scope}"
     "demo-defender-servers|${landing_zones_scope}" "demo-defender-storage|${landing_zones_scope}"

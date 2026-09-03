@@ -961,6 +961,9 @@ for assignment_name in demo-firewall-routes 'demo-vm-backup-${approvedVaultIndex
   rg -Fq "${assignment_name}" "${PROJECT_DIR}/scripts/teardown.sh"
   rg -Fq "${assignment_name}" "${PROJECT_DIR}/scripts/teardown.ps1"
 done
+rg -Fq "assignmentName: 'demo-deploy-restrictions'" "${PROJECT_DIR}/modules/root-deployment-restrictions.bicep"
+rg -Fq 'demo-deploy-restrictions|${demo_root_scope}' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq "demo-deploy-restrictions', \$demoRootScope" "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -Fq 'exemptionScopeType' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -Fq 'exemptionScopeType' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -Fq 'deployEvidenceResources' "${PROJECT_DIR}/scripts/teardown.sh"

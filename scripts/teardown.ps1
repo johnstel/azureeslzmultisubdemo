@@ -181,6 +181,9 @@ function Remove-ResourceGroupIfNotProtected {
         return $false
     }
     $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Teardown "Cannot determine whether resource group $Group exists."
+    }
     if ([string]$groupExists -eq 'true') {
         $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
         if ($LASTEXITCODE -ne 0) {
@@ -209,6 +212,11 @@ function Wait-ResourceGroupDeletion {
         [string]$Group
     )
     & az group wait --subscription $Subscription --name $Group --deleted --interval 10 --timeout 900 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
+        if ($LASTEXITCODE -ne 0) { Stop-Teardown "Cannot determine whether resource group $Group was deleted." }
+        if ([string]$groupExists -eq 'true') { Stop-Teardown "Failed waiting for resource group $Group deletion." }
+    }
 }
 
 Write-Host 'TEARDOWN PLAN (reverse dependency order)'
@@ -227,6 +235,7 @@ foreach ($exemption in $policyExemptions) {
 }
 Write-Host '  2. deployment-owned assignments and remediating identity role mappings:'
 Write-Host "     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-activity-logs, demo-resource-diags at $demoRootScope"
+Write-Host "     deployment-owned demo-deploy-restrictions at $demoRootScope"
 Write-Host "     deployment-owned demo-audit-platform-tags at $platformScope"
 Write-Host "     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at $landingZonesScope"
 Write-Host "     deployment-owned demo-network-ingress, demo-private-access at $workloadScope"
@@ -372,6 +381,7 @@ function Remove-DemoPolicyAssignments {
     $ownedAssignments = @(
         @('demo-allowed-us-locs', $demoRootScope), @('demo-audit-public-ip', $demoRootScope),
         @('demo-block-expensive', $demoRootScope), @('demo-defender-cspm', $demoRootScope),
+        @('demo-deploy-restrictions', $demoRootScope),
         @('demo-activity-logs', $demoRootScope),
         @('demo-resource-diags', $demoRootScope), @('demo-audit-platform-tags', $platformScope),
         @('demo-data-protection', $landingZonesScope), @('demo-require-rg-tags', $landingZonesScope),
