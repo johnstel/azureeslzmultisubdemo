@@ -365,8 +365,12 @@ var validatedNercCipOverlayInputs = !enableNercCipTechnicalOverlay
               ? fail('enableNercCipTechnicalOverlay requires at least one nercCipApprovedLocations region.')
               : !(deployCentralLogAnalytics || isLogAnalyticsWorkspaceId(existingLogAnalyticsWorkspaceResourceId))
                   ? fail('enableNercCipTechnicalOverlay requires a canonical effective monitoring workspace resource ID from deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId.')
-                  : !enableFirewallRouteGuardrails
-                      ? fail('enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to be true with approved firewall and route-table evidence.')
+                  : activityLogExportPolicyEffect != 'DeployIfNotExists'
+                      ? fail('enableNercCipTechnicalOverlay requires activityLogExportPolicyEffect to be DeployIfNotExists so centralized Activity Log export remains active.')
+                      : !deployRoleAssignments || !deployLoggingRemediationRoleAssignments
+                          ? fail('enableNercCipTechnicalOverlay requires deployRoleAssignments and deployLoggingRemediationRoleAssignments to be true so the overlay assignment identity can receive least-privilege remediation access.')
+                      : !enableFirewallRouteGuardrails
+                          ? fail('enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to be true with approved firewall and route-table evidence.')
                       : empty(validatedApprovedBackupVaults)
                           ? fail('enableNercCipTechnicalOverlay requires approvedBackupVaults records for backup coverage evidence.')
                           : empty(trim(backupRetentionStandardId))
@@ -2848,7 +2852,7 @@ module nercCipTechnicalOverlayInitiative 'modules/policy-initiative.bicep' = {
   }
 }
 
-module nercCipTechnicalOverlayAssignment 'modules/policy-assignment.bicep' = if (enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs) {
+module nercCipTechnicalOverlayAssignment 'modules/remediating-policy-assignment.bicep' = if (enableNercCipTechnicalOverlay && validatedNercCipOverlayInputs) {
   name: 'assign-nerc-cip-technical-overlay'
   scope: managementGroup(criticalInfrastructureManagementGroupId)
   params: {
@@ -2856,6 +2860,15 @@ module nercCipTechnicalOverlayAssignment 'modules/policy-assignment.bicep' = if 
     displayName: 'Demo - NERC CIP technical overlay (critical only)'
     description: 'Opt-in assignment of stricter technical controls for the Critical Infrastructure branch only. Assignment alone does not establish NERC CIP compliance.'
     policyDefinitionId: nercCipTechnicalOverlayInitiative.outputs.policySetDefinitionId
+    location: deploymentLocation
+    identity: {
+      type: 'SystemAssigned'
+    }
+    verifiedRoleDefinitionIds: [
+      monitoringContributorRoleDefinitionId
+      logAnalyticsContributorRoleDefinitionId
+    ]
+    deployRemediationRoleAssignments: deployActivityLogRemediationRoleAssignments
     enforcementMode: denyPolicyEnforcementMode
     parameters: {
       allowedLocations: {

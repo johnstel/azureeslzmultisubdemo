@@ -818,12 +818,18 @@ nerc_cip_overlay_count="$(jq '
   ($assignment.condition | contains("validatedNercCipOverlayInputs")) and
   ($assignment.scope | contains("criticalInfrastructureManagementGroupId")) and
   ($assignment.scope | contains("workloadManagementGroupId") | not) and
+  $assignment.properties.parameters.location.value == "[parameters(\u0027deploymentLocation\u0027)]" and
+  $assignment.properties.parameters.identity.value == {"type":"SystemAssigned"} and
+  $assignment.properties.parameters.verifiedRoleDefinitionIds.value ==
+    ["[variables(\u0027monitoringContributorRoleDefinitionId\u0027)]","[variables(\u0027logAnalyticsContributorRoleDefinitionId\u0027)]"] and
+  $assignment.properties.parameters.deployRemediationRoleAssignments.value == "[variables(\u0027deployActivityLogRemediationRoleAssignments\u0027)]" and
   $assignment.properties.parameters.enforcementMode.value == "[parameters(\u0027denyPolicyEnforcementMode\u0027)]" and
   ($assignment.properties.parameters.parameters.value.allowedLocations.value | contains("validatedNercCipApprovedLocations")) and
   ($assignment.properties.parameters.parameters.value.dataClassificationTagValue.value | contains("nercCipDataClassificationTagValue")) and
   $assignment.properties.parameters.parameters.value.sspIdTagValue.value == "[trim(parameters(\u0027nercCipSspIdTagValue\u0027))]" and
   $assignment.properties.parameters.parameters.value.vaultDoubleEncryption.value == "[parameters(\u0027nercCipVaultDoubleEncryptionRequired\u0027)]" and
   $assignment.properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value == "[parameters(\u0027nercCipVaultCheckAlwaysOnSoftDeleteOnly\u0027)]" and
+  $assignment.properties.parameters.parameters.value.diagnosticsEffect.value == "[parameters(\u0027activityLogExportPolicyEffect\u0027)]" and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-public-management-ingress")) != null and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-require-subnet-nsg")) != null and
   ($assignment.properties.parameters.nonComplianceMessages.value | map(.policyDefinitionReferenceId) | index("critical-paas-public-network-access")) != null and
@@ -859,6 +865,8 @@ jq -e '
 rg -q 'enableNercCipTechnicalOverlay requires enableCriticalInfrastructure to be true so the overlay remains Critical-scope only\.' "${PROJECT_DIR}/main.bicep"
 rg -q 'enableNercCipTechnicalOverlay requires at least one criticalInfrastructureSubscriptionIds entry\.' "${PROJECT_DIR}/main.bicep"
 rg -q 'enableNercCipTechnicalOverlay requires a canonical effective monitoring workspace resource ID from deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId\.' "${PROJECT_DIR}/main.bicep"
+rg -q 'enableNercCipTechnicalOverlay requires activityLogExportPolicyEffect to be DeployIfNotExists so centralized Activity Log export remains active\.' "${PROJECT_DIR}/main.bicep"
+rg -q 'enableNercCipTechnicalOverlay requires deployRoleAssignments and deployLoggingRemediationRoleAssignments to be true so the overlay assignment identity can receive least-privilege remediation access\.' "${PROJECT_DIR}/main.bicep"
 rg -q 'enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to be true with approved firewall and route-table evidence\.' "${PROJECT_DIR}/main.bicep"
 rg -q 'enableNercCipTechnicalOverlay requires approvedBackupVaults records for backup coverage evidence\.' "${PROJECT_DIR}/main.bicep"
 rg -q 'enableNercCipTechnicalOverlay requires backupRetentionStandardId so backup controls map to a documented standard\.' "${PROJECT_DIR}/main.bicep"

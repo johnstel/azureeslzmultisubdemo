@@ -1135,12 +1135,17 @@ exit $LASTEXITCODE
         ([string]$nercCipOverlayAssignment[0].condition) -notmatch 'validatedNercCipOverlayInputs' -or
         $nercCipOverlayAssignment[0].scope -notmatch 'criticalInfrastructureManagementGroupId' -or
         $nercCipOverlayAssignment[0].scope -match 'workloadManagementGroupId' -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.location.value -ne "[parameters('deploymentLocation')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.identity.value.type -ne 'SystemAssigned' -or
+        (Compare-Object @($nercCipOverlayAssignment[0].properties.parameters.verifiedRoleDefinitionIds.value) @("[variables('monitoringContributorRoleDefinitionId')]", "[variables('logAnalyticsContributorRoleDefinitionId')]")) -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.deployRemediationRoleAssignments.value -ne "[variables('deployActivityLogRemediationRoleAssignments')]" -or
         $nercCipOverlayAssignment[0].properties.parameters.enforcementMode.value -ne "[parameters('denyPolicyEnforcementMode')]" -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.allowedLocations.value -notmatch 'validatedNercCipApprovedLocations' -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.dataClassificationTagValue.value -notmatch 'nercCipDataClassificationTagValue' -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.sspIdTagValue.value -ne "[trim(parameters('nercCipSspIdTagValue'))]" -or
         [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultDoubleEncryption.value -ne "[parameters('nercCipVaultDoubleEncryptionRequired')]" -or
-        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value -ne "[parameters('nercCipVaultCheckAlwaysOnSoftDeleteOnly')]") {
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.vaultCheckAlwaysOnSoftDeleteOnly.value -ne "[parameters('nercCipVaultCheckAlwaysOnSoftDeleteOnly')]" -or
+        [string]$nercCipOverlayAssignment[0].properties.parameters.parameters.value.diagnosticsEffect.value -ne "[parameters('activityLogExportPolicyEffect')]") {
         Stop-Test 'NERC CIP technical overlay must stay opt-in, critical-only, and parameter-wired to stricter inputs.'
     }
     $nercCipMessageReferenceIds = @(
@@ -1161,6 +1166,8 @@ exit $LASTEXITCODE
         'enableNercCipTechnicalOverlay requires enableCriticalInfrastructure to be true so the overlay remains Critical-scope only.',
         'enableNercCipTechnicalOverlay requires at least one criticalInfrastructureSubscriptionIds entry.',
         'enableNercCipTechnicalOverlay requires a canonical effective monitoring workspace resource ID from deployCentralLogAnalytics or existingLogAnalyticsWorkspaceResourceId.',
+        'enableNercCipTechnicalOverlay requires activityLogExportPolicyEffect to be DeployIfNotExists so centralized Activity Log export remains active.',
+        'enableNercCipTechnicalOverlay requires deployRoleAssignments and deployLoggingRemediationRoleAssignments to be true so the overlay assignment identity can receive least-privilege remediation access.',
         'enableNercCipTechnicalOverlay requires enableFirewallRouteGuardrails to be true with approved firewall and route-table evidence.',
         'enableNercCipTechnicalOverlay requires approvedBackupVaults records for backup coverage evidence.',
         'enableNercCipTechnicalOverlay requires backupRetentionStandardId so backup controls map to a documented standard.',
@@ -3867,7 +3874,9 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $accessReviewStrictReport = Get-Content -LiteralPath (
         @(Get-ChildItem -LiteralPath $accessReviewStrictOut -Filter 'privileged-access-review-*.json')[0].FullName) -Raw |
         ConvertFrom-Json -Depth 20
-    if (@($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) -ne @($accessReviewSubscription) -or
+    if ((Compare-Object `
+            -ReferenceObject @($accessReviewStrictReport.summary.subscriptionsExceedingOwnerThreshold) `
+            -DifferenceObject @($accessReviewSubscription)) -or
         $accessReviewStrictReport.criteria.maxOwnersPerSubscription -ne 1 -or
         $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].ownerPrincipalCount -ne 2 -or
         -not $accessReviewStrictReport.summary.subscriptionOwnerCounts[0].exceedsThreshold) {
