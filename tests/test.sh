@@ -3684,7 +3684,7 @@ jq -e --arg vaultPrefix "${backup_vault_prefix}" '
 }
 
 printf '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...\n'
-preflight_parameter_file="${TEMP_DIR}/preflight-unsafe.parameters.json"
+preflight_parameter_file="${TEMP_DIR}/preflight unsafe.parameters.json"
 jq '
   .parameters.tenantRootManagementGroupId.value = "demo-root" |
   .parameters.connectivitySubscriptionId.value = "11111111-1111-4111-8111-111111111111" |
@@ -3696,12 +3696,8 @@ jq '
   .parameters.enableCriticalInfrastructure.value = true |
   .parameters.criticalInfrastructureSubscriptionIds.value = []
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${preflight_parameter_file}"
-preflight_commands=("${PROJECT_DIR}/scripts/preflight.sh ${preflight_parameter_file}")
-if command -v pwsh >/dev/null 2>&1; then
-  preflight_commands+=("pwsh -NoLogo -NoProfile -File ${PROJECT_DIR}/scripts/preflight.ps1 -ParameterFile ${preflight_parameter_file}")
-fi
-for preflight_command in "${preflight_commands[@]}"; do
-  if ${preflight_command} >"${TEMP_DIR}/preflight-output" 2>&1; then
+assert_preflight_rejected() {
+  if "$@" >"${TEMP_DIR}/preflight-output" 2>&1; then
     printf 'ERROR: Preflight accepted critical infrastructure without a supplied subscription.\n' >&2
     exit 1
   fi
@@ -3709,7 +3705,11 @@ for preflight_command in "${preflight_commands[@]}"; do
     printf 'ERROR: Preflight did not report the critical-infrastructure prerequisite.\n' >&2
     exit 1
   }
-done
+}
+assert_preflight_rejected bash "${PROJECT_DIR}/scripts/preflight.sh" "${preflight_parameter_file}"
+if command -v pwsh >/dev/null 2>&1; then
+  assert_preflight_rejected pwsh -NoLogo -NoProfile -File "${PROJECT_DIR}/scripts/preflight.ps1" -ParameterFile "${preflight_parameter_file}"
+fi
 
 printf '30/30 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
 access_review_script="${PROJECT_DIR}/scripts/review-privileged-access.sh"

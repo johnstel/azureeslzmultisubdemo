@@ -4446,7 +4446,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test 'The approved existing-vault integration path did not compile to the expected parameter values.'
     }
     Write-Host '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...'
-    $preflightParameterFile = Join-Path $TempDir 'preflight-unsafe.parameters.json'
+    $preflightParameterFile = Join-Path $TempDir 'preflight unsafe.parameters.json'
     $preflightParameters = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $preflightParameters.parameters.tenantRootManagementGroupId.value = 'demo-root'
     $preflightParameters.parameters.connectivitySubscriptionId.value = '11111111-1111-4111-8111-111111111111'
