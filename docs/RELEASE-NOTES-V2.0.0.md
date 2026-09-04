@@ -47,9 +47,15 @@ Nothing in v2 modifies the `v1.0.0` tag or `release/v1` branch.
 - Default templates contain placeholders and are intentionally non-deployable
   until customer values are supplied.
 - Deny assignments remain in `DoNotEnforce` by default.
-- RBAC, evidence resources, tag inheritance remediation, backup remediation,
-  central logging, Sentinel, Defender paid plans, and Critical Infrastructure
-  overlays require explicit opt-in parameters.
+- RBAC (`deployRoleAssignments`), evidence resources
+  (`deployEvidenceResources`), tag inheritance remediation
+  (`enableTagInheritance`), backup remediation (`enableVmBackupRemediation`),
+  central logging (`deployCentralLogAnalytics` or
+  `existingLogAnalyticsWorkspaceResourceId`), Sentinel (`deploySentinel`),
+  Defender paid plans (`enableDefenderCspm`, `enableDefenderForServers`, and
+  `enableDefenderForStorage`), and Critical Infrastructure overlays
+  (`enableCriticalInfrastructure` and `enableNercCipOverlay`) require explicit
+  opt-in parameters.
 - Tenant root is not assigned policy, no subscription or Entra identity is
   created, and destructive lifecycle operations require exact confirmations.
 
@@ -77,6 +83,7 @@ malware scanning, Recovery Services protected instances, and vault diagnostics.
 
 ## Release publication
 
-Every v2.0.0 milestone implementation issue #1 through #28 has been verified
-closed, leaving this release gate as the final agent-executable release issue.
+Validate release readiness against the
+[v2.0.0 milestone](https://github.com/johnstel/azureeslzmultisubdemo/issues?q=milestone%3A%22v2.0.0%22)
+and the release gate dependency chain before publishing.
 The v2.0.0 tag and GitHub Release must be created only after this release commit is merged to `main` and all repository checks pass, and both must point to that same approved `main` commit.
