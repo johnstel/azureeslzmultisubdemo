@@ -4458,6 +4458,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $preflightParameters.parameters.enableCriticalInfrastructure.value = $true
     $preflightParameters.parameters.criticalInfrastructureSubscriptionIds.value = @()
     $preflightParameters | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $preflightParameterFile -Encoding utf8
+    $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($null -eq $pwshCommand) {
+        Stop-Test 'PowerShell 7 (pwsh) is required to validate the preflight script exit code.'
+    }
     $preflightScripts = @((Join-Path $ProjectDir 'scripts/preflight.ps1'))
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         $preflightScripts += Join-Path $ProjectDir 'scripts/preflight.sh'
@@ -4468,11 +4472,12 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     foreach ($preflightScript in $preflightScripts) {
         $preflightExitCode = 0
         try {
+            $global:LASTEXITCODE = 0
             $preflightOutput = if ($preflightScript -like '*.sh') {
                 & bash $preflightScript $preflightParameterFile 2>&1
             }
             else {
-                & pwsh -NoLogo -NoProfile -File $preflightScript -ParameterFile $preflightParameterFile 2>&1
+                & $pwshCommand.Source -NoLogo -NoProfile -File $preflightScript -ParameterFile $preflightParameterFile 2>&1
             }
             $preflightExitCode = $LASTEXITCODE
         }
