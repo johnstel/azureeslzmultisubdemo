@@ -18,8 +18,11 @@ See [MIGRATION-V1-TO-V2.md](MIGRATION-V1-TO-V2.md).
       profile.*
 - [ ] **v2 customer control** — change-controlled allowlists, critical
       workloads, or NERC CIP evidence obligations;
-      `parameters/customer-control.template.bicepparam`. Same commands, same
-      safe defaults, different template.
+      `parameters/customer-control.template.bicepparam`. Same safe defaults and
+      the same commands from section 4 onward, but the lifecycle scripts read
+      only ARM JSON, so first run
+      `az bicep build-params --file parameters/customer-control.template.bicepparam --outfile parameters/demo.parameters.json`
+      and re-run it after every edit to the `.bicepparam` source.
 
 ## 1. Safety check
 

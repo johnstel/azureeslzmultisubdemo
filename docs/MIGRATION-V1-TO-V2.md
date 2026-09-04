@@ -152,7 +152,9 @@ Keep these outside the repository. They can contain principal IDs.
 Do not hand-edit the v1 file. Start from
 [`parameters/demo.parameters.template.json`](../parameters/demo.parameters.template.json)
 (or `parameters/customer-control.template.bicepparam` for the customer-control
-profile), copy across only your tenant root ID, name prefix, archetype,
+profile, compiled to `parameters/demo.parameters.json` with
+`az bicep build-params` because the lifecycle scripts read only ARM JSON), copy
+across only your tenant root ID, name prefix, archetype,
 subscription IDs, and the four group object IDs, and leave every new switch at
 its shipped default.
 

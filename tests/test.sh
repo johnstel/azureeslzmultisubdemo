@@ -4207,6 +4207,71 @@ for documentation_file in "${documentation_files[@]}"; do
   done < <(rg -o -r '$1' '\]\((?:\./)?(?:docs/)?([A-Z0-9-]+\.md)[)#]' "${PROJECT_DIR}/${documentation_file}" | sort -u)
 done
 
+printf '    Confirm the customer-control profile documents the compile-to-JSON step...\n'
+for bicepparam_doc in README.md docs/BEGINNERS-GUIDE.md docs/FIRST-RUN-CHECKLIST.md docs/MIGRATION-V1-TO-V2.md; do
+  rg -q -F 'az bicep build-params' "${PROJECT_DIR}/${bicepparam_doc}" || {
+    printf 'ERROR: %s presents parameters/customer-control.template.bicepparam without the az bicep build-params compile step; the lifecycle scripts read ARM JSON only.\n' "${bicepparam_doc}" >&2
+    exit 1
+  }
+done
+rg -q 'jq -er .\.parameters\.namePrefix\.value' "${PROJECT_DIR}/scripts/deploy.sh" || {
+  printf 'ERROR: scripts/deploy.sh no longer parses an ARM JSON .parameters document; revisit the documented customer-control compile step.\n' >&2
+  exit 1
+}
+
+printf '    Confirm the eligible-Owner runbook uses the owner-eligibility parameter file...\n'
+rg -q -F 'identity/azure-rbac/owner-eligibility-request.parameters.local.json' "${PROJECT_DIR}/docs/IDENTITY-GOVERNANCE-RUNBOOK.md"
+if rg -A 4 'owner-eligibility-request\.(sh|ps1)' "${PROJECT_DIR}/docs/IDENTITY-GOVERNANCE-RUNBOOK.md" | rg -q 'demo\.parameters\.json'; then
+  printf 'ERROR: docs/IDENTITY-GOVERNANCE-RUNBOOK.md must not pass parameters/demo.parameters.json to the eligible-Owner workflow.\n' >&2
+  exit 1
+fi
+for eligibility_field in submitEligibilityRequest requestId subscriptionPrivilegedAccessGroupObjectId operatorWorkflowVerificationToken; do
+  rg -q -F "${eligibility_field}" "${PROJECT_DIR}/docs/IDENTITY-GOVERNANCE-RUNBOOK.md" || {
+    printf 'ERROR: docs/IDENTITY-GOVERNANCE-RUNBOOK.md does not mention the required eligible-Owner parameter %s.\n' "${eligibility_field}" >&2
+    exit 1
+  }
+  jq -e --arg field "${eligibility_field}" '.parameters | has($field)' \
+    "${PROJECT_DIR}/identity/azure-rbac/owner-eligibility-request.parameters.template.json" >/dev/null || {
+    printf 'ERROR: %s is documented but absent from the eligible-Owner parameter template.\n' "${eligibility_field}" >&2
+    exit 1
+  }
+done
+
+printf '    Confirm the documented RBAC assignment count matches the modules...\n'
+management_group_role_assignments="$(rg -c "^resource .* 'Microsoft\.Authorization/roleAssignments@" "${PROJECT_DIR}/modules/management-group-rbac.bicep")"
+subscription_role_assignments="$(rg -c "^resource .* 'Microsoft\.Authorization/roleAssignments@" "${PROJECT_DIR}/modules/subscription-rbac.bicep")"
+total_role_assignments=$(( management_group_role_assignments + (subscription_role_assignments * 2) ))
+[[ "${total_role_assignments}" -eq 5 ]] || {
+  printf 'ERROR: deployRoleAssignments now creates %s assignments; update docs/SHARED-SERVICES-AND-COST.md.\n' "${total_role_assignments}" >&2
+  exit 1
+}
+rg -q -F 'Five ordinary RBAC assignments across four groups' "${PROJECT_DIR}/docs/SHARED-SERVICES-AND-COST.md" || {
+  printf 'ERROR: docs/SHARED-SERVICES-AND-COST.md must state five deployRoleAssignments assignments across four groups.\n' >&2
+  exit 1
+}
+
+printf '    Confirm scope documentation matches where assignments actually exist...\n'
+rg -A 2 -F "name: 'root-deployment-restrictions'" "${PROJECT_DIR}/main.bicep" | rg -q -F 'scope: managementGroup(demoRootManagementGroupId)' || {
+  printf 'ERROR: root-deployment-restrictions is no longer assigned at the demo root; update the docs/CONTROL-MATRIX.md scope explanation.\n' >&2
+  exit 1
+}
+if rg -q -F 'bb91dfba-c30d-4263-9add-9c2384e659a6' "${PROJECT_DIR}/main.bicep"; then
+  printf 'ERROR: REQ-NET-03 is now assigned in main.bicep; it is documented as a catalog-only Defender recommendation.\n' >&2
+  exit 1
+fi
+rg -q -F 'catalog-only, with no policy assignment at all' "${PROJECT_DIR}/docs/CONTROL-MATRIX.md"
+rg -q -F 'assigned at a broader scope than its target' "${PROJECT_DIR}/docs/CONTROL-MATRIX.md"
+
+printf '    Confirm the critical-branch network claim matches main.bicep...\n'
+network_ingress_assignments="$(rg -c "assignmentName: 'demo-network-ingress'" "${PROJECT_DIR}/main.bicep")"
+[[ "${network_ingress_assignments}" -eq 1 ]] || {
+  printf 'ERROR: expected exactly one network-ingress assignment; docs/CONTROL-SCOPE-AND-INHERITANCE.md states the critical branch has no ordinary copy.\n' >&2
+  exit 1
+}
+rg -A 2 -F "name: 'assign-private-access-critical'" "${PROJECT_DIR}/main.bicep" | rg -q -F 'scope: managementGroup(criticalInfrastructureManagementGroupId)'
+rg -q -F 'have **no** ordinary critical copy' "${PROJECT_DIR}/docs/CONTROL-SCOPE-AND-INHERITANCE.md"
+rg -q -F 'enableNercCipTechnicalOverlay=false' "${PROJECT_DIR}/docs/CONTROL-SCOPE-AND-INHERITANCE.md"
+
 printf '    Confirm documented confirmation strings match the operator scripts...\n'
 rg -q -F 'ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"' "${PROJECT_DIR}/docs/ENFORCEMENT-AND-REMEDIATION.md"
 rg -q -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION="REMEDIATE-MISSING-RESOURCE-TAGS"' "${PROJECT_DIR}/docs/ENFORCEMENT-AND-REMEDIATION.md"

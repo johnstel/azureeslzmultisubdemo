@@ -36,7 +36,17 @@ Bicep code before following the safe preview steps.
 | v2 customer control | You have change-controlled allowlists, critical workloads, or NERC CIP evidence obligations | `parameters/customer-control.template.bicepparam` |
 
 This guide follows the **v2 safe demo** profile. The customer-control profile
-uses exactly the same commands and steps; only the parameter template differs.
+runs the same commands from Step 6 onward, but the scripts only read ARM JSON
+parameter files, so a `.bicepparam` template must be compiled first:
+
+```bash
+az bicep build-params \
+  --file parameters/customer-control.template.bicepparam \
+  --outfile parameters/demo.parameters.json
+```
+
+See [Prepare parameters](../README.md#prepare-parameters) for the PowerShell
+form.
 
 ## What this project does
 

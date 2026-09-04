@@ -4908,6 +4908,77 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
+    $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
+
+    foreach ($bicepparamDoc in @('README.md', 'docs/BEGINNERS-GUIDE.md', 'docs/FIRST-RUN-CHECKLIST.md', 'docs/MIGRATION-V1-TO-V2.md')) {
+        if (-not $docTexts[$bicepparamDoc].Contains('az bicep build-params')) {
+            Stop-Test "$bicepparamDoc presents parameters/customer-control.template.bicepparam without the az bicep build-params compile step; the lifecycle scripts read ARM JSON only."
+        }
+    }
+    $deployScriptText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/deploy.sh') -Raw
+    if ($deployScriptText -notmatch 'jq -er ''\.parameters\.namePrefix\.value') {
+        Stop-Test 'scripts/deploy.sh no longer parses an ARM JSON .parameters document; revisit the documented customer-control compile step.'
+    }
+
+    $identityRunbookText = $docTexts['docs/IDENTITY-GOVERNANCE-RUNBOOK.md']
+    if (-not $identityRunbookText.Contains('identity/azure-rbac/owner-eligibility-request.parameters.local.json')) {
+        Stop-Test 'docs/IDENTITY-GOVERNANCE-RUNBOOK.md must use the eligible-Owner parameter file, not the deployment parameter file.'
+    }
+    foreach ($eligibilityMatch in [regex]::Matches($identityRunbookText, 'owner-eligibility-request\.(?:sh|ps1)(?:.*\r?\n){0,4}')) {
+        if ($eligibilityMatch.Value -match 'demo\.parameters\.json') {
+            Stop-Test 'docs/IDENTITY-GOVERNANCE-RUNBOOK.md must not pass parameters/demo.parameters.json to the eligible-Owner workflow.'
+        }
+    }
+    $eligibilityTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'identity/azure-rbac/owner-eligibility-request.parameters.template.json') -Raw | ConvertFrom-Json
+    foreach ($eligibilityField in @('submitEligibilityRequest', 'requestId',
+            'subscriptionPrivilegedAccessGroupObjectId', 'operatorWorkflowVerificationToken')) {
+        if (-not $identityRunbookText.Contains($eligibilityField)) {
+            Stop-Test "docs/IDENTITY-GOVERNANCE-RUNBOOK.md does not mention the required eligible-Owner parameter $eligibilityField."
+        }
+        if ($null -eq $eligibilityTemplate.parameters.PSObject.Properties[$eligibilityField]) {
+            Stop-Test "$eligibilityField is documented but absent from the eligible-Owner parameter template."
+        }
+    }
+
+    $managementGroupRoleAssignments = ([regex]::Matches(
+            (Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/management-group-rbac.bicep') -Raw),
+            "(?m)^resource .* 'Microsoft\.Authorization/roleAssignments@")).Count
+    $subscriptionRoleAssignments = ([regex]::Matches(
+            (Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/subscription-rbac.bicep') -Raw),
+            "(?m)^resource .* 'Microsoft\.Authorization/roleAssignments@")).Count
+    $totalRoleAssignments = $managementGroupRoleAssignments + ($subscriptionRoleAssignments * 2)
+    if ($totalRoleAssignments -ne 5) {
+        Stop-Test "deployRoleAssignments now creates $totalRoleAssignments assignments; update docs/SHARED-SERVICES-AND-COST.md."
+    }
+    if (-not $docTexts['docs/SHARED-SERVICES-AND-COST.md'].Contains('Five ordinary RBAC assignments across four groups')) {
+        Stop-Test 'docs/SHARED-SERVICES-AND-COST.md must state five deployRoleAssignments assignments across four groups.'
+    }
+
+    if ($mainBicepText -notmatch "name: 'root-deployment-restrictions'(?:.*\r?\n){0,2}.*scope: managementGroup\(demoRootManagementGroupId\)") {
+        Stop-Test 'root-deployment-restrictions is no longer assigned at the demo root; update the docs/CONTROL-MATRIX.md scope explanation.'
+    }
+    if ($mainBicepText.Contains('bb91dfba-c30d-4263-9add-9c2384e659a6')) {
+        Stop-Test 'REQ-NET-03 is now assigned in main.bicep; it is documented as a catalog-only Defender recommendation.'
+    }
+    foreach ($scopeMarker in @('catalog-only, with no policy assignment at all', 'assigned at a broader scope than its target')) {
+        if (-not $docTexts['docs/CONTROL-MATRIX.md'].Contains($scopeMarker)) {
+            Stop-Test "docs/CONTROL-MATRIX.md must explain that a control can be $scopeMarker."
+        }
+    }
+
+    $networkIngressAssignments = ([regex]::Matches($mainBicepText, "assignmentName: 'demo-network-ingress'")).Count
+    if ($networkIngressAssignments -ne 1) {
+        Stop-Test 'Expected exactly one network-ingress assignment; docs/CONTROL-SCOPE-AND-INHERITANCE.md states the critical branch has no ordinary copy.'
+    }
+    if ($mainBicepText -notmatch "name: 'assign-private-access-critical'(?:.*\r?\n){0,2}.*scope: managementGroup\(criticalInfrastructureManagementGroupId\)") {
+        Stop-Test 'The critical private-access assignment is no longer scoped to the Critical Infrastructure branch.'
+    }
+    foreach ($criticalMarker in @('have **no** ordinary critical copy', 'enableNercCipTechnicalOverlay=false')) {
+        if (-not $docTexts['docs/CONTROL-SCOPE-AND-INHERITANCE.md'].Contains($criticalMarker)) {
+            Stop-Test "docs/CONTROL-SCOPE-AND-INHERITANCE.md must state: $criticalMarker"
+        }
+    }
+
     foreach ($confirmationPair in @(
             @{ File = 'docs/ENFORCEMENT-AND-REMEDIATION.md'; Text = 'ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"' },
             @{ File = 'docs/ENFORCEMENT-AND-REMEDIATION.md'; Text = 'ESLZ_TAG_REMEDIATION_CONFIRMATION="REMEDIATE-MISSING-RESOURCE-TAGS"' },

@@ -146,16 +146,31 @@ schedule, verifies that the supplied object is an existing security-enabled
 group, checks current eligibility and pending requests, and runs what-if before
 stopping by default. Submission requires layered explicit confirmation.
 
+This workflow does **not** read `parameters/demo.parameters.json`. It requires
+its own parameter document containing `submitEligibilityRequest`, `requestId`,
+`subscriptionPrivilegedAccessGroupObjectId`, the eligibility schedule, and the
+operator workflow token. Prepare it exactly as described in
+[`docs/AZURE-RBAC-PIM.md`](AZURE-RBAC-PIM.md):
+
+1. Copy
+   `identity/azure-rbac/owner-eligibility-request.parameters.template.json` to a
+   gitignored `identity/azure-rbac/owner-eligibility-request.parameters.local.json`.
+2. Replace every `REPLACE_WITH_*` placeholder, generate a fresh request GUID
+   outside Bicep, and select the lifecycle action.
+3. Keep `submitEligibilityRequest=false` and leave
+   `operatorWorkflowVerificationToken` at its supplied `UNSUPPORTED_OUTSIDE_...`
+   value while you prepare and validate the file locally.
+
 ```bash
 ./scripts/owner-eligibility-request.sh \
-  --subscription-id <subscription-guid> \
-  --parameter-file parameters/demo.parameters.json
+  --subscription-id '<subscription-guid>' \
+  --parameter-file 'identity/azure-rbac/owner-eligibility-request.parameters.local.json'
 ```
 
 ```powershell
 .\scripts\owner-eligibility-request.ps1 `
-  -SubscriptionId <subscription-guid> `
-  -ParameterFile .\parameters\demo.parameters.json
+  -SubscriptionId '<subscription-guid>' `
+  -ParameterFile '.\identity\azure-rbac\owner-eligibility-request.parameters.local.json'
 ```
 
 The default mode performs read-only preflight checks and an Azure what-if and

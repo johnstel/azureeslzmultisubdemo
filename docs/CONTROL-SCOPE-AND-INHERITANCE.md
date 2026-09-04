@@ -51,9 +51,22 @@ The Critical Infrastructure branch exists only when
 `enableCriticalInfrastructure=true`, and it takes its subscriptions from
 `criticalInfrastructureSubscriptionIds`. It is a **sibling** of the workload
 branch under Landing Zones, not a child of it, so the workload-branch
-assignments below do **not** reach critical subscriptions. That is deliberate:
-critical workloads get their own, stricter copies of the network and private
-access controls plus the optional NERC CIP technical overlay.
+assignments below do **not** reach critical subscriptions. Be precise about
+what that means in the current implementation:
+
+- The **private access** guardrails do have a dedicated critical copy
+  (`Demo - critical private access guardrails`), created whenever
+  `enableCriticalInfrastructure=true`.
+- The **approved firewall route** guardrails have a critical copy only when
+  `enableFirewallRouteGuardrails=true`; that switch is off by default.
+- The **network ingress** guardrails (public SSH/RDP NSG rules, subnets without
+  an NSG) have **no** ordinary critical copy. `Demo - workload network ingress
+  guardrails` is assigned at the workload branch only. Critical subscriptions
+  receive equivalent network-boundary coverage **only** through the NERC CIP
+  technical overlay, which is off by default
+  (`enableNercCipTechnicalOverlay=false`). If you enable the Critical
+  Infrastructure branch without the overlay, critical subscriptions are **not**
+  evaluated for public management ingress or missing subnet NSGs.
 
 The tenant root management group is supplied only so the hierarchy can be
 created beneath it and so teardown can move the subscriptions back. It never
@@ -143,9 +156,11 @@ Critical Infrastructure assignments below add to it rather than replace it.
 | `Demo - workload approved firewall routes` | Route-table expectations for an approved firewall | Explicit opt-in, Audit |
 
 These are assigned at the archetype management group rather than Landing Zones
-so that the Critical Infrastructure branch can receive its own copies with
-stricter parameters, and so Platform/Connectivity never inherits a
-workload-shaped network rule.
+so that Platform/Connectivity never inherits a workload-shaped network rule and
+so the Critical Infrastructure branch can be governed with its own parameters.
+Only the private-access and firewall-route controls actually have a critical
+copy today; the network-ingress control does not, and is covered for critical
+subscriptions only by the opt-in NERC CIP overlay.
 
 ### Critical Infrastructure — opt-in, stricter branch
 

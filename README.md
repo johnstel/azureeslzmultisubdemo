@@ -841,8 +841,30 @@ Run the remaining commands from the `azureeslzmultisubdemo` folder.
 ## Prepare parameters
 
 Start from the profile you chose above. The v2 safe demo profile uses the JSON
-template shown here; the customer-control profile uses
-`parameters/customer-control.template.bicepparam` and the same workflow.
+template shown here.
+
+**The customer-control profile needs one extra step.** Every lifecycle script
+(`preflight`, `what-if`, `deploy`, `teardown`) reads an ARM JSON parameters
+document with `jq` / `ConvertFrom-Json`; none of them can consume a
+`.bicepparam` file directly. Compile the customer-control template to the JSON
+file the scripts expect, then continue with the identical workflow below:
+
+```bash
+az bicep build-params \
+  --file parameters/customer-control.template.bicepparam \
+  --outfile parameters/demo.parameters.json
+```
+
+```powershell
+az bicep build-params `
+  --file .\parameters\customer-control.template.bicepparam `
+  --outfile .\parameters\demo.parameters.json
+```
+
+Edit the `REPLACE_WITH_*` values in the `.bicepparam` source and recompile;
+editing the generated JSON directly is lost on the next compile. Both profiles
+produce identical parameter names and value types, which
+[`tests/test.sh`](tests/test.sh) verifies.
 
 Windows PowerShell (primary):
 

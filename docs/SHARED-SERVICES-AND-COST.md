@@ -28,7 +28,7 @@ created by the default profile.
 | Switch | Default | Effect when enabled | Metered? |
 |---|---|---|---|
 | `deployEvidenceResources` | `false` | Two resource groups, one small VNet, one NSG | No hourly charge for these object types |
-| `deployRoleAssignments` | `false` | Four ordinary RBAC assignments | No |
+| `deployRoleAssignments` | `false` | Five ordinary RBAC assignments across four groups: three at the demo root plus one operator assignment in each of the two subscriptions | No |
 | `enableTagInheritance` | `false` | `Modify` assignment, no remediation task | No, until a task is started |
 | `existingLogAnalyticsWorkspaceResourceId` | `''` | Reuses a workspace you already pay for | Your existing workspace bill |
 | `deployCentralLogAnalytics` | `false` | Creates a Log Analytics workspace | **Yes** — ingestion and retention |

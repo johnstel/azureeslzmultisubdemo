@@ -13,12 +13,35 @@ This catalog only **documents** implementation mechanisms. It does not create, a
 
 ## Scope and inheritance
 
-The **Scope** column below names the management-group branch (or `tenant
-(Entra ID)`/`subscription`) where a control is intended to apply, not where its
-definition lives. Every custom definition and initiative in this repository is
-created at the dedicated demo root and then assigned at the appropriate branch,
-so one definition can be assigned with different parameters at different
-scopes.
+The **Scope** column below is the scope at which the *customer requirement* is
+intended to take effect. It is **not** a statement that an assignment exists at
+exactly that management group, and it is not where the definition lives. Every
+custom definition and initiative in this repository is created at the dedicated
+demo root and then assigned at the appropriate branch, so one definition can be
+assigned with different parameters at different scopes.
+
+Two consequences, both of which appear in the rows below:
+
+- **A control may be assigned at a broader scope than its target.** Inheritance
+  makes a broader assignment cover the target scope. For example
+  `REQ-DEPLOY-04` and `REQ-DEPLOY-05` target `landingzones`, but the
+  `root-deployment-restrictions` module assigns them at the **demo root**, so
+  Platform and Connectivity are covered too.
+- **A control may be catalog-only, with no policy assignment at all.** These
+  records document a verified mechanism and its requirement, not an assignment
+  this template creates. For example `REQ-NET-03` is satisfied by a Defender for
+  Cloud recommendation populated at no cost by Foundational CSPM; `main.bicep`
+  never assigns policy definition `bb91dfba-…`. Rows whose **Classification** is
+  `manual-evidence`, `entra-config`, or `not-applicable` are likewise not backed
+  by an assignment created here.
+
+Treat this catalog as the requirement-to-mechanism register. The authoritative
+list of the assignments this template actually creates, and the management
+group each one is created at, is
+[`docs/CONTROL-SCOPE-AND-INHERITANCE.md`](CONTROL-SCOPE-AND-INHERITANCE.md).
+Verify the deployed reality with
+`az policy assignment list --disable-scope-strict-match` rather than inferring
+it from this column.
 
 | Scope value | Management group | Reaches |
 |---|---|---|
