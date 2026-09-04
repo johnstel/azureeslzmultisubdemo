@@ -136,7 +136,7 @@ $workspaceScope = ''
 if ($existingWorkspaceResourceId -match '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.OperationalInsights/workspaces/[^/]+$') {
     $workspaceScope = $existingWorkspaceResourceId
 }
-elseif ($centralLogAnalyticsEnabled) {
+elseif ($centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied) {
     $workspaceScope = "/subscriptions/$connectivitySubscription/resourceGroups/rg-$prefix-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-$prefix-central"
 }
 $policyExemptionsProperty = $parameters.parameters.PSObject.Properties['policyExemptions']

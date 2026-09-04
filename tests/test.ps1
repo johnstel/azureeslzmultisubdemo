@@ -2549,8 +2549,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
         Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
         $azCalls = Get-Content -LiteralPath $azCallLog -Raw
-        if ($azCalls -match 'group (delete|wait).*rg-eslz-demo-monitoring') {
-            Stop-Test 'teardown.sh must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+        if ($azCalls -match 'rg-eslz-demo-monitoring') {
+            Stop-Test 'teardown.sh must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
         }
         foreach ($requiredCall in @(
             'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
@@ -2579,8 +2579,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test "teardown.ps1 safety test failed: az did not resolve to the temporary mock directory (or teardown.ps1 failed unexpectedly). Nested output: $nestedOutput"
     }
     $azCalls = Get-Content -LiteralPath $azCallLog -Raw
-    if ($azCalls -match 'group (delete|wait).*rg-eslz-demo-monitoring') {
-        Stop-Test 'teardown.ps1 must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+    if ($azCalls -match 'rg-eslz-demo-monitoring') {
+        Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
     }
     foreach ($requiredCall in @(
         'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
@@ -2608,8 +2608,8 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if ($whitespaceExitCode -ne 0) {
         Stop-Test "teardown.ps1 whitespace fixture failed: $whitespaceOutput"
     }
-    if ((Get-Content -LiteralPath $azCallLog -Raw) -match 'group (delete|wait).*rg-eslz-demo-monitoring') {
-        Stop-Test 'teardown.ps1 must not delete monitoring resources for a whitespace-only supplied workspace value.'
+    if ((Get-Content -LiteralPath $azCallLog -Raw) -match 'rg-eslz-demo-monitoring') {
+        Stop-Test 'teardown.ps1 must not touch monitoring resources for a whitespace-only supplied workspace value.'
     }
 
     Write-Host '19/29 Parse every PowerShell lifecycle and test script...'

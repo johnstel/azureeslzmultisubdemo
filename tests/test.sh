@@ -2052,8 +2052,8 @@ jq '
 : > "${az_call_log}"
 echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
   bash "${PROJECT_DIR}/scripts/teardown.sh" "${whitespace_param_file}" --execute >/dev/null
-if rg -qi 'group (delete|wait).*rg-eslz-demo-monitoring' "${az_call_log}"; then
-  printf 'ERROR: teardown.sh must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
+if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
+  printf 'ERROR: teardown.sh must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
   cat "${az_call_log}" >&2
   exit 1
 fi
@@ -2062,8 +2062,8 @@ if command -v pwsh >/dev/null 2>&1; then
   : > "${az_call_log}"
   echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
     pwsh -NoLogo -NoProfile -File "${PROJECT_DIR}/scripts/teardown.ps1" "${whitespace_param_file}" -Execute >/dev/null
-  if rg -qi 'group (delete|wait).*rg-eslz-demo-monitoring' "${az_call_log}"; then
-    printf 'ERROR: teardown.ps1 must never delete or wait on rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
+  if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
+    printf 'ERROR: teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).\n' >&2
     cat "${az_call_log}" >&2
     exit 1
   fi
@@ -2088,8 +2088,8 @@ jq '.parameters.existingLogAnalyticsWorkspaceResourceId.value = "   " | .paramet
 : > "${az_call_log}"
 echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
   bash "${PROJECT_DIR}/scripts/teardown.sh" "${whitespace_only_param_file}" --execute >/dev/null
-if rg -qi 'group (delete|wait).*rg-eslz-demo-monitoring' "${az_call_log}"; then
-  printf 'ERROR: teardown.sh must not delete monitoring resources for a whitespace-only supplied workspace value.\n' >&2
+if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
+  printf 'ERROR: teardown.sh must not touch monitoring resources for a whitespace-only supplied workspace value.\n' >&2
   exit 1
 fi
 

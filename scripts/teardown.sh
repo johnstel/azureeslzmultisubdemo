@@ -68,7 +68,7 @@ workspace_scope=''
 existing_workspace_resource_id_normalized="$(printf '%s' "${existing_workspace_resource_id}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${existing_workspace_resource_id_normalized}" =~ ^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\.operationalinsights/workspaces/[^/]+$ ]]; then
   workspace_scope="${existing_workspace_resource_id}"
-elif [[ "${central_log_analytics_enabled}" == 'true' ]]; then
+elif [[ "${central_log_analytics_enabled}" == 'true' && -z "${existing_workspace_resource_id}" ]]; then
   workspace_scope="/subscriptions/${connectivity_subscription}/resourceGroups/rg-${prefix}-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-${prefix}-central"
 fi
 monitoring_resource_group="rg-${prefix}-monitoring"
