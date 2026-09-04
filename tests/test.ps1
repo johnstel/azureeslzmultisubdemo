@@ -611,7 +611,7 @@ try {
         Stop-Test 'Offline preflight tests must restore the real Azure CLI command.'
     }
 
-    Write-Host '1/30 Validate repository versioning and branch guidance...'
+    Write-Host '1/31 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     if ($versionValue -ne '2.0.0-dev') {
@@ -629,7 +629,7 @@ try {
         }
     }
 
-    Write-Host '2/30 Build the complete tenant template and validate policy assignment shapes...'
+    Write-Host '2/31 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'
     $buildOutput = & az bicep build --file (Join-Path $ProjectDir 'main.bicep') --outfile $compiledTemplate 2>&1
     if ($LASTEXITCODE -ne 0) { Stop-Test 'Bicep build failed.' }
@@ -812,7 +812,7 @@ try {
     }
     & (Join-Path $ScriptDir 'validate-remediating-policy-assignment.ps1')
 
-    Write-Host '3/30 Validate the safe-demo and customer-control parameter templates...'
+    Write-Host '3/31 Validate the safe-demo and customer-control parameter templates...'
     $parameterTemplatePath = Join-Path $ProjectDir 'parameters/demo.parameters.template.json'
     $parameterTemplate = Get-Content -LiteralPath $parameterTemplatePath -Raw | ConvertFrom-Json
     if ($parameterTemplate.parameters.deployRoleAssignments.value -ne $false) {
@@ -1032,7 +1032,7 @@ try {
     if ($compiledJson.resources -is [System.Management.Automation.PSCustomObject]) {
         $compiledJson.resources = @($compiledJson.resources.PSObject.Properties | ForEach-Object { $_.Value })
     }
-    Write-Host '4/30 Confirm there are exactly two unconditional subscription associations...'
+    Write-Host '4/31 Confirm there are exactly two unconditional subscription associations...'
     $subscriptionAssociations = Find-JsonObjects -Node $compiledJson -Predicate {
         param($node)
         $node.PSObject.Properties['type'] -and $node.type -eq 'Microsoft.Management/managementGroups/subscriptions'
@@ -1042,7 +1042,7 @@ try {
         Stop-Test "Expected 2 unconditional subscription association resources, found $(@($unconditionalAssociations).Count)."
     }
 
-    Write-Host '5/30 Confirm no paid always-on resource types are declared outside the opt-in central monitoring, logging destination RBAC, and backup vault modules...'
+    Write-Host '5/31 Confirm no paid always-on resource types are declared outside the opt-in central monitoring, logging destination RBAC, and backup vault modules...'
     if (@(Find-ProhibitedPaidDeclarations -Node $compiledJson).Count -ne 0) {
         Stop-Test 'A prohibited evidence resource type is declared.'
     }
@@ -1056,14 +1056,14 @@ try {
         Stop-Test 'The paid-resource declaration safety check did not reject its negative fixture.'
     }
 
-    Write-Host '6/30 Confirm tenant-root scope is only used as the parent hierarchy input...'
+    Write-Host '6/31 Confirm tenant-root scope is only used as the parent hierarchy input...'
     foreach ($bicepFile in Get-ChildItem $ProjectDir -Recurse -Filter '*.bicep') {
         if ((Get-Content -LiteralPath $bicepFile.FullName -Raw) -match 'scope:\s*managementGroup\(tenantRootManagementGroupId\)') {
             Stop-Test "A module or resource assigns governance directly at the tenant root in $($bicepFile.Name)."
         }
     }
 
-    Write-Host '7/30 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
+    Write-Host '7/31 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded lifecycle scripts...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     $groupPattern = '(?m)^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$'
     if (([regex]::Matches($mainBicepText, $groupPattern)).Count -ne 4) {
@@ -1614,7 +1614,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '8/30 Confirm region policy and workload network guardrails are safe by default...'
+    Write-Host '8/31 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
     foreach ($requiredPolicyText in @(
         "field: 'location'",
@@ -2026,7 +2026,7 @@ exit $LASTEXITCODE
         Stop-Test 'Network ingress fixtures must cover child/inline and singular/plural property forms.'
     }
 
-    Write-Host '9/30 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
+    Write-Host '9/31 Confirm the Critical Infrastructure branch is opt-in and correctly wired...'
     $hierarchyBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/hierarchy.bicep') -Raw
     if ($hierarchyBicepText -notmatch '(?m)^param enableCriticalInfrastructure bool = false$') {
         Stop-Test 'enableCriticalInfrastructure parameter must default to false.'
@@ -2066,7 +2066,7 @@ exit $LASTEXITCODE
         Stop-Test 'criticalInfrastructureEnabled output is missing or not wired to enableCriticalInfrastructure.'
     }
 
-    Write-Host '10/30 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
+    Write-Host '10/31 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...'
     $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
     if ($mainBicepText -notmatch '(?m)^param enableDefenderCspm bool = false$') {
         Stop-Test 'enableDefenderCspm parameter must default to false.'
@@ -2318,7 +2318,7 @@ exit $LASTEXITCODE
         Stop-Test 'README.md must document Foundational CSPM.'
     }
 
-    Write-Host '11/30 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
+    Write-Host '11/31 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...'
     if ($hierarchyBicepText -notmatch "fail\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs") {
         Stop-Test 'Missing duplicate-subscription validation for criticalInfrastructureSubscriptionIds.'
     }
@@ -2346,7 +2346,7 @@ exit $LASTEXITCODE
         Stop-Test 'Expected the hierarchy module to compute duplicate/overlap validation and fail() the deployment when invalid.'
     }
 
-    Write-Host '12/30 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
+    Write-Host '12/31 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...'
     $teardownShLines = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh')
     $criticalSubMoveLineSh = (($teardownShLines | Select-String -Pattern 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' | Select-Object -First 1).LineNumber)
     $criticalMgDeleteLineSh = (($teardownShLines | Select-String -Pattern 'management-group delete --name "\$\{prefix\}-criticalinfra"' | Select-Object -First 1).LineNumber)
@@ -2368,7 +2368,7 @@ exit $LASTEXITCODE
         Stop-Test 'teardown.ps1 must move critical infrastructure subscriptions, then delete the Critical Infrastructure management group before Landing Zones.'
     }
 
-    Write-Host '13/30 Confirm central monitoring defaults create no metered resources...'
+    Write-Host '13/31 Confirm central monitoring defaults create no metered resources...'
     if ($parameterTemplate.parameters.deployCentralLogAnalytics.value -ne $false) {
         Stop-Test 'deployCentralLogAnalytics must default to false.'
     }
@@ -2389,7 +2389,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '14/30 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
+    Write-Host '14/31 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...'
     foreach ($requiredText in @(
         'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied',
         'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied',
@@ -2401,7 +2401,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '15/30 Confirm the central monitoring module exposes an effective workspace ID output...'
+    Write-Host '15/31 Confirm the central monitoring module exposes an effective workspace ID output...'
     if (-not ($centralMonitoringText -match '(?m)^output effectiveLogAnalyticsWorkspaceResourceId string')) {
         Stop-Test 'central-monitoring.bicep is missing the effectiveLogAnalyticsWorkspaceResourceId output.'
     }
@@ -2409,7 +2409,7 @@ exit $LASTEXITCODE
         Stop-Test 'main.bicep is missing the centralMonitoringEffectiveWorkspaceId output.'
     }
 
-    Write-Host '16/30 Confirm invalid central monitoring configurations fail deployment explicitly...'
+    Write-Host '16/31 Confirm invalid central monitoring configurations fail deployment explicitly...'
     foreach ($requiredText in @(
         "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@",
         'if (conflictingMonitoringInputs)',
@@ -2421,7 +2421,7 @@ exit $LASTEXITCODE
         }
     }
 
-    Write-Host '17/30 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
+    Write-Host '17/31 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
     foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_external_resource_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
@@ -2438,7 +2438,7 @@ exit $LASTEXITCODE
         Stop-Test 'scripts/teardown.ps1 must not use IsNullOrWhiteSpace on the raw existing workspace resource ID; it must match Bicep/Bash length-based presence semantics so a whitespace-only value is treated as supplied.'
     }
 
-    Write-Host '18/30 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
+    Write-Host '18/31 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...'
     $mockBinDir = Join-Path $TempDir 'mockbin'
     New-Item -ItemType Directory -Path $mockBinDir | Out-Null
     $azCallLog = Join-Path $TempDir 'az_calls_ps1.log'
@@ -2611,7 +2611,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test 'teardown.ps1 must not touch monitoring resources for a whitespace-only supplied workspace value.'
     }
 
-    Write-Host '19/30 Parse every PowerShell lifecycle and test script...'
+    Write-Host '19/31 Parse every PowerShell lifecycle and test script...'
     & (Join-Path $ScriptDir 'validate-tag-policy-migration.ps1')
     $powerShellFiles = @(
         Get-ChildItem (Join-Path $ProjectDir 'scripts') -Filter '*.ps1'
@@ -2630,13 +2630,13 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '20/30 Validate reusable initiative composition...'
+    Write-Host '20/31 Validate reusable initiative composition...'
     & (Join-Path $ScriptDir 'validate-initiative-composition.ps1')
 
-    Write-Host '21/30 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
+    Write-Host '21/31 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...'
     & (Join-Path $ScriptDir 'validate-control-catalog.ps1')
 
-    Write-Host '22/30 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
+    Write-Host '22/31 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...'
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash (Join-Path $ScriptDir 'uri-grammar-forced-fallback-tests.sh')
         if ($LASTEXITCODE -ne 0) {
@@ -2646,10 +2646,10 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Write-Host '  (No bash interpreter found on PATH; relying on tests/test.sh to cover this step.)'
     }
 
-    Write-Host '23/30 Validate Entra Conditional Access and PIM demo artifacts...'
+    Write-Host '23/31 Validate Entra Conditional Access and PIM demo artifacts...'
     & (Join-Path $ProjectDir 'scripts/validate-identity-artifacts.ps1')
 
-    Write-Host '24/30 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
+    Write-Host '24/31 Confirm identity validators reject invalid Conditional Access and PIM inputs...'
     $identitySrcDir = Join-Path $ProjectDir 'identity'
     $identityNegDir = Join-Path $TempDir 'identity-negative'
     $identityPopDir = Join-Path $TempDir 'identity-populated'
@@ -3277,7 +3277,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     if (Test-Path -LiteralPath $identityNegDir) { Remove-Item -LiteralPath $identityNegDir -Recurse -Force }
     if (Test-Path -LiteralPath $identityPopDir) { Remove-Item -LiteralPath $identityPopDir -Recurse -Force }
 
-    Write-Host '25/30 Confirm security benchmark assignments trace to the control catalog and stay optional...'
+    Write-Host '25/31 Confirm security benchmark assignments trace to the control catalog and stay optional...'
     $controlCatalog = Get-Content -LiteralPath (Join-Path $ProjectDir 'policy/control-catalog.json') -Raw | ConvertFrom-Json
     $armParameterTemplate = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $benchmarkAssignments = @(
@@ -3414,7 +3414,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '26/30 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
+    Write-Host '26/31 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...'
     if (-not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func hasCanonicalArmIdSegments' -Quiet) -or
         -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func hasDisallowedResourceGroupAsciiChars' -Quiet) -or
         -not (Select-String -Path (Join-Path $ProjectDir 'main.bicep') -Pattern 'func isResourceGroupName\(value string\) bool => .*length\(value\) <= 90.*!hasDisallowedResourceGroupAsciiChars\(value\)' -Quiet) -or
@@ -3862,7 +3862,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         Stop-Test 'Logging matrix coverage must include both fully disabled and fully remediation-enabled effect combinations.'
     }
 
-    Write-Host '27/30 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
+    Write-Host '27/31 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...'
     if ($compiledJson.parameters.dataProtectionPolicyEffect.defaultValue -ne 'Audit' -or
         (Compare-Object @($compiledJson.parameters.dataProtectionPolicyEffect.allowedValues) @('Audit', 'Deny', 'Disabled'))) {
         Stop-Test 'Compiled dataProtectionPolicyEffect must allow Audit, Deny, and Disabled and default to Audit.'
@@ -4088,7 +4088,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '28/30 Confirm backup coverage and vault posture controls stay audit-first and dependency-gated...'
+    Write-Host '28/31 Confirm backup coverage and vault posture controls stay audit-first and dependency-gated...'
     $backupDefaults = @{
         enableVmBackupRemediation          = $false
         enableVaultDiagnostics             = $false
@@ -4445,7 +4445,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }).Count -ne 0) {
         Stop-Test 'The approved existing-vault integration path did not compile to the expected parameter values.'
     }
-    Write-Host '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...'
+    Write-Host '29/31 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...'
     $preflightParameterFile = Join-Path $TempDir 'preflight unsafe.parameters.json'
     $preflightParameters = Get-Content -LiteralPath (Join-Path $ProjectDir 'parameters/demo.parameters.template.json') -Raw | ConvertFrom-Json
     $preflightParameters.parameters.tenantRootManagementGroupId.value = 'demo-root'
@@ -4494,7 +4494,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         }
     }
 
-    Write-Host '30/30 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
+    Write-Host '30/31 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...'
     $accessReviewScript = Join-Path $ProjectDir 'scripts/review-privileged-access.ps1'
     $accessReviewCriteria = Join-Path $ProjectDir 'policy/access-review-criteria.json'
     $accessReviewAssignments = Join-Path $ProjectDir 'tests/fixtures/privileged-access-assignments.json'
@@ -4820,6 +4820,101 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         ([string]$cipOverlay[0].evidenceSource).Contains('does not itself create any policy resource') -or
         ([string]$cipOverlay[0].notes).Contains('No policyDefinition/policySetDefinition exists yet')) {
         Stop-Test 'REQ-CIP-01 in policy/control-catalog.json must reflect the implemented overlay identity and remediation evidence model.'
+    }
+
+    Write-Host '31/31 Confirm v2 operator documentation is complete, cross-linked, and free of fabricated identifiers...'
+    $readmeText = Get-Content -LiteralPath (Join-Path $ProjectDir 'README.md') -Raw
+    $v2OperatorDocs = @(
+        'docs/CONTROL-SCOPE-AND-INHERITANCE.md',
+        'docs/ENFORCEMENT-AND-REMEDIATION.md',
+        'docs/SHARED-SERVICES-AND-COST.md',
+        'docs/IDENTITY-GOVERNANCE-RUNBOOK.md',
+        'docs/MIGRATION-V1-TO-V2.md'
+    )
+    foreach ($v2OperatorDoc in $v2OperatorDocs) {
+        if (-not (Test-Path -LiteralPath (Join-Path $ProjectDir $v2OperatorDoc) -PathType Leaf)) {
+            Stop-Test "Required v2 operator document $v2OperatorDoc is missing."
+        }
+        if (-not $readmeText.Contains("($v2OperatorDoc)")) {
+            Stop-Test "README.md does not link to $v2OperatorDoc."
+        }
+    }
+
+    $docTexts = @{}
+    foreach ($documentationFile in ($v2OperatorDocs + @('README.md', 'docs/BEGINNERS-GUIDE.md', 'docs/FIRST-RUN-CHECKLIST.md', 'docs/CONTROL-MATRIX.md'))) {
+        $docTexts[$documentationFile] = Get-Content -LiteralPath (Join-Path $ProjectDir $documentationFile) -Raw
+    }
+
+    foreach ($requiredReadmeMarker in @('## Choose a starting profile', '**v1 stable**', '**v2 safe demo**',
+            '**v2 customer control**', 'parameters/customer-control.template.bicepparam')) {
+        if (-not $docTexts['README.md'].Contains($requiredReadmeMarker)) {
+            Stop-Test "README.md is missing the operator profile marker: $requiredReadmeMarker"
+        }
+    }
+    foreach ($v1LinkFile in @('docs/BEGINNERS-GUIDE.md', 'docs/FIRST-RUN-CHECKLIST.md')) {
+        if (-not $docTexts[$v1LinkFile].Contains('release/v1')) {
+            Stop-Test "$v1LinkFile must keep a link to the v1 maintenance branch."
+        }
+    }
+    if (-not $docTexts['docs/MIGRATION-V1-TO-V2.md'].Contains('releases/tag/v1.0.0')) {
+        Stop-Test 'docs/MIGRATION-V1-TO-V2.md must keep a link to the v1.0.0 release.'
+    }
+    if (-not $docTexts['docs/ENFORCEMENT-AND-REMEDIATION.md'].Contains('Risk notice')) {
+        Stop-Test 'docs/ENFORCEMENT-AND-REMEDIATION.md must lead with a risk notice.'
+    }
+    if (-not $docTexts['docs/SHARED-SERVICES-AND-COST.md'].Contains('Cost notice')) {
+        Stop-Test 'docs/SHARED-SERVICES-AND-COST.md must lead with a cost notice.'
+    }
+    foreach ($meteredSwitch in @('deployCentralLogAnalytics', 'deploySentinel', 'enableDefenderCspm',
+            'enableDefenderForServers', 'enableDefenderForStorage', 'enableVmBackupRemediation')) {
+        if (-not $docTexts['docs/SHARED-SERVICES-AND-COST.md'].Contains($meteredSwitch)) {
+            Stop-Test "docs/SHARED-SERVICES-AND-COST.md does not document the metered switch $meteredSwitch."
+        }
+    }
+    if (-not $docTexts['docs/MIGRATION-V1-TO-V2.md'].Contains('subscriptionOwnersGroupObjectId')) {
+        Stop-Test 'docs/MIGRATION-V1-TO-V2.md must document the removed subscriptionOwnersGroupObjectId parameter.'
+    }
+    if (-not $docTexts['docs/IDENTITY-GOVERNANCE-RUNBOOK.md'].Contains('never modifies Microsoft Entra ID')) {
+        Stop-Test 'docs/IDENTITY-GOVERNANCE-RUNBOOK.md must state that the repository never modifies Microsoft Entra ID.'
+    }
+    if (-not $docTexts['docs/CONTROL-SCOPE-AND-INHERITANCE.md'].Contains('criticalinfra')) {
+        Stop-Test 'docs/CONTROL-SCOPE-AND-INHERITANCE.md must describe the Critical Infrastructure branch.'
+    }
+    if (-not $docTexts['docs/CONTROL-MATRIX.md'].Contains('CONTROL-SCOPE-AND-INHERITANCE.md')) {
+        Stop-Test 'docs/CONTROL-MATRIX.md must link to the scope and inheritance guidance.'
+    }
+
+    foreach ($v2OperatorDoc in $v2OperatorDocs) {
+        if ($docTexts[$v2OperatorDoc] -imatch '(is|are|makes you|becomes?) (nerc[ -]cip[ -])?(compliant|certified)|fully compliant|guarantees compliance') {
+            Stop-Test "$v2OperatorDoc contains a compliance certification claim."
+        }
+        if ($docTexts[$v2OperatorDoc] -match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
+            Stop-Test "$v2OperatorDoc contains a literal GUID; use an angle-bracket placeholder instead."
+        }
+    }
+
+    foreach ($documentationFile in ($v2OperatorDocs + @('README.md', 'docs/BEGINNERS-GUIDE.md', 'docs/FIRST-RUN-CHECKLIST.md'))) {
+        foreach ($scriptMatch in [regex]::Matches($docTexts[$documentationFile], '(?:\./|\.\\)scripts[/\\]([A-Za-z0-9._-]+\.(?:sh|ps1))')) {
+            $referencedScript = $scriptMatch.Groups[1].Value
+            if (-not (Test-Path -LiteralPath (Join-Path $ProjectDir "scripts/$referencedScript") -PathType Leaf)) {
+                Stop-Test "$documentationFile references scripts/$referencedScript, which does not exist."
+            }
+        }
+        foreach ($linkMatch in [regex]::Matches($docTexts[$documentationFile], '\]\((?:\./)?(?:docs/)?([A-Z0-9-]+\.md)[)#]')) {
+            $referencedDoc = $linkMatch.Groups[1].Value
+            if (-not (Test-Path -LiteralPath (Join-Path $ProjectDir "docs/$referencedDoc") -PathType Leaf)) {
+                Stop-Test "$documentationFile links to docs/$referencedDoc, which does not exist."
+            }
+        }
+    }
+
+    foreach ($confirmationPair in @(
+            @{ File = 'docs/ENFORCEMENT-AND-REMEDIATION.md'; Text = 'ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"' },
+            @{ File = 'docs/ENFORCEMENT-AND-REMEDIATION.md'; Text = 'ESLZ_TAG_REMEDIATION_CONFIRMATION="REMEDIATE-MISSING-RESOURCE-TAGS"' },
+            @{ File = 'docs/MIGRATION-V1-TO-V2.md'; Text = 'ESLZ_TAG_MIGRATION_CONFIRMATION="REMOVE-LEGACY-RG-TAG-POLICY"' })) {
+        if (-not $docTexts[$confirmationPair.File].Contains($confirmationPair.Text)) {
+            Stop-Test ('{0} must document the confirmation string {1}.' -f $confirmationPair.File, $confirmationPair.Text)
+        }
     }
 
     Write-Host ''

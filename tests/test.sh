@@ -498,7 +498,7 @@ command -v rg >/dev/null 2>&1 || {
 }
 run_offline_parity_suite
 
-printf '1/30 Validate repository versioning and branch guidance...\n'
+printf '1/31 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
 [[ "${version_value}" == '2.0.0-dev' ]] || {
   printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
@@ -509,7 +509,7 @@ rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0'
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
 
-printf '2/30 Build the complete tenant template and validate policy assignment shapes...\n'
+printf '2/31 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
 if printf '%s' "${az_build_stderr}" | rg -q 'BCP318'; then
   printf 'ERROR: main.bicep build must not emit a BCP318 nullable-module-output warning.\n' >&2
@@ -603,7 +603,7 @@ jq -e '
 }
 "${SCRIPT_DIR}/validate-remediating-policy-assignment.sh"
 
-printf '3/30 Validate the safe-demo and customer-control parameter templates...\n'
+printf '3/31 Validate the safe-demo and customer-control parameter templates...\n'
 jq -e '
   .parameters.deployRoleAssignments.value == false and
   .parameters.deployEvidenceResources.value == false and
@@ -753,14 +753,14 @@ powershell_create_line="$(rg -n -F 'Start-AzPolicyRemediation `' "${powershell_r
   && "${powershell_revalidation_line}" -lt "${powershell_create_line}" ]] \
   || { printf 'ERROR: PowerShell tag remediation must preview, unlock, type-confirm, revalidate, then create.\n' >&2; exit 1; }
 
-printf '4/30 Confirm there are exactly two unconditional subscription associations...\n'
+printf '4/31 Confirm there are exactly two unconditional subscription associations...\n'
 association_count="$(jq '[.. | objects | select(.type? == "Microsoft.Management/managementGroups/subscriptions") | select(has("condition") | not)] | length' "${TEMP_DIR}/main.json")"
 [[ "${association_count}" -eq 2 ]] || {
   printf 'ERROR: Expected 2 unconditional subscription association resources, found %s.\n' "${association_count}" >&2
   exit 1
 }
 
-printf '5/30 Confirm no paid always-on resource types are declared outside the opt-in central monitoring, logging destination RBAC, and backup vault modules...\n'
+printf '5/31 Confirm no paid always-on resource types are declared outside the opt-in central monitoring, logging destination RBAC, and backup vault modules...\n'
 find_prohibited_paid_declarations() {
   jq -r '
     def prohibited:
@@ -796,13 +796,13 @@ az bicep build \
   exit 1
 }
 
-printf '6/30 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
+printf '6/31 Confirm tenant-root scope is only used as the parent hierarchy input...\n'
 if rg -n 'scope:\\s*managementGroup\\(tenantRootManagementGroupId\\)' "${PROJECT_DIR}" -g '*.bicep'; then
   printf 'ERROR: A module or resource assigns governance directly at the tenant root.\n' >&2
   exit 1
 fi
 
-printf '7/30 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
+printf '7/31 Confirm group-only RBAC, idempotent main, one-shot Owner eligibility, and guarded scripts...\n'
 group_param_count="$(rg -c '^param (governanceAdminsGroupObjectId|networkOperatorsGroupObjectId|workloadContributorsGroupObjectId|readOnlyAuditorsGroupObjectId) string$' "${PROJECT_DIR}/main.bicep")"
 [[ "${group_param_count}" -eq 4 ]] || {
   printf 'ERROR: Expected four ordinary Entra security-group parameters in main.bicep.\n' >&2
@@ -1297,7 +1297,7 @@ rg -Fq 'exemptionScopeType' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -Fq 'deployEvidenceResources' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -Fq 'deployEvidenceResources' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '8/30 Confirm region policy and workload network guardrails are safe by default...\n'
+printf '8/31 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'global'" "${PROJECT_DIR}/modules/policy-library.bicep"
 rg -q "notEquals: 'Microsoft.AzureActiveDirectory/b2cDirectories'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -1646,7 +1646,7 @@ for case in fixture["cases"]:
         raise SystemExit(f"ERROR: Firewall route semantic case failed: {case['name']}")
 PYEOF
 
-printf '9/30 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
+printf '9/31 Confirm the Critical Infrastructure branch is opt-in and correctly wired...\n'
 rg -q "^param enableCriticalInfrastructure bool = false$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "^param criticalInfrastructureSubscriptionIds array = \\[\\]$" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "displayName: 'Critical Infrastructure'" "${PROJECT_DIR}/modules/hierarchy.bicep"
@@ -1679,7 +1679,7 @@ critical_sub_count="$(jq '
 }
 jq -e '.outputs.criticalInfrastructureEnabled.value == "[parameters(\u0027enableCriticalInfrastructure\u0027)]"' "${TEMP_DIR}/main.json" >/dev/null
 
-printf '10/30 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...\n'
+printf '10/31 Confirm Defender for Cloud plans are explicit, independent, safe-by-default opt-ins with no auto-granted role and current AMA audit controls exist...\n'
 rg -q "^param enableDefenderCspm bool = false$" "${PROJECT_DIR}/main.bicep"
 rg -q "^param enableDefenderForServers bool = false$" "${PROJECT_DIR}/main.bicep"
 rg -q "^param enableDefenderForStorage bool = false$" "${PROJECT_DIR}/main.bicep"
@@ -1906,7 +1906,7 @@ jq -e '
 rg -q '"REQ-DEF-09"' "${PROJECT_DIR}/policy/control-catalog.json"
 rg -q "Foundational CSPM" "${PROJECT_DIR}/README.md"
 
-printf '11/30 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
+printf '11/31 Confirm criticalInfrastructureSubscriptionIds validates duplicates and overlap...\n'
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not contain duplicate subscription IDs" "${PROJECT_DIR}/modules/hierarchy.bicep"
 rg -q "fail\\('criticalInfrastructureSubscriptionIds must not overlap with connectivitySubscriptionId or workloadSubscriptionId" "${PROJECT_DIR}/modules/hierarchy.bicep"
 critical_validation_var_count="$(jq '
@@ -1922,7 +1922,7 @@ critical_validation_var_count="$(jq '
   exit 1
 }
 
-printf '12/30 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
+printf '12/31 Confirm teardown scripts move critical subscriptions and delete the Critical Infrastructure management group before Landing Zones...\n'
 critical_sub_move_line="$(rg -n 'management-group subscription add --name "\$\{tenant_root\}" --subscription "\$\{critical_subscription\}"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 critical_mg_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-criticalinfra"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
 landingzones_delete_line="$(rg -n 'management-group delete --name "\$\{prefix\}-landingzones"' "${PROJECT_DIR}/scripts/teardown.sh" | head -1 | cut -d: -f1)"
@@ -1946,7 +1946,7 @@ landingzones_delete_line_ps1="$(rg -n '\$managementGroups \+= "\$prefix-landingz
   exit 1
 }
 
-printf '13/30 Confirm central monitoring defaults create no metered resources...\n'
+printf '13/31 Confirm central monitoring defaults create no metered resources...\n'
 jq -e '
   .parameters.deployCentralLogAnalytics.value == false and
   .parameters.deploySentinel.value == false and
@@ -1956,23 +1956,23 @@ rg -q "^param deployCentralLogAnalytics bool = false$" "${PROJECT_DIR}/modules/c
 rg -q "^param deploySentinel bool = false$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "^param existingLogAnalyticsWorkspaceResourceId string = ''$" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf "14/30 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
+printf "14/31 Confirm central monitoring guards against conflicting new/existing workspace inputs and Sentinel-without-workspace...\n"
 rg -q 'conflictingMonitoringInputs = newWorkspaceRequested && existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'sentinelRequiresEffectiveWorkspace = deploySentinel && !newWorkspaceRequested && !existingWorkspaceSupplied' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'createNewWorkspace = newWorkspaceRequested && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'useExistingWorkspace = existingWorkspaceSupplied && !hasMonitoringConfigurationError' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '15/30 Confirm the central monitoring module exposes an effective workspace ID output...\n'
+printf '15/31 Confirm the central monitoring module exposes an effective workspace ID output...\n'
 rg -q '^output effectiveLogAnalyticsWorkspaceResourceId string' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'centralMonitoringEffectiveWorkspaceId string = centralMonitoring\.outputs\.effectiveLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/main.bicep"
 
-printf '16/30 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
+printf '16/31 Confirm invalid central monitoring configurations fail deployment explicitly...\n'
 rg -q "resource conflictingMonitoringInputsGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(conflictingMonitoringInputs\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q "resource sentinelRequiresWorkspaceGuard 'Microsoft.CentralMonitoringGuard/configurationError@" "${PROJECT_DIR}/modules/central-monitoring.bicep"
 rg -q 'if \(sentinelRequiresEffectiveWorkspace\)' "${PROJECT_DIR}/modules/central-monitoring.bicep"
 
-printf '17/30 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
+printf '17/31 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...\n'
 rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -1995,7 +1995,7 @@ if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/s
 fi
 rg -q 'Remove-ResourceGroupIfNotProtected -Subscription \$connectivitySubscription -Group \$connectivityResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 
-printf '18/30 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
+printf '18/31 Confirm a whitespace-only existing workspace resource ID never triggers deletion of the monitoring resource group...\n'
 mock_bin_dir="${TEMP_DIR}/mockbin"
 mkdir -p "${mock_bin_dir}"
 az_call_log="${TEMP_DIR}/az_calls.log"
@@ -2092,7 +2092,7 @@ if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
   exit 1
 fi
 
-printf '19/30 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
+printf '19/31 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'
 "${SCRIPT_DIR}/validate-tag-policy-migration.sh"
 for shell_script in "${PROJECT_DIR}"/scripts/*.sh "${PROJECT_DIR}"/tests/*.sh; do
   bash -n "${shell_script}"
@@ -2163,19 +2163,19 @@ if command -v pwsh >/dev/null 2>&1; then
   '
 fi
 
-printf '20/30 Validate reusable initiative composition...\n'
+printf '20/31 Validate reusable initiative composition...\n'
 "${SCRIPT_DIR}/validate-initiative-composition.sh"
 
-printf '21/30 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
+printf '21/31 Validate the v2 control catalog (schema-equivalent checks + matrix consistency)...\n'
 "${SCRIPT_DIR}/validate-control-catalog.sh"
 
-printf '22/30 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
+printf '22/31 Backend parity and structural-matrix regression tests (bash/python, bash/jq, pwsh/python, pwsh/native)...\n'
 "${SCRIPT_DIR}/uri-grammar-forced-fallback-tests.sh"
 
-printf '23/30 Validate Entra Conditional Access and PIM demo artifacts...\n'
+printf '23/31 Validate Entra Conditional Access and PIM demo artifacts...\n'
 "${PROJECT_DIR}/scripts/validate-identity-artifacts.sh"
 
-printf '24/30 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
+printf '24/31 Confirm identity validators reject invalid Conditional Access and PIM inputs...\n'
 IDENTITY_SRC_DIR="${PROJECT_DIR}/identity"
 IDENTITY_NEG_DIR="${TEMP_DIR}/identity-negative"
 IDENTITY_POP_DIR="${TEMP_DIR}/identity-populated"
@@ -2607,7 +2607,7 @@ rm -f "${CASE_INSENSITIVE_IMG}"
 
 rm -rf "${IDENTITY_NEG_DIR}" "${IDENTITY_POP_DIR}"
 
-printf '25/30 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
+printf '25/31 Confirm security benchmark assignments trace to the control catalog and stay optional...\n'
 control_catalog="${PROJECT_DIR}/policy/control-catalog.json"
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
@@ -2710,7 +2710,7 @@ jq -e '
   exit 1
 }
 
-printf '26/30 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
+printf '26/31 Confirm logging assignments use the verified workspace/identity/effect model at the demo root...\n'
 rg -q -F "func hasCanonicalArmIdSegments" "${PROJECT_DIR}/main.bicep"
 rg -q "func hasDisallowedResourceGroupAsciiChars" "${PROJECT_DIR}/main.bicep"
 rg -q "func isResourceGroupName\\(value string\\) bool => .*length\\(value\\) <= 90.*!hasDisallowedResourceGroupAsciiChars\\(value\\)" "${PROJECT_DIR}/main.bicep"
@@ -3182,7 +3182,7 @@ if covered_category_modes != {"audit", "allLogs"}:
 if ("Disabled", "Disabled") not in covered_effect_states or ("DeployIfNotExists", "DeployIfNotExists") not in covered_effect_states:
     raise SystemExit("ERROR: Logging matrix must include both disabled and enabled remediation effect combinations.")
 PYEOF
-printf '27/30 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
+printf '27/31 Confirm storage, Key Vault, and customer-managed key controls are verified and audit-first...\n'
 jq -e '
   .parameters.dataProtectionPolicyEffect.defaultValue == "Audit" and
   .parameters.dataProtectionPolicyEffect.allowedValues == ["Audit", "Deny", "Disabled"] and
@@ -3400,7 +3400,7 @@ jq -e '
 }
 jq -e '.parameters.dataProtectionPolicyEffect.value == "Audit"' "${TEMP_DIR}/main.parameters.json" >/dev/null
 
-printf '28/30 Confirm backup coverage and vault posture controls stay audit-first and dependency-gated...\n'
+printf '28/31 Confirm backup coverage and vault posture controls stay audit-first and dependency-gated...\n'
 jq -e --slurpfile catalog "${control_catalog}" '
   def deployment($name):
     first(.. | objects | select(.type? == "Microsoft.Resources/deployments" and .name? == $name));
@@ -3683,7 +3683,7 @@ jq -e --arg vaultPrefix "${backup_vault_prefix}" '
   exit 1
 }
 
-printf '29/30 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...\n'
+printf '29/31 Confirm preflight rejects unsafe v2 dependency combinations before Azure access...\n'
 preflight_parameter_file="${TEMP_DIR}/preflight unsafe.parameters.json"
 jq '
   .parameters.tenantRootManagementGroupId.value = "demo-root" |
@@ -3711,7 +3711,7 @@ if command -v pwsh >/dev/null 2>&1; then
   assert_preflight_rejected pwsh -NoLogo -NoProfile -File "${PROJECT_DIR}/scripts/preflight.ps1" -ParameterFile "${preflight_parameter_file}"
 fi
 
-printf '30/30 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
+printf '30/31 Confirm the privileged access review is read-only, criteria-driven, and offline-testable...\n'
 access_review_script="${PROJECT_DIR}/scripts/review-privileged-access.sh"
 access_review_ps_script="${PROJECT_DIR}/scripts/review-privileged-access.ps1"
 access_review_criteria="${PROJECT_DIR}/policy/access-review-criteria.json"
@@ -4124,5 +4124,92 @@ if rg -q 'REQ-CIP-01 .*to be composed from existing verified controls' "${PROJEC
   printf 'ERROR: CONTROL-MATRIX still contains stale REQ-CIP-01 future-state text.\n' >&2
   exit 1
 fi
+
+printf '31/31 Confirm v2 operator documentation is complete, cross-linked, and free of fabricated identifiers...\n'
+v2_operator_docs=(
+  'docs/CONTROL-SCOPE-AND-INHERITANCE.md'
+  'docs/ENFORCEMENT-AND-REMEDIATION.md'
+  'docs/SHARED-SERVICES-AND-COST.md'
+  'docs/IDENTITY-GOVERNANCE-RUNBOOK.md'
+  'docs/MIGRATION-V1-TO-V2.md'
+)
+for v2_operator_doc in "${v2_operator_docs[@]}"; do
+  [[ -f "${PROJECT_DIR}/${v2_operator_doc}" ]] || {
+    printf 'ERROR: Required v2 operator document %s is missing.\n' "${v2_operator_doc}" >&2
+    exit 1
+  }
+  rg -q -F "(${v2_operator_doc})" "${PROJECT_DIR}/README.md" || {
+    printf 'ERROR: README.md does not link to %s.\n' "${v2_operator_doc}" >&2
+    exit 1
+  }
+done
+
+printf '    Confirm the three operator profiles are documented with their parameter templates...\n'
+rg -q '^## Choose a starting profile$' "${PROJECT_DIR}/README.md"
+rg -q '\*\*v1 stable\*\*' "${PROJECT_DIR}/README.md"
+rg -q '\*\*v2 safe demo\*\*' "${PROJECT_DIR}/README.md"
+rg -q '\*\*v2 customer control\*\*' "${PROJECT_DIR}/README.md"
+rg -q -F 'parameters/customer-control.template.bicepparam' "${PROJECT_DIR}/README.md"
+rg -q -F 'release/v1' "${PROJECT_DIR}/docs/BEGINNERS-GUIDE.md"
+rg -q -F 'release/v1' "${PROJECT_DIR}/docs/FIRST-RUN-CHECKLIST.md"
+rg -q -F 'releases/tag/v1.0.0' "${PROJECT_DIR}/docs/MIGRATION-V1-TO-V2.md"
+
+printf '    Confirm risk and cost warnings precede execution guidance...\n'
+rg -q -F 'Risk notice' "${PROJECT_DIR}/docs/ENFORCEMENT-AND-REMEDIATION.md"
+rg -q -F 'Cost notice' "${PROJECT_DIR}/docs/SHARED-SERVICES-AND-COST.md"
+for metered_switch in deployCentralLogAnalytics deploySentinel enableDefenderCspm enableDefenderForServers enableDefenderForStorage enableVmBackupRemediation; do
+  rg -q -F "${metered_switch}" "${PROJECT_DIR}/docs/SHARED-SERVICES-AND-COST.md" || {
+    printf 'ERROR: docs/SHARED-SERVICES-AND-COST.md does not document the metered switch %s.\n' "${metered_switch}" >&2
+    exit 1
+  }
+done
+rg -q -F 'subscriptionOwnersGroupObjectId' "${PROJECT_DIR}/docs/MIGRATION-V1-TO-V2.md"
+rg -q -F 'never modifies Microsoft Entra ID' "${PROJECT_DIR}/docs/IDENTITY-GOVERNANCE-RUNBOOK.md"
+rg -q -F 'criticalinfra' "${PROJECT_DIR}/docs/CONTROL-SCOPE-AND-INHERITANCE.md"
+rg -q -F 'CONTROL-SCOPE-AND-INHERITANCE.md' "${PROJECT_DIR}/docs/CONTROL-MATRIX.md"
+
+printf '    Confirm no v2 operator document claims compliance certification...\n'
+for v2_operator_doc in "${v2_operator_docs[@]}"; do
+  if rg -qi '(is|are|makes you|becomes?) (nerc[ -]cip[ -])?(compliant|certified)|fully compliant|guarantees compliance' "${PROJECT_DIR}/${v2_operator_doc}"; then
+    printf 'ERROR: %s contains a compliance certification claim.\n' "${v2_operator_doc}" >&2
+    exit 1
+  fi
+done
+
+printf '    Confirm no fabricated GUID or secret is presented as a real identifier...\n'
+for v2_operator_doc in "${v2_operator_docs[@]}"; do
+  if rg -q '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "${PROJECT_DIR}/${v2_operator_doc}"; then
+    printf 'ERROR: %s contains a literal GUID; use an angle-bracket placeholder instead.\n' "${v2_operator_doc}" >&2
+    exit 1
+  fi
+done
+
+printf '    Confirm every documented script and document link resolves...\n'
+documentation_files=("README.md")
+for v2_operator_doc in "${v2_operator_docs[@]}"; do
+  documentation_files+=("${v2_operator_doc}")
+done
+documentation_files+=('docs/BEGINNERS-GUIDE.md' 'docs/FIRST-RUN-CHECKLIST.md')
+for documentation_file in "${documentation_files[@]}"; do
+  while IFS= read -r referenced_script; do
+    [[ -n "${referenced_script}" ]] || continue
+    [[ -f "${PROJECT_DIR}/scripts/${referenced_script}" ]] || {
+      printf 'ERROR: %s references scripts/%s, which does not exist.\n' "${documentation_file}" "${referenced_script}" >&2
+      exit 1
+    }
+  done < <(rg -o -r '$1' '(?:\./|\.\\)scripts[/\\]([A-Za-z0-9._-]+\.(?:sh|ps1))' "${PROJECT_DIR}/${documentation_file}" | sort -u)
+  while IFS= read -r referenced_doc; do
+    [[ -n "${referenced_doc}" ]] || continue
+    [[ -f "${PROJECT_DIR}/docs/${referenced_doc}" ]] || {
+      printf 'ERROR: %s links to docs/%s, which does not exist.\n' "${documentation_file}" "${referenced_doc}" >&2
+      exit 1
+    }
+  done < <(rg -o -r '$1' '\]\((?:\./)?(?:docs/)?([A-Z0-9-]+\.md)[)#]' "${PROJECT_DIR}/${documentation_file}" | sort -u)
+done
+
+printf '    Confirm documented confirmation strings match the operator scripts...\n'
+rg -q -F 'ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"' "${PROJECT_DIR}/docs/ENFORCEMENT-AND-REMEDIATION.md"
+rg -q -F 'ESLZ_TAG_REMEDIATION_CONFIRMATION="REMEDIATE-MISSING-RESOURCE-TAGS"' "${PROJECT_DIR}/docs/ENFORCEMENT-AND-REMEDIATION.md"
+rg -q -F 'ESLZ_TAG_MIGRATION_CONFIRMATION="REMOVE-LEGACY-RG-TAG-POLICY"' "${PROJECT_DIR}/docs/MIGRATION-V1-TO-V2.md"
 
 printf '\nAll local validation and safety tests passed.\n'
