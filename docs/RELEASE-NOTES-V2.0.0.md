@@ -58,7 +58,7 @@ Nothing in v2 modifies the `v1.0.0` tag or `release/v1` branch.
   - Defender paid plans: `enableDefenderCspm`, `enableDefenderForServers`, and
     `enableDefenderForStorage`
   - Critical Infrastructure overlays: `enableCriticalInfrastructure` and
-    `enableNercCipOverlay`
+    `enableNercCipTechnicalOverlay`
 - Tenant root is not assigned policy, no subscription or Entra identity is
   created, and destructive lifecycle operations require exact confirmations.
 

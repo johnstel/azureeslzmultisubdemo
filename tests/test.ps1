@@ -652,6 +652,25 @@ try {
             Stop-Test "Release notes are missing required text: $requiredReleaseNote"
         }
     }
+    $safetyDefaultsMatch = [regex]::Match(
+        $releaseNotesText,
+        '(?s)The following capabilities require explicit opt-in parameters:(?<parameters>.*?)- Tenant root'
+    )
+    if (-not $safetyDefaultsMatch.Success) {
+        Stop-Test 'Release notes safety defaults must list opt-in parameter names.'
+    }
+    $mainBicepText = Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw
+    $safetyDefaultParameters = [regex]::Matches($safetyDefaultsMatch.Groups['parameters'].Value, '`([A-Za-z][A-Za-z0-9]*)`') |
+        ForEach-Object { $_.Groups[1].Value } |
+        Sort-Object -Unique
+    if ($safetyDefaultParameters.Count -eq 0) {
+        Stop-Test 'Release notes safety defaults must list opt-in parameter names.'
+    }
+    foreach ($safetyDefaultParameter in $safetyDefaultParameters) {
+        if ($mainBicepText -notmatch "(?m)^param $([regex]::Escape($safetyDefaultParameter)) ") {
+            Stop-Test "Release notes safety-default parameter is not declared in main.bicep: $safetyDefaultParameter"
+        }
+    }
 
     Write-Host '2/31 Build the complete tenant template and validate policy assignment shapes...'
     $compiledTemplate = Join-Path $TempDir 'main.json'

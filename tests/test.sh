@@ -533,6 +533,21 @@ do
     exit 1
   }
 done
+safety_default_parameters="$(awk '
+  index($0, "The following capabilities require explicit opt-in parameters:") { in_list = 1; next }
+  in_list && /^- Tenant root/ { in_list = 0 }
+  in_list { print }
+' "${release_notes}" | rg -o '`[A-Za-z][A-Za-z0-9]*`' | tr -d '`' | sort -u)"
+[[ -n "${safety_default_parameters}" ]] || {
+  printf 'ERROR: release notes safety defaults must list opt-in parameter names.\n' >&2
+  exit 1
+}
+printf '%s\n' "${safety_default_parameters}" | while IFS= read -r safety_default_parameter; do
+  rg -q "^param ${safety_default_parameter} " "${PROJECT_DIR}/main.bicep" || {
+    printf 'ERROR: release notes safety-default parameter is not declared in main.bicep: %s\n' "${safety_default_parameter}" >&2
+    exit 1
+  }
+done
 
 printf '2/31 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"
