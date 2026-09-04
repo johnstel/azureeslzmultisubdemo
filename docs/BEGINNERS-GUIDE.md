@@ -4,12 +4,39 @@ This guide assumes you are new to Azure, management groups, Azure Policy, RBAC,
 Bicep, and the Azure command-line tools. You do not need to understand the
 Bicep code before following the safe preview steps.
 
+> **Version:** this guide describes **v2**. The smaller, stable v1
+> implementation remains available at the
+> [v1.0.0 release](https://github.com/johnstel/azureeslzmultisubdemo/releases/tag/v1.0.0)
+> and the
+> [release/v1 maintenance branch](https://github.com/johnstel/azureeslzmultisubdemo/tree/release/v1),
+> and has its own copy of this guide. If you already deployed v1, read
+> [Migrating from v1 to v2](MIGRATION-V1-TO-V2.md) first.
+
 > **Start here if this is your first Azure infrastructure deployment.**
 >
 > The project can reorganize two existing subscriptions and create governance
 > controls. Those are meaningful tenant-level changes. Use only sandbox
 > subscriptions, ask your Azure administrator to review the plan, and stop after
 > what-if until you are comfortable with the preview.
+
+> **Before you turn anything on:** several v2 switches create **metered Azure
+> services** (Log Analytics, Microsoft Sentinel, Defender for Cloud plans,
+> backup protected instances), and promoting deny policies can **block
+> deployments**. All of them are off or non-enforcing by default. Read
+> [Shared services and cost](SHARED-SERVICES-AND-COST.md) and
+> [Enforcement and remediation](ENFORCEMENT-AND-REMEDIATION.md) before changing
+> a default.
+
+## Which starting point should you use?
+
+| Profile | Choose it when | Parameter template |
+|---|---|---|
+| v1 stable | You want the smallest supported demo | v1 release / `release/v1` branch |
+| v2 safe demo | You want the full v2 control surface with nothing paid or enforcing enabled | `parameters/demo.parameters.template.json` |
+| v2 customer control | You have change-controlled allowlists, critical workloads, or NERC CIP evidence obligations | `parameters/customer-control.template.bicepparam` |
+
+This guide follows the **v2 safe demo** profile. The customer-control profile
+uses exactly the same commands and steps; only the parameter template differs.
 
 ## What this project does
 
@@ -21,24 +48,38 @@ regions or services are allowed.
 This demo:
 
 - creates a dedicated management-group hierarchy beneath your existing tenant
-  root;
+  root, optionally including a separate Critical Infrastructure branch;
 - moves two **existing** sandbox subscriptions into that hierarchy;
-- creates and assigns five custom Azure policies;
-- optionally assigns Azure roles to five existing Microsoft Entra security
+- creates custom Azure policy definitions and initiatives at the demo root and
+  assigns them at the appropriate branch, alongside verified Microsoft built-in
+  policies and compliance benchmarks;
+- optionally assigns Azure roles to four existing Microsoft Entra security
   groups;
 - optionally creates two resource groups, one virtual network, and one network
   security group as inexpensive evidence resources.
+
+Every control the project can apply, and the requirement behind it, is listed
+in the [control matrix](CONTROL-MATRIX.md). Where each one is assigned, and
+what inherits it, is explained in
+[control scope and inheritance](CONTROL-SCOPE-AND-INHERITANCE.md).
 
 It does **not**:
 
 - create or purchase Azure subscriptions;
 - create users, security groups, or other Microsoft Entra identities;
+- modify Microsoft Entra ID, Conditional Access, or PIM settings;
+- grant permanent subscription Owner to anyone;
+- enable a paid Microsoft Defender for Cloud plan, create a Log Analytics
+  workspace, or onboard Microsoft Sentinel unless you explicitly opt in;
 - deploy virtual machines, Azure Firewall, VPN Gateway, Bastion, databases,
   analytics platforms, or paid always-on services;
 - assign a demo policy to the tenant root;
+- start any policy remediation task;
 - deploy anything when you run the local tests or preflight script;
 - deploy anything unless you deliberately unlock and confirm the deployment
-  script.
+  script;
+- establish, claim, or certify compliance with any regulatory framework.
+
 
 ## The Azure mental model using Active Directory
 
@@ -88,8 +129,10 @@ Tenant root management group (already exists)
     │   └── Connectivity
     │       └── Existing sandbox subscription A
     └── Landing Zones
-        └── Corp or Online
-            └── Existing sandbox subscription B
+        ├── Corp or Online
+        │   └── Existing sandbox subscription B
+        └── Critical Infrastructure (opt-in, off by default)
+            └── Existing critical-workload subscriptions
 ```
 
 - The **Connectivity** subscription represents centrally managed networking.
@@ -111,6 +154,19 @@ eslz-demo-corp
 
 Selecting `online` changes the last ID to `eslz-demo-online`.
 
+- The **Critical Infrastructure** branch (`eslz-demo-criticalinfra`) is created
+  only when you set `enableCriticalInfrastructure` to `true` and list the
+  subscription IDs in `criticalInfrastructureSubscriptionIds`. It is a
+  *sibling* of the Corp/Online branch, not a child, so it receives its own
+  stricter copies of the network and private-access controls plus the opt-in
+  NERC CIP technical overlay. It is off by default and you can complete this
+  entire guide without it.
+
+Policies flow **downward** and cannot be cancelled by a child scope, exactly
+like a Group Policy Object linked to a parent OU. That is why a control aimed
+only at workloads is assigned at Landing Zones or below and never at the tenant
+root. See [control scope and inheritance](CONTROL-SCOPE-AND-INHERITANCE.md).
+
 ## What you need before starting
 
 You need:
@@ -123,7 +179,9 @@ You need:
 5. on macOS/Linux, `jq` for JSON and `ripgrep` for local safety tests;
 6. two existing, enabled sandbox subscriptions in the same Microsoft Entra
    tenant;
-7. five existing Microsoft Entra security groups;
+7. four existing Microsoft Entra security groups (v2 no longer takes a
+   subscription-owners group; see
+   [Migrating from v1 to v2](MIGRATION-V1-TO-V2.md));
 8. an Azure administrator who can grant the tenant- and subscription-level
    permissions described below.
 
@@ -577,7 +635,7 @@ Both versions of preflight:
 - check that the required local tools exist;
 - refuses parameter placeholders;
 - validates the prefix and GUID shapes;
-- ensures the subscription IDs and five group IDs are distinct;
+- ensures the subscription IDs and four group IDs are distinct;
 - builds the Bicep locally;
 - reads the current Azure account;
 - confirms both subscriptions are enabled and in the signed-in tenant;
@@ -636,8 +694,18 @@ explains its behavior and limitations.
 
 ## Step 12: Understand the policies before deployment
 
-All five custom policy definitions live at the dedicated demo root. Policy
-assignments occur only at the demo root or below.
+Every custom policy definition and initiative lives at the dedicated demo
+root. Assignments occur only at the demo root or below, never at the tenant
+root.
+
+The six controls described below are the original core set and the easiest
+place to start. v2 assigns considerably more than these — data protection,
+backup posture, private access, logging, compliance benchmarks, and the opt-in
+Critical Infrastructure overlay. The complete list, with the requirement behind
+each one, is the [control matrix](CONTROL-MATRIX.md); where each is assigned
+and what inherits it is
+[control scope and inheritance](CONTROL-SCOPE-AND-INHERITANCE.md). Everything
+added in v2 is audit-only, non-enforcing, or off by default.
 
 ### 1. Allowed continental-US locations
 
@@ -794,8 +862,13 @@ the portal.
 1. Search for **Policy**.
 2. Open **Assignments**.
 3. Change the scope to the demo root.
-4. Confirm the five assignment names beginning with `Demo`.
-5. Open each assignment and verify its scope and enforcement mode.
+4. Confirm the assignment names beginning with `Demo`.
+5. Open each assignment and verify its scope and enforcement mode. Every
+   deny-capable assignment should show `DoNotEnforce`.
+6. Repeat with the scope set to Platform, Landing Zones, the workload branch,
+   and — if you enabled it — Critical Infrastructure. The assignment you see
+   depends on the branch; see
+   [control scope and inheritance](CONTROL-SCOPE-AND-INHERITANCE.md).
 
 Policy compliance evaluation is asynchronous. A newly assigned policy can show
 `Not started` or no compliance result for a while.
@@ -812,6 +885,14 @@ List policy assignments at the demo root:
 
 ```text
 az policy assignment list --scope /providers/Microsoft.Management/managementGroups/eslz-demo --output table
+```
+
+Add `--disable-scope-strict-match` to also show assignments inherited from an
+ancestor scope, which is the quickest way to see everything a given branch
+actually evaluates:
+
+```text
+az policy assignment list --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp --disable-scope-strict-match --output table
 ```
 
 At this stage, `deployRoleAssignments=false` and
@@ -967,7 +1048,19 @@ To enforce, change:
 Then run what-if and deploy again. `Default` turns the deny effects on.
 
 This does not automatically delete existing noncompliant resources. It can
-block future creation or updates that violate the rules.
+block future creation or updates that violate the rules — including
+deployments made by people and pipelines that have nothing to do with this
+demo. Promote the narrowest branch first; a demo-root deny assignment reaches
+Platform and Connectivity as well as workloads.
+
+To reverse it, set `denyPolicyEnforcementMode` back to `DoNotEnforce` and
+redeploy. The assignments stay and keep reporting; they stop blocking. Teardown
+is not the way to undo an enforcement change.
+
+Before promoting anything, read
+[Enforcement and remediation](ENFORCEMENT-AND-REMEDIATION.md). It covers
+phased rollout with resource selectors, remediating existing resources,
+promotion, rollback, and when to use a time-bound policy exemption instead.
 
 ## Cost expectations
 
@@ -984,6 +1077,22 @@ Connected services, network gateways, public IPs, private endpoints, firewalls,
 traffic, logging, storage, or compute can introduce charges. Check
 [Azure pricing](https://azure.microsoft.com/pricing/) and your organization's
 budgets before extending the demo.
+
+**v2 adds optional switches that do create metered Azure services.** All of
+them are off by default:
+
+| Switch | What it creates |
+|---|---|
+| `deployCentralLogAnalytics` | A Log Analytics workspace — ingestion and retention are billed |
+| `deploySentinel` | Microsoft Sentinel on that workspace — per-GB analysis on top |
+| `activityLogExportPolicyEffect` / `resourceDiagnosticsPolicyEffect` | Log export, which increases ingestion volume |
+| `enableDefenderCspm` / `enableDefenderForServers` / `enableDefenderForStorage` | Paid Defender for Cloud plans |
+| `enableVmBackupRemediation` | Backup protected instances and backup storage |
+| `deployRecoveryServicesVault` | A vault and backup policy |
+
+[Shared services and cost](SHARED-SERVICES-AND-COST.md) explains each one, what
+it depends on, and who owns the resulting bill. This project cannot guarantee a
+cost; confirm current Azure pricing yourself before enabling anything.
 
 ## Step 18: Preview teardown
 
@@ -1005,13 +1114,20 @@ This only prints the plan. It does not change Azure.
 
 The plan:
 
-1. deletes the optional evidence resource groups;
-2. removes the five ordinary demo role assignments;
-3. removes the five policy assignments and definitions;
-4. moves both subscriptions back to the supplied tenant root;
-5. deletes the leaf management groups, then the demo root.
+1. deletes the optional evidence resource groups, and the demo-created
+   monitoring resource group only when this project created it;
+2. removes the five ordinary demo role assignments for the four baseline
+   groups;
+3. removes the policy assignments, then the policy definitions;
+4. moves both subscriptions — and any critical-infrastructure subscriptions —
+   back to the supplied tenant root;
+5. deletes the leaf management groups, including `<prefix>-criticalinfra`
+   before `<prefix>-landingzones`, then the demo root.
 
-It never deletes subscriptions or Microsoft Entra groups. It also never
+It never deletes subscriptions, Microsoft Entra groups, or a Log Analytics
+workspace you supplied through `existingLogAnalyticsWorkspaceResourceId`. It
+does not remove data already ingested into a workspace, backup items already
+protected, or tags already written by a remediation task. It also never
 discovers or automatically removes PIM eligibility. Submit separately reviewed,
 one-shot `AdminRemove` requests with each existing schedule ID and a fresh
 request GUID, then verify removal in PIM before considering privileged-access
@@ -1178,6 +1294,18 @@ You can stop safely after any of these:
 
 If you are uncertain, stop at what-if and ask an Azure administrator to review
 the output.
+
+## Where to go next
+
+| Next question | Document |
+|---|---|
+| What does every control actually do, and which requirement is it for? | [Control matrix](CONTROL-MATRIX.md) |
+| Why does this policy apply here, and what inherits it? | [Control scope and inheritance](CONTROL-SCOPE-AND-INHERITANCE.md) |
+| How do I safely turn a control on for real? | [Enforcement and remediation](ENFORCEMENT-AND-REMEDIATION.md) |
+| What will this cost, and who owns each shared service? | [Shared services and cost](SHARED-SERVICES-AND-COST.md) |
+| How do I remove standing Owner and roll out Conditional Access? | [Identity governance runbook](IDENTITY-GOVERNANCE-RUNBOOK.md) |
+| I already deployed v1 — how do I move to v2? | [Migrating from v1 to v2](MIGRATION-V1-TO-V2.md) |
+| What is the customer's responsibility for NERC CIP? | [NERC CIP matrix](NERC-CIP-MATRIX.md) |
 
 ## Glossary
 

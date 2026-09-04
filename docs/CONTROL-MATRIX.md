@@ -11,6 +11,37 @@ This document is the human-readable companion to the machine-readable [`policy/c
 
 This catalog only **documents** implementation mechanisms. It does not create, assign, or deploy any Azure Policy definition, initiative, assignment, Microsoft Entra identity, or Azure resource, and it does not query or change a customer tenant. Every built-in identifier below was verified against a public source; no policy ID was invented.
 
+## Scope and inheritance
+
+The **Scope** column below names the management-group branch (or `tenant
+(Entra ID)`/`subscription`) where a control is intended to apply, not where its
+definition lives. Every custom definition and initiative in this repository is
+created at the dedicated demo root and then assigned at the appropriate branch,
+so one definition can be assigned with different parameters at different
+scopes.
+
+| Scope value | Management group | Reaches |
+|---|---|---|
+| `demo-root` | `<namePrefix>` | Every branch and both subscriptions, including Platform and Connectivity |
+| `platform` | `<namePrefix>-platform` | Platform, Connectivity, and the connectivity subscription |
+| `landingzones` | `<namePrefix>-landingzones` | The workload branch and the opt-in Critical Infrastructure branch |
+| `workload` | `<namePrefix>-corp` or `<namePrefix>-online` | Ordinary workloads only |
+| `critical-infrastructure` | `<namePrefix>-criticalinfra` | Opt-in critical subscriptions only |
+| `subscription` | — | A single subscription; used for RBAC, evidence, and subscription-level services |
+| `tenant (Entra ID)` | — | Microsoft Entra, outside Azure Policy entirely |
+
+Azure Policy inheritance flows downward and cannot be cancelled by a child
+scope. Assignments stack, so a resource in the Critical Infrastructure branch
+is evaluated by the demo-root, Landing Zones, **and** Critical Infrastructure
+assignments simultaneously. Only a resource selector, `notScopes`, or an
+approved expiring exemption narrows an inherited assignment.
+
+No control in this catalog is assigned at the tenant root management group.
+
+The per-assignment scope map, the rule for choosing a scope for a new control,
+and the verification commands are in
+[`docs/CONTROL-SCOPE-AND-INHERITANCE.md`](CONTROL-SCOPE-AND-INHERITANCE.md).
+
 ## Important caveats
 
 - Azure service security baselines (for example, the Storage, Key Vault, or Compute security baselines) are Microsoft Learn guidance mapped into individual service controls; they are not one universal assignable Azure Policy initiative. See REQ-BASE-04.

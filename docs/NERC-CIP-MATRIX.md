@@ -69,6 +69,10 @@ Use this checklist when preparing an audit package; keep evidence in the custome
 - NERC responsibility/evidence matrix issue (this document): https://github.com/johnstel/azureeslzmultisubdemo/issues/23
 - v2 control catalog: [`docs/CONTROL-MATRIX.md`](./CONTROL-MATRIX.md)
 - Privileged-access evidence process: [`docs/ACCESS-REVIEWS.md`](./ACCESS-REVIEWS.md)
+- Overlay scope and inheritance (why the overlay is assigned only at the Critical Infrastructure branch): [`docs/CONTROL-SCOPE-AND-INHERITANCE.md`](./CONTROL-SCOPE-AND-INHERITANCE.md)
+- Enforcement, remediation, rollback, and exemption process: [`docs/ENFORCEMENT-AND-REMEDIATION.md`](./ENFORCEMENT-AND-REMEDIATION.md)
+- Shared-service dependencies and cost ownership (logging, Sentinel, Defender, backup, CMK): [`docs/SHARED-SERVICES-AND-COST.md`](./SHARED-SERVICES-AND-COST.md)
+- Sequenced identity-governance evidence workflow: [`docs/IDENTITY-GOVERNANCE-RUNBOOK.md`](./IDENTITY-GOVERNANCE-RUNBOOK.md)
 
 ## Official references
 

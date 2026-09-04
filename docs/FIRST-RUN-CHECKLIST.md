@@ -3,6 +3,24 @@
 Use this page while operating the demo. Read
 [BEGINNERS-GUIDE.md](BEGINNERS-GUIDE.md) before your first attempt.
 
+This checklist covers **v2**. The stable v1 implementation is at the
+[v1.0.0 release](https://github.com/johnstel/azureeslzmultisubdemo/releases/tag/v1.0.0)
+and the
+[release/v1 maintenance branch](https://github.com/johnstel/azureeslzmultisubdemo/tree/release/v1),
+with its own checklist. Upgrading an existing v1 deployment?
+See [MIGRATION-V1-TO-V2.md](MIGRATION-V1-TO-V2.md).
+
+## 0. Choose a profile
+
+- [ ] **v1 stable** — smallest supported demo; use the v1 release and stop here.
+- [ ] **v2 safe demo** — full v2 control surface, nothing paid or enforcing;
+      `parameters/demo.parameters.template.json`. *This checklist assumes this
+      profile.*
+- [ ] **v2 customer control** — change-controlled allowlists, critical
+      workloads, or NERC CIP evidence obligations;
+      `parameters/customer-control.template.bicepparam`. Same commands, same
+      safe defaults, different template.
+
 ## 1. Safety check
 
 - [ ] Both target subscriptions are existing sandboxes.
@@ -11,6 +29,16 @@ Use this page while operating the demo. Read
 - [ ] An Azure administrator approved the proposed hierarchy.
 - [ ] No one expects this project to create subscriptions or Entra identities.
 - [ ] I understand that what-if is a preview and deploy changes Azure.
+- [ ] I have read which switches create **metered** Azure services
+      ([SHARED-SERVICES-AND-COST.md](SHARED-SERVICES-AND-COST.md)) and confirmed
+      current Azure pricing myself. All of them are off by default and stay off
+      in this checklist.
+- [ ] I understand that promoting `denyPolicyEnforcementMode` to `Default` can
+      **block deployments** for everyone under the hierarchy, and that this
+      checklist never does that
+      ([ENFORCEMENT-AND-REMEDIATION.md](ENFORCEMENT-AND-REMEDIATION.md)).
+- [ ] I understand that no remediation task is started automatically, and that
+      starting one changes existing resources.
 
 ## 2. Values to collect
 
@@ -91,6 +119,22 @@ cp parameters/demo.parameters.template.json parameters/demo.parameters.json
 - [ ] `deployRoleAssignments` is `false`.
 - [ ] `deployEvidenceResources` is `false`.
 - [ ] `namePrefix` is unique and identifies a demo.
+- [ ] No `subscriptionOwnersGroupObjectId` entry remains from a v1 parameter
+      file; v2 removed that parameter and creates no permanent Owner.
+- [ ] `deployCentralLogAnalytics`, `deploySentinel`, and every
+      `enableDefender*` switch are `false`.
+- [ ] `activityLogExportPolicyEffect` and `resourceDiagnosticsPolicyEffect` are
+      `Disabled`.
+- [ ] `enableVmBackupRemediation`, `enableVaultDiagnostics`, and
+      `deployRecoveryServicesVault` are `false`.
+- [ ] `enableCriticalInfrastructure` is `false` unless you deliberately want the
+      opt-in Critical Infrastructure branch, in which case
+      `criticalInfrastructureSubscriptionIds` is populated.
+- [ ] `enableNercCipTechnicalOverlay` is `false` unless Critical Infrastructure
+      is enabled and the overlay was separately approved.
+- [ ] `policyExemptions` is empty, or every record has an owner, justification,
+      approver, ticket reference, and a future expiry.
+- [ ] The completed file contains no secrets, and it is git-ignored.
 
 ## 5. Validate without deploying
 
@@ -118,6 +162,11 @@ macOS or Linux:
 - [ ] What-if shows no deletion.
 - [ ] What-if shows no VM, public IP, gateway, firewall, database, or analytics
       resource.
+- [ ] What-if shows no Log Analytics workspace, Sentinel onboarding, Defender
+      plan, Recovery Services vault, or protected backup item.
+- [ ] What-if shows no managed identity for a Defender plan assignment.
+- [ ] What-if shows no `<namePrefix>-criticalinfra` management group unless you
+      deliberately enabled it.
 - [ ] An Azure administrator reviewed the preview.
 
 Stop if any box above cannot be checked.
@@ -145,8 +194,16 @@ and both subscription IDs.
 
 - [ ] The management-group hierarchy is correct in the Azure portal.
 - [ ] Each subscription is under the intended leaf.
-- [ ] Five policy assignments exist only at the demo root or below.
-- [ ] Deny assignments show `DoNotEnforce`.
+- [ ] Policy assignments exist only at the demo root or below, never at the
+      tenant root.
+- [ ] Each branch shows the assignments expected for its scope
+      ([CONTROL-SCOPE-AND-INHERITANCE.md](CONTROL-SCOPE-AND-INHERITANCE.md)),
+      checked with
+      `az policy assignment list --scope <scope> --disable-scope-strict-match`.
+- [ ] Every deny-capable assignment shows `DoNotEnforce`.
+- [ ] Every remediation-capable assignment shows `Disabled` or an audit effect,
+      and no remediation task exists.
+- [ ] No policy exemption exists that you did not supply and approve.
 - [ ] No RBAC assignment was created while `deployRoleAssignments=false`.
 - [ ] The main compiled output and what-if contain no
       `roleEligibilityScheduleRequests`.
@@ -187,11 +244,25 @@ deployment.
       policy was enforced.
 - [ ] Administrator approved `deployEvidenceResources=true`.
 - [ ] What-if shows two resource groups, one VNet, and one NSG only.
-- [ ] Policy owners approved changing `denyPolicyEnforcementMode` to `Default`.
+- [ ] Administrator approved `enableCriticalInfrastructure=true` and the exact
+      `criticalInfrastructureSubscriptionIds` list, if the branch is wanted.
+- [ ] The cost owner approved, in writing, any switch that creates a metered
+      service, and a budget and cost alert exist on the paying subscription
+      ([SHARED-SERVICES-AND-COST.md](SHARED-SERVICES-AND-COST.md)).
+- [ ] Compliance data was reviewed and every non-compliant resource is either
+      owned, fixed, or covered by an approved expiring exemption.
+- [ ] Any remediation task was previewed, separately confirmed, and its
+      irreversible effects are understood.
+- [ ] Policy owners approved changing `denyPolicyEnforcementMode` to `Default`,
+      the rollback path is agreed in advance, and the promotion follows
+      [ENFORCEMENT-AND-REMEDIATION.md](ENFORCEMENT-AND-REMEDIATION.md).
 
 ## 9. Migrate an existing legacy tag policy
 
-Skip this section for a first deployment. For an upgraded deployment:
+Skip this section for a first deployment. For an upgraded deployment, work
+through [MIGRATION-V1-TO-V2.md](MIGRATION-V1-TO-V2.md) first; it covers the
+removed `subscriptionOwnersGroupObjectId` parameter, any leftover permanent
+Owner assignment, and the full upgrade order. Then:
 
 - [ ] What-if showed the replacement six-tag initiative at the demo root and
       its assignment at Landing Zones.
@@ -243,9 +314,15 @@ macOS or Linux:
 ./scripts/teardown.sh parameters/demo.parameters.json
 ```
 
-- [ ] Returning both subscriptions to the Tenant Root Group is acceptable.
+- [ ] Returning both subscriptions — and any critical-infrastructure
+      subscriptions — to the Tenant Root Group is acceptable.
 - [ ] No one added other resources or governance objects to the demo hierarchy.
 - [ ] The teardown plan references only this demo.
+- [ ] I understand teardown does not delete a customer-supplied Log Analytics
+      workspace, data already ingested, backup items already protected, tags
+      already written by a remediation task, or PIM eligibility.
+- [ ] Teardown is not being used to reverse an enforcement change; that is a
+      redeployment with `denyPolicyEnforcementMode` set back to `DoNotEnforce`.
 
 Execute only with approval:
 
