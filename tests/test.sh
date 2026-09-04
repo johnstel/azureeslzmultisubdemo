@@ -18,6 +18,16 @@ set -e
 if [[ "${1:-}" == "bicep" ]]; then
   exit 0
 fi
+if [[ "${1:-}" == "group" && "${2:-}" == "exists" ]]; then
+  [[ "${MOCK_GROUP_EXISTS_ERROR:-false}" != true ]] || exit 1
+  printf '%s\n' "${MOCK_GROUP_EXISTS:-false}"
+  exit 0
+fi
+if [[ "${1:-}" == "group" && "${2:-}" == "show" ]]; then
+  [[ "${MOCK_GROUP_SHOW_ERROR:-false}" != true ]] || exit 1
+  printf '%s\n' "${MOCK_GROUP_OWNER:-demo}"
+  exit 0
+fi
 
 if [[ "${1:-}" == "account" ]]; then
   if [[ "${2:-}" == "show" ]]; then
@@ -89,7 +99,6 @@ printf '%s\n' '{}'
 exit 0
 EOF
   chmod +x "${mock_dir}/az"
-
   local base_parameters="${TEMP_DIR}/base.parameters.json"
   jq '
     .parameters.tenantRootManagementGroupId.value = "demo-root" |
@@ -143,6 +152,27 @@ EOF
   run_case permissions_separate_grant_pass pass '{"value":[{"actions":["*"],"notActions":["Microsoft.Authorization/*/Write"]},{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write"],"notActions":[]}]}'
   run_case missing_policy_definition_write_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}'
   run_case backup_blank_fail fail '{"value":[{"actions":["microsoft.authorization/policyassignments/write"],"notActions":[]}]}' '.parameters.approvedBackupVaults.value = [{"vaultResourceId":"","backupPolicyResourceId":""}]'
+  local collision_parameters="${TEMP_DIR}/collision.parameters.json"
+  jq '.parameters.namePrefix.value = "demo" | .parameters.deployEvidenceResources.value = true' "${base_parameters}" > "${collision_parameters}"
+  local collision_case collision_expected collision_result
+  for collision_case in absent existing unreadable mismatched error; do
+    unset MOCK_GROUP_EXISTS MOCK_GROUP_OWNER MOCK_GROUP_SHOW_ERROR MOCK_GROUP_EXISTS_ERROR
+    case "${collision_case}" in
+      absent) collision_expected=pass ;;
+      existing) collision_expected=pass; MOCK_GROUP_EXISTS=true; MOCK_GROUP_OWNER=demo ;;
+      unreadable) collision_expected=fail; MOCK_GROUP_EXISTS=true; MOCK_GROUP_SHOW_ERROR=true ;;
+      mismatched) collision_expected=fail; MOCK_GROUP_EXISTS=true; MOCK_GROUP_OWNER=external ;;
+      error) collision_expected=fail; MOCK_GROUP_EXISTS_ERROR=true ;;
+    esac
+    export MOCK_GROUP_EXISTS MOCK_GROUP_OWNER MOCK_GROUP_SHOW_ERROR MOCK_GROUP_EXISTS_ERROR
+    if PROJECT_DIR="${PROJECT_DIR}" PATH="${mock_dir}:$PATH" MOCK_REST_JSON='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}' \
+      "${PROJECT_DIR}/scripts/preflight.sh" "${collision_parameters}" >/dev/null 2>&1; then collision_result=pass; else collision_result=fail; fi
+    [[ "${collision_result}" == "${collision_expected}" ]] || {
+      printf 'ERROR: Resource-group collision fixture %s expected %s but got %s.\n' "${collision_case}" "${collision_expected}" "${collision_result}" >&2
+      exit 1
+    }
+  done
+  unset MOCK_GROUP_EXISTS MOCK_GROUP_OWNER MOCK_GROUP_SHOW_ERROR MOCK_GROUP_EXISTS_ERROR
 
   local workspace_id='/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-external/providers/Microsoft.OperationalInsights/workspaces/ws-external'
   local management_permissions='{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
@@ -165,8 +195,293 @@ EOF
   printf 'Offline parity suite passed.\n'
 }
 
+run_teardown_offline_fixture() {
+  local fixture_dir="${TEMP_DIR}/teardown-fixture"
+  mkdir -p "${fixture_dir}"
+  local mock_dir="${fixture_dir}/mock-bin"
+  mkdir -p "${mock_dir}"
+
+  cat > "${mock_dir}/az" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${MOCK_AZ_LOG:-}" ]]; then
+  printf '%s\n' "az $*" >> "${MOCK_AZ_LOG}"
+fi
+
+[[ $# -gt 0 ]] || exit 0
+case "${1}" in
+  group)
+    case "${2:-}" in
+      exists)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" && -f "${MOCK_AZ_WAIT_FALLBACK_FILE}" ]]; then
+          printf '%s\n' invalid
+          exit 0
+        fi
+        case "$*" in
+          *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-backup"*) printf 'true\n'; exit 0 ;;
+          *) printf 'false\n'; exit 0 ;;
+        esac
+        ;;
+      show)
+        case "$*" in
+          *"rg-demo-monitoring"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-connectivity"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-backup"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *) printf '%s\n' ''; exit 0 ;;
+        esac
+        ;;
+      wait)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" ]]; then
+          : > "${MOCK_AZ_WAIT_FALLBACK_FILE}"
+          exit 1
+        fi
+        exit 0
+        ;;
+    esac
+    ;;
+  policy)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "show" ]]; then
+      case "$*" in
+        *"demo-nerc-cip-technical"*) printf '%s\n' 'nerc-assignment-principal'; exit 0 ;;
+      esac
+      printf '%s\n' 'null'; exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    if [[ "${2:-}" == "set-definition" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    if [[ "${2:-}" == "definition" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    ;;
+  role)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "list" ]]; then
+      if [[ "$*" == *"nerc-assignment-principal"* && "$*" == *"ws-protected"* ]]; then
+        printf '%s\n' 'NERC-ROLE-ASSIGNMENT-ID'
+        exit 0
+      fi
+      printf '%s\n' ''
+      exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then
+      exit 0
+    fi
+    ;;
+  account)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "${mock_dir}/az"
+  cat > "${mock_dir}/az.cmd" <<'EOF'
+@echo off
+echo az %* >> "%MOCK_AZ_LOG%"
+set "args=%*"
+if "%MOCK_AZ_OWNER%"=="" (set "owner=demo") else (set "owner=%MOCK_AZ_OWNER%")
+if /I "%~1 %~2 %~3"=="policy assignment show" (
+echo %args% | findstr /I /C:"demo-nerc-cip-technical" >nul
+if not errorlevel 1 (echo nerc-assignment-principal) else (echo null)
+exit /b 0
+)
+if /I "%~1 %~2 %~3"=="role assignment list" (
+echo %args% | findstr /I /C:"nerc-assignment-principal" >nul || exit /b 0
+echo %args% | findstr /I /C:"ws-protected" >nul || exit /b 0
+echo NERC-ROLE-ASSIGNMENT-ID
+exit /b 0
+)
+if /I "%~1 %~2"=="group exists" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" if exist "%MOCK_AZ_WAIT_FALLBACK_FILE%" (echo invalid& exit /b 0)
+echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+if errorlevel 1 (echo false) else (echo true)
+exit /b 0
+)
+if /I "%~1 %~2"=="group wait" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" (type nul > "%MOCK_AZ_WAIT_FALLBACK_FILE%"& exit /b 1)
+  exit /b 0
+)
+if /I "%~1 %~2"=="group show" (
+echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+if errorlevel 1 (echo.) else (echo %owner%)
+exit /b 0
+)
+exit /b 0
+EOF
+
+  local parameter_file="${fixture_dir}/teardown.parameters.json"
+  cat > "${parameter_file}" <<'JSON'
+{
+  "parameters": {
+    "tenantRootManagementGroupId": { "value": "tenant-root" },
+    "namePrefix": { "value": "demo" },
+    "workloadArchetype": { "value": "workloads" },
+    "connectivitySubscriptionId": { "value": "11111111-1111-1111-1111-111111111111" },
+    "workloadSubscriptionId": { "value": "22222222-2222-2222-2222-222222222222" },
+    "governanceAdminsGroupObjectId": { "value": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    "networkOperatorsGroupObjectId": { "value": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+    "workloadContributorsGroupObjectId": { "value": "cccccccc-cccc-cccc-cccc-cccccccccccc" },
+    "readOnlyAuditorsGroupObjectId": { "value": "dddddddd-dddd-dddd-dddd-dddddddddddd" },
+    "deployCentralLogAnalytics": { "value": false },
+    "deployRecoveryServicesVault": { "value": true },
+    "deployRoleAssignments": { "value": true },
+    "deployEvidenceResources": { "value": true },
+    "enableFirewallRouteGuardrails": { "value": false },
+    "enableCriticalInfrastructure": { "value": true },
+    "criticalInfrastructureSubscriptionIds": { "value": ["55555555-5555-5555-5555-555555555555"] },
+    "enableNercCipTechnicalOverlay": { "value": true },
+    "existingLogAnalyticsWorkspaceResourceId": {
+      "value": "/SUBSCRIPTIONS/11111111-1111-1111-1111-111111111111/RESOURCEGROUPS/rg-demo-connectivity/PROVIDERS/MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/ws-protected"
+    },
+    "approvedFirewallResourceId": {
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.Network/azureFirewalls/fw-protected"
+    },
+    "approvedRouteTableResourceIds": {
+      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/RESOURCEGROUPS/rg-demo-workloads-demo/PROVIDERS/Microsoft.Network/routeTables/rt-protected"]
+    },
+    "approvedBackupVaults": {
+      "value": [{"vaultResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected", "backupPolicyResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected/backupPolicies/policy-protected"}]
+    },
+    "policyExemptions": { "value": [] },
+    "enableVmBackupRemediation": { "value": false }
+  }
+}
+JSON
+
+  local good_log="${fixture_dir}/good.log"
+  : > "${good_log}"
+  if PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${good_log}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+    bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1; then
+    :
+  else
+    printf 'ERROR: Bash teardown fixture unexpectedly failed with valid confirmation.\n' >&2
+    return 1
+  fi
+
+  python3 - "${good_log}" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+lines = [re.sub(r'\s+', ' ', line.strip()) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+role_delete = None
+policy_delete = None
+for idx, line in enumerate(lines):
+    if line == 'az role assignment delete --ids NERC-ROLE-ASSIGNMENT-ID' and role_delete is None:
+        role_delete = idx
+    if line == 'az policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/demo-criticalinfra' and policy_delete is None:
+        policy_delete = idx
+    if role_delete is not None and policy_delete is not None:
+        break
+if role_delete is None or policy_delete is None:
+    raise SystemExit('missing NERC destructive sequence in Bash teardown fixture')
+if role_delete + 1 != policy_delete:
+    raise SystemExit(f'Bash teardown fixture expected NERC role delete immediately before NERC assignment delete; got {role_delete} and {policy_delete}')
+for idx, line in enumerate(lines):
+    if re.search(r'az group (delete|wait).*--name rg-demo-(connectivity|workloads-demo|backup)', line):
+        raise SystemExit(f'Bash teardown fixture acted on a protected external resource group: {line}')
+PY
+
+  local mismatched_owner_log="${fixture_dir}/mismatched-owner.log"
+  : > "${mismatched_owner_log}"
+  PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${mismatched_owner_log}" MOCK_AZ_OWNER=external ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+    bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1 || {
+      printf 'ERROR: Bash teardown fixture failed for a mismatched resource-group owner marker.\n' >&2
+      return 1
+    }
+  python3 - "${mismatched_owner_log}" <<'PY'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+if re.search(r'az group (delete|wait).*--name rg-demo-(monitoring|connectivity|workloads-demo)', text):
+    raise SystemExit(f'Bash teardown fixture acted on a mismatched-owner resource group: {text}')
+PY
+
+  local wait_fallback_parameters="${fixture_dir}/wait-fallback.parameters.json"
+  jq '.parameters.deployEvidenceResources.value = false | .parameters.deployCentralLogAnalytics.value = true | .parameters.deployRecoveryServicesVault.value = false | .parameters.existingLogAnalyticsWorkspaceResourceId.value = "" | .parameters.approvedFirewallResourceId.value = "" | .parameters.approvedRouteTableResourceIds.value = [] | .parameters.approvedBackupVaults.value = []' "${parameter_file}" > "${wait_fallback_parameters}"
+  local wait_fallback_marker="${fixture_dir}/wait-fallback.marker"
+  if PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${fixture_dir}/wait-fallback.log" MOCK_AZ_WAIT_FALLBACK_FILE="${wait_fallback_marker}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+    bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${wait_fallback_parameters}" >/dev/null 2>&1; then
+    printf 'ERROR: Bash teardown fixture accepted an invalid post-wait existence result.\n' >&2
+    return 1
+  fi
+
+  if command -v pwsh >/dev/null 2>&1; then
+    local powershell_log="${fixture_dir}/powershell.log"
+    local powershell_wrapper="${fixture_dir}/invoke-teardown-with-mock-check.ps1"
+    : > "${powershell_log}"
+    cat > "${powershell_wrapper}" <<'EOF'
+param([string]$ParameterFile, [string]$ExpectedMockDir, [string]$TeardownScript)
+$azCommand = Get-Command az -ErrorAction SilentlyContinue
+if ($null -eq $azCommand -or -not $azCommand.Source.StartsWith($ExpectedMockDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+  Write-Error 'az did not resolve to the fixture mock directory.'
+  exit 1
+}
+function global:Read-Host { param([string]$Prompt) 'demo' }
+& $TeardownScript -ParameterFile $ParameterFile -Execute
+exit $LASTEXITCODE
+EOF
+    if ! PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${powershell_log}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+      pwsh -NoLogo -NoProfile -File "${powershell_wrapper}" -ParameterFile "${parameter_file}" -ExpectedMockDir "${mock_dir}" -TeardownScript "${PROJECT_DIR}/scripts/teardown.ps1" >/dev/null 2>&1; then
+      printf 'ERROR: PowerShell teardown fixture unexpectedly failed with valid confirmation.\n' >&2
+      return 1
+    fi
+    [[ -s "${powershell_log}" ]] || {
+      printf 'ERROR: PowerShell teardown fixture emitted no Azure CLI calls.\n' >&2
+      return 1
+    }
+    python3 - "${good_log}" "${powershell_log}" <<'PY'
+import pathlib, re, sys
+def destructive(path):
+    return [
+        re.sub(r'\s+', ' ', line.strip())
+        for line in pathlib.Path(path).read_text(encoding='utf-8').splitlines()
+        if re.match(r'az (policy exemption delete|role assignment delete|policy assignment delete|group delete|group wait|policy set-definition delete|policy definition delete|account management-group (subscription add|delete))', line)
+    ]
+bash, powershell = map(destructive, sys.argv[1:])
+if bash != powershell:
+    raise SystemExit('Bash and PowerShell teardown destructive-call sequences differ:\nBash: %r\nPowerShell: %r' % (bash, powershell))
+PY
+  fi
+
+  for case_name in missing-env bad-confirm; do
+    local log_file="${fixture_dir}/${case_name}.log"
+    : > "${log_file}"
+    if [[ "${case_name}" == 'missing-env' ]]; then
+      if env -u ESLZ_TEARDOWN_CONFIRMATION PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${log_file}" \
+        bash -c 'printf "%s\\n" "demo" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1; then
+        printf 'ERROR: Bash teardown fixture should fail without ESLZ_TEARDOWN_CONFIRMATION.\n' >&2
+        return 1
+      fi
+    else
+      if PATH="${mock_dir}:$PATH" MOCK_AZ_LOG="${log_file}" ESLZ_TEARDOWN_CONFIRMATION=DELETE-ESLZ-DEMO \
+        bash -c 'printf "%s\\n" "wrong-demo-root" | "$1" "$2" --execute' _ "${PROJECT_DIR}/scripts/teardown.sh" "${parameter_file}" >/dev/null 2>&1; then
+        printf 'ERROR: Bash teardown fixture should fail with a wrong typed confirmation.\n' >&2
+        return 1
+      fi
+    fi
+
+    python3 - "${log_file}" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding='utf-8') if path.exists() else ''
+if re.search(r'az (group delete|group wait|role assignment delete|policy assignment delete|policy definition delete|account management-group delete)', text):
+    raise SystemExit(f'Bash teardown fixture emitted destructive calls when it should have been blocked: {text}')
+PY
+  done
+
+  printf 'Bash teardown offline fixture passed.\n'
+}
+
 if [[ "${ESLZ_OFFLINE_TESTS:-0}" == '1' ]]; then
   run_offline_parity_suite
+  run_teardown_offline_fixture
   exit 0
 fi
 command -v az >/dev/null 2>&1 || {
@@ -253,9 +568,20 @@ jq -e '
   .outputs.tagInheritanceRemediation.value.enabled == "[parameters(\u0027enableTagInheritance\u0027)]" and
   ([.. | objects | select(.type? == "Microsoft.PolicyInsights/remediations")] | length) == 0 and
   .outputs.tagInheritanceRemediation.value.remediationStarted == false and
-  (all($requiredTags[]; $connectivityEvidence.properties.template.variables.commonTags[.] != null)) and
+  ($connectivityEvidence.properties.template.variables.commonTags == {
+    "CostCenter": "Demo", "ApplicationName": "Connectivity Evidence", "Owner": "Platform Team",
+    "Environment": "Sandbox", "DataClassification": "Non-sensitive", "SSP-ID": "Demo",
+    "Purpose": "Landing Zone Evidence"
+  }) and
+  (first($connectivityEvidence.properties.template.resources[] |
+    select(.type == "Microsoft.Resources/resourceGroups")).tags ==
+    "[union(variables(\u0027commonTags\u0027), createObject(\u0027ESLZLifecycleOwner\u0027, parameters(\u0027namePrefix\u0027)))]") and
   (first($workloadEvidence.properties.template.resources[] |
-    select(.type == "Microsoft.Resources/resourceGroups")).tags | keys | sort) == ($requiredTags | sort)
+    select(.type == "Microsoft.Resources/resourceGroups")).tags == {
+      "CostCenter": "Demo", "ApplicationName": "Landing Zone Demo", "Owner": "Workload Team",
+      "Environment": "Sandbox", "DataClassification": "Non-sensitive", "SSP-ID": "Demo",
+      "ESLZLifecycleOwner": "[parameters(\u0027namePrefix\u0027)]"
+    })
 ' "${TEMP_DIR}/main.json" >/dev/null || {
   printf 'ERROR: Required resource-group tag controls, remediation safety, or evidence tags are invalid.\n' >&2
   exit 1
@@ -941,6 +1267,35 @@ rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.sh"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'DEPLOY-ESLZ-DEMO' "${PROJECT_DIR}/scripts/deploy.ps1"
 rg -q 'DELETE-ESLZ-DEMO' "${PROJECT_DIR}/scripts/teardown.ps1"
+for deployment_script in "${PROJECT_DIR}/scripts/deploy.sh" "${PROJECT_DIR}/scripts/deploy.ps1"; do
+  preflight_line="$(rg -n 'preflight\.(sh|ps1)' "${deployment_script}" | head -1 | cut -d: -f1)"
+  what_if_line="$(rg -n 'what-if\.(sh|ps1)' "${deployment_script}" | head -1 | cut -d: -f1)"
+  confirmation_line="$(rg -n 'DEPLOY-ESLZ-DEMO' "${deployment_script}" | head -1 | cut -d: -f1)"
+  [[ -n "${preflight_line}" && -n "${what_if_line}" && -n "${confirmation_line}" &&
+    "${preflight_line}" -lt "${confirmation_line}" && "${what_if_line}" -lt "${confirmation_line}" ]] || {
+    printf 'ERROR: %s must run preflight and tenant what-if before the deployment confirmation gate.\n' "${deployment_script}" >&2
+    exit 1
+  }
+done
+for teardown_script in "${PROJECT_DIR}/scripts/teardown.sh" "${PROJECT_DIR}/scripts/teardown.ps1"; do
+  rg -q 'policy exemption delete' "${teardown_script}"
+  rg -q 'role assignment list --assignee' "${teardown_script}"
+  rg -q 'Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted' "${teardown_script}"
+done
+for assignment_name in demo-firewall-routes 'demo-vm-backup-${approvedVaultIndex}'; do
+  rg -Fq "assignmentName: '${assignment_name}'" "${PROJECT_DIR}/main.bicep"
+done
+rg -Fq 'demo-firewall-routes' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'demo-firewall-routes' "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -Fq 'demo-vm-backup-${backup_index}' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'demo-vm-backup-$index' "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -Fq "assignmentName: 'demo-deploy-restrictions'" "${PROJECT_DIR}/modules/root-deployment-restrictions.bicep"
+rg -Fq 'demo-deploy-restrictions|${demo_root_scope}' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq "demo-deploy-restrictions', \$demoRootScope" "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -Fq 'exemptionScopeType' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'exemptionScopeType' "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -Fq 'deployEvidenceResources' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -Fq 'deployEvidenceResources' "${PROJECT_DIR}/scripts/teardown.ps1"
 
 printf '8/29 Confirm region policy and workload network guardrails are safe by default...\n'
 rg -q "field: 'location'" "${PROJECT_DIR}/modules/policy-library.bicep"
@@ -1622,7 +1977,7 @@ rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'rg-\$\{prefix\}-monitoring' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'existingLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/scripts/teardown.sh"
-rg -q 'is_protected_existing_workspace_group' "${PROJECT_DIR}/scripts/teardown.sh"
+rg -q 'is_protected_external_resource_group' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'monitoring_group_is_repo_owned' "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q "central_log_analytics_enabled.*==.*'true'.*&&.*-z.*existing_workspace_resource_id" "${PROJECT_DIR}/scripts/teardown.sh"
 rg -q 'delete_resource_group_if_not_protected "\$\{connectivity_subscription\}" "rg-\$\{prefix\}-connectivity"' "${PROJECT_DIR}/scripts/teardown.sh"
@@ -1631,7 +1986,7 @@ rg -q 'deployCentralLogAnalytics' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q 'centralLogAnalyticsEnabled' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q 'rg-\$prefix-monitoring' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q 'existingLogAnalyticsWorkspaceResourceId' "${PROJECT_DIR}/scripts/teardown.ps1"
-rg -q 'Test-ProtectedExistingWorkspaceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
+rg -q 'Test-ProtectedExternalResourceGroup' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q '\$existingWorkspaceSupplied = \$existingWorkspaceResourceId\.Length -gt 0' "${PROJECT_DIR}/scripts/teardown.ps1"
 rg -q '\$monitoringGroupIsRepoOwned = \$centralLogAnalyticsEnabled -and -not \$existingWorkspaceSupplied' "${PROJECT_DIR}/scripts/teardown.ps1"
 if rg -q 'IsNullOrWhiteSpace\(\$existingWorkspaceResourceId\)' "${PROJECT_DIR}/scripts/teardown.ps1"; then
@@ -1651,6 +2006,14 @@ if [[ "$1" == 'group' && "$2" == 'exists' ]]; then
   echo 'true'
   exit 0
 fi
+if [[ "$1" == 'policy' && "$2" == 'assignment' && "$3" == 'show' ]]; then
+  echo '11111111-1111-1111-1111-111111111111'
+  exit 0
+fi
+if [[ "$1" == 'role' && "$2" == 'assignment' && "$3" == 'list' ]]; then
+  echo '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/demo-owned'
+  exit 0
+fi
 exit 0
 MOCKAZ
 chmod +x "${mock_bin_dir}/az"
@@ -1665,7 +2028,25 @@ jq '
   .parameters.workloadContributorsGroupObjectId.value = "66666666-6666-6666-6666-666666666666" |
   .parameters.readOnlyAuditorsGroupObjectId.value = "77777777-7777-7777-7777-777777777777" |
   .parameters.deployCentralLogAnalytics.value = true |
-  .parameters.existingLogAnalyticsWorkspaceResourceId.value = "   "
+  .parameters.existingLogAnalyticsWorkspaceResourceId.value = "/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-monitoring/providers/Microsoft.OperationalInsights/workspaces/external-log" |
+  .parameters.deployEvidenceResources.value = false |
+  .parameters.enableCriticalInfrastructure.value = true |
+  .parameters.criticalInfrastructureSubscriptionIds.value = ["88888888-8888-8888-8888-888888888888"] |
+  .parameters.enableNercCipTechnicalOverlay.value = true |
+  .parameters.nercCipApprovedLocations.value = ["eastus"] |
+  .parameters.nercCipDataClassificationTagValue.value = "Non-sensitive" |
+  .parameters.nercCipSspIdTagValue.value = "Demo" |
+  .parameters.enableVmBackupRemediation.value = true |
+  .parameters.deployActivityLogRemediationRoleAssignments.value = true |
+  .parameters.enableFirewallRouteGuardrails.value = true |
+  .parameters.approvedBackupVaults.value = [{"vaultResourceId":"/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault","backupPolicyResourceId":"/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault/backupPolicies/daily"}] |
+  .parameters.policyExemptions.value = [{
+    "exemptionName": "child-exemption",
+    "exemptionScopeType": "resourceGroup",
+    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+    "resourceGroupName": "child-rg",
+    "policyAssignmentId": "/providers/Microsoft.Management/managementGroups/eslz-demo/providers/Microsoft.Authorization/policyAssignments/demo-audit-public-ip"
+  }]
 ' "${PROJECT_DIR}/parameters/demo.parameters.template.json" > "${whitespace_param_file}"
 
 : > "${az_call_log}"
@@ -1686,6 +2067,30 @@ if command -v pwsh >/dev/null 2>&1; then
     cat "${az_call_log}" >&2
     exit 1
   fi
+fi
+
+lifecycle_log="${az_call_log}"
+  rg -q -F 'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg' "${lifecycle_log}"
+  rg -q -F 'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra' "${lifecycle_log}"
+  rg -q -F 'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp' "${lifecycle_log}"
+  rg -q -F 'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones' "${lifecycle_log}"
+  rg -q -F 'role assignment list --assignee 11111111-1111-1111-1111-111111111111 --scope /subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-monitoring/providers/Microsoft.OperationalInsights/workspaces/external-log' "${lifecycle_log}"
+  ! rg -q -F 'group delete --subscription 11111111-1111-1111-1111-111111111111 --name rg-eslz-demo-connectivity' "${lifecycle_log}"
+  rg -q -F 'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888' "${lifecycle_log}"
+  ! rg -q -F 'external-monitoring' "${lifecycle_log}" || [[ "$(rg -c 'external-monitoring.*role assignment list|role assignment list.*external-monitoring' "${lifecycle_log}")" -eq "$(rg -c -F 'external-monitoring' "${lifecycle_log}")" ]] || { printf 'ERROR: external workspace may only be queried for deployment-owned identity roles.\n' >&2; exit 1; }
+  nerc_role_line="$(rg -n -F 'role assignment delete --ids' "${lifecycle_log}" | head -1 | cut -d: -f1)"
+  nerc_assignment_line="$(rg -n -F 'policy assignment delete --name demo-nerc-cip-technical' "${lifecycle_log}" | cut -d: -f1)"
+  [[ "${nerc_role_line}" -lt "${nerc_assignment_line}" ]] || { printf 'ERROR: NERC role cleanup must precede assignment deletion.\n' >&2; exit 1; }
+
+whitespace_only_param_file="${TEMP_DIR}/whitespace-only.parameters.json"
+jq '.parameters.existingLogAnalyticsWorkspaceResourceId.value = "   " | .parameters.deployCentralLogAnalytics.value = true' \
+  "${whitespace_param_file}" > "${whitespace_only_param_file}"
+: > "${az_call_log}"
+echo 'eslz-demo' | PATH="${mock_bin_dir}:${PATH}" AZ_CALL_LOG="${az_call_log}" ESLZ_TEARDOWN_CONFIRMATION='DELETE-ESLZ-DEMO' \
+  bash "${PROJECT_DIR}/scripts/teardown.sh" "${whitespace_only_param_file}" --execute >/dev/null
+if rg -qi 'rg-eslz-demo-monitoring' "${az_call_log}"; then
+  printf 'ERROR: teardown.sh must not touch monitoring resources for a whitespace-only supplied workspace value.\n' >&2
+  exit 1
 fi
 
 printf '19/29 Parse cross-platform scripts and check macOS Bash 3.2 compatibility...\n'

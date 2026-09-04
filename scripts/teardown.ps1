@@ -23,7 +23,6 @@ function Stop-Teardown {
     Write-Error $Message -ErrorAction Continue
     exit $ExitCode
 }
-
 if ($null -eq (Get-Command az -ErrorAction SilentlyContinue)) {
     Stop-Teardown "Required command 'az' is not installed."
 }
@@ -69,7 +68,15 @@ function Get-OptionalStringValue {
     if ($null -eq $property -or $null -eq $property.Value.value) {
         return $Default
     }
+
     return [string]$property.Value.value
+}
+
+function Get-OptionalArrayValue {
+    param([string]$Name)
+    $property = $parameters.parameters.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value.value) { return @() }
+    return @($property.Value.value)
 }
 
 $tenantRoot = Get-Value 'tenantRootManagementGroupId'
@@ -83,6 +90,11 @@ $workloadGroup = Get-Value 'workloadContributorsGroupObjectId'
 $auditorsGroup = Get-Value 'readOnlyAuditorsGroupObjectId'
 # Optional: defaults to $false when absent so older parameter files remain safe to tear down.
 $centralLogAnalyticsEnabled = Get-OptionalBoolValue 'deployCentralLogAnalytics' $false
+$recoveryServicesVaultEnabled = Get-OptionalBoolValue 'deployRecoveryServicesVault' $false
+$roleAssignmentsEnabled = Get-OptionalBoolValue 'deployRoleAssignments' $false
+$evidenceResourcesEnabled = Get-OptionalBoolValue 'deployEvidenceResources' $false
+$firewallRouteGuardrailsEnabled = Get-OptionalBoolValue 'enableFirewallRouteGuardrails' $false
+$nercCipOverlayEnabled = Get-OptionalBoolValue 'enableNercCipTechnicalOverlay' $false
 
 # Optional: resource ID of a customer-supplied existing Log Analytics workspace. Its
 # subscription and resource group are read-only protected inputs and must never be deleted
@@ -120,7 +132,31 @@ $landingZonesScope = "/providers/Microsoft.Management/managementGroups/$prefix-l
 $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$archetype"
 $connectivityScope = "/subscriptions/$connectivitySubscription"
 $subscriptionWorkloadScope = "/subscriptions/$workloadSubscription"
+$workspaceScope = ''
+if ($existingWorkspaceResourceId -match '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.OperationalInsights/workspaces/[^/]+$') {
+    $workspaceScope = $existingWorkspaceResourceId
+}
+elseif ($centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied) {
+    $workspaceScope = "/subscriptions/$connectivitySubscription/resourceGroups/rg-$prefix-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-$prefix-central"
+}
+$policyExemptionsProperty = $parameters.parameters.PSObject.Properties['policyExemptions']
+$policyExemptions = if ($null -eq $policyExemptionsProperty -or $null -eq $policyExemptionsProperty.Value.value) { @() } else { @($policyExemptionsProperty.Value.value) }
+$approvedBackupVaultsProperty = $parameters.parameters.PSObject.Properties['approvedBackupVaults']
+$approvedBackupVaults = if ($null -eq $approvedBackupVaultsProperty -or $null -eq $approvedBackupVaultsProperty.Value.value) { @() } else { @($approvedBackupVaultsProperty.Value.value) }
+$approvedFirewallResourceId = Get-OptionalStringValue 'approvedFirewallResourceId' ''
+$approvedCustomerManagedKeyVaultUris = Get-OptionalArrayValue 'approvedCustomerManagedKeyVaultUris'
+$approvedRouteTableResourceIds = Get-OptionalArrayValue 'approvedRouteTableResourceIds'
 $monitoringResourceGroupName = "rg-$prefix-monitoring"
+$backupResourceGroupName = "rg-$prefix-backup"
+$protectedExternalResourceGroups = @()
+$externalResourceIds = @($existingWorkspaceResourceId, $approvedFirewallResourceId) +
+    @($approvedRouteTableResourceIds) +
+    @($approvedBackupVaults | ForEach-Object { [string]$_.vaultResourceId; [string]$_.backupPolicyResourceId })
+foreach ($externalResourceId in $externalResourceIds) {
+    if ($externalResourceId -match '^/subscriptions/([^/]+)/resourceGroups/([^/]+)/providers/.+$') {
+        $protectedExternalResourceGroups += "$($Matches[1].ToLowerInvariant())|$($Matches[2].ToLowerInvariant())"
+    }
+}
 # The monitoring resource group is only repository-owned (and thus safe to delete) when a
 # new workspace was requested without also supplying an existing workspace resource ID. This
 # mirrors the conflict guard in modules/central-monitoring.bicep: a conflicting configuration
@@ -129,63 +165,148 @@ $monitoringResourceGroupName = "rg-$prefix-monitoring"
 # teardown must not delete one either.
 $monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied
 
-# Returns $true when the given subscription/resource-group pair matches the supplied
-# existing workspace's subscription/resource group, meaning it must never be deleted here.
-function Test-ProtectedExistingWorkspaceGroup {
+function Test-ProtectedExternalResourceGroup {
     param(
         [string]$Subscription,
         [string]$Group
     )
-    if ([string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
-        return $false
-    }
-    return ($Subscription -ieq $existingWorkspaceSubscription) -and ($Group -ieq $existingWorkspaceResourceGroup)
+    return $protectedExternalResourceGroups -contains "$($Subscription.ToLowerInvariant())|$($Group.ToLowerInvariant())"
 }
 
-# Deletes the named resource group only when it is not the protected existing-workspace
-# resource group. Safe to call even when the group does not exist.
 function Remove-ResourceGroupIfNotProtected {
     param(
         [string]$Subscription,
         [string]$Group
     )
-    if (Test-ProtectedExistingWorkspaceGroup -Subscription $Subscription -Group $Group) {
-        Write-Warning "SKIP: $Group matches the supplied existingLogAnalyticsWorkspaceResourceId resource group; it is never deleted by this script."
-        return
+    if (Test-ProtectedExternalResourceGroup -Subscription $Subscription -Group $Group) {
+        Write-Warning "SKIP: $Group contains a supplied external resource; it is never deleted by this script."
+        return $false
     }
     $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Teardown "Cannot determine whether resource group $Group exists."
+    }
+    if ([string]$groupExists -notin @('true', 'false')) {
+        Stop-Teardown "Resource group $Group returned an invalid existence result."
+    }
     if ([string]$groupExists -eq 'true') {
+        $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "SKIP: Cannot read ownership marker for $Group; it is external/protected."
+            return $false
+        }
+        if ([string]::IsNullOrEmpty([string]$owner)) {
+            Write-Warning "SKIP: $Group is external/protected because ESLZLifecycleOwner is absent."
+            return $false
+        }
+        if ([string]$owner -cne $prefix) {
+            Write-Warning "SKIP: $Group is external/protected because ESLZLifecycleOwner does not match this demo root."
+            return $false
+        }
         & az group delete --subscription $Subscription --name $Group --yes --no-wait
         if ($LASTEXITCODE -ne 0) { Stop-Teardown "Failed to start deletion of $Group." }
+        return $true
     }
+    return $false
 }
 
-# Waits for deletion of the named resource group unless it is the protected
-# existing-workspace resource group, in which case there is nothing to wait for.
-function Wait-ResourceGroupDeletionIfNotProtected {
+# Waits only after this script successfully started resource-group deletion.
+function Wait-ResourceGroupDeletion {
     param(
         [string]$Subscription,
         [string]$Group
     )
-    if (Test-ProtectedExistingWorkspaceGroup -Subscription $Subscription -Group $Group) {
-        return
-    }
     & az group wait --subscription $Subscription --name $Group --deleted --interval 10 --timeout 900 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        $groupExists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
+        if ($LASTEXITCODE -ne 0) { Stop-Teardown "Cannot determine whether resource group $Group was deleted." }
+        if ([string]$groupExists -notin @('true', 'false')) { Stop-Teardown "Resource group $Group returned an invalid post-wait existence result." }
+        if ([string]$groupExists -eq 'true') { Stop-Teardown "Failed waiting for resource group $Group deletion." }
+    }
 }
 
 Write-Host 'TEARDOWN PLAN (reverse dependency order)'
-Write-Host "  1. Delete resource groups rg-$prefix-connectivity and rg-$prefix-$archetype-demo if present."
+Write-Host '  1. deployment-owned policy exemptions:'
+foreach ($exemption in $policyExemptions) {
+    if ($null -ne $exemption) {
+        $exemptionScope = switch ([string]$exemption.exemptionScopeType) {
+            'managementGroup' { "/providers/Microsoft.Management/managementGroups/$($exemption.managementGroupName)" }
+            'subscription' { "/subscriptions/$($exemption.subscriptionId)" }
+            'resourceGroup' { "/subscriptions/$($exemption.subscriptionId)/resourceGroups/$($exemption.resourceGroupName)" }
+            default { '' }
+        }
+        if ($exemptionScope.Length -gt 0) { Write-Host "     deployment-owned exemption $($exemption.exemptionName) at $exemptionScope" }
+        else { Write-Host "     disabled/not-owned invalid exemption $($exemption.exemptionName)" }
+    }
+}
+Write-Host '  2. deployment-owned assignments and remediating identity role mappings:'
+if ($roleAssignmentsEnabled) { Write-Host "     deployment-owned ordinary RBAC mappings at $demoRootScope, $connectivityScope, and $subscriptionWorkloadScope" }
+else { Write-Host '     disabled/not-owned ordinary RBAC mappings' }
+Write-Host "     deployment-owned demo-allowed-us-locs, demo-audit-public-ip, demo-block-expensive, demo-activity-logs, demo-resource-diags at $demoRootScope"
+Write-Host "     deployment-owned demo-deploy-restrictions at $demoRootScope"
+Write-Host "     deployment-owned demo-audit-platform-tags at $platformScope"
+Write-Host "     deployment-owned demo-data-protection, demo-require-rg-tags, demo-audit-vuln-assess, demo-audit-ama-windows, demo-audit-ama-linux, demo-backup-posture at $landingZonesScope"
+Write-Host "     deployment-owned demo-network-ingress, demo-private-access at $workloadScope"
+$defenderCspmEffect = if (Get-OptionalBoolValue 'enableDefenderCspm' $false) { 'DeployIfNotExists' } else { 'Disabled' }
+$defenderServersEffect = if (Get-OptionalBoolValue 'enableDefenderForServers' $false) { 'DeployIfNotExists' } else { 'Disabled' }
+$defenderStorageEffect = if (Get-OptionalBoolValue 'enableDefenderForStorage' $false) { 'DeployIfNotExists' } else { 'Disabled' }
+Write-Host "     deployment-owned demo-defender-cspm at $demoRootScope (effect: $defenderCspmEffect)"
+Write-Host "     deployment-owned demo-defender-servers at $landingZonesScope (effect: $defenderServersEffect); demo-defender-storage at $landingZonesScope (effect: $defenderStorageEffect)"
+foreach ($optionalAssignment in @(
+    @('enableMicrosoftCloudSecurityBenchmark', 'demo-mcsb-baseline', $demoRootScope),
+    @('enableCisAzureFoundationsBenchmark', 'demo-cis-foundations', $demoRootScope),
+    @('enableNistSp80053Rev5', 'demo-nist-800-53-r5', $demoRootScope),
+    @('enableTagInheritance', 'demo-inherit-rg-tags', $landingZonesScope)
+)) {
+    if (Get-OptionalBoolValue $optionalAssignment[0] $false) { Write-Host "     deployment-owned $($optionalAssignment[1]) at $($optionalAssignment[2])" }
+    else { Write-Host "     disabled/not-owned $($optionalAssignment[1])" }
+}
+if (Get-OptionalBoolValue 'enableVaultDiagnostics' $false) { Write-Host "     deployment-owned demo-vault-diagnostics at $landingZonesScope" }
+else { Write-Host '     disabled/not-owned demo-vault-diagnostics' }
+if ($criticalEnabled) {
+    Write-Host "     deployment-owned demo-critical-private at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
+    if ($nercCipOverlayEnabled) { Write-Host "     deployment-owned demo-nerc-cip-technical at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra" }
+    else { Write-Host '     disabled/not-owned demo-nerc-cip-technical' }
+    if ($firewallRouteGuardrailsEnabled) { Write-Host "     deployment-owned demo-critical-fw-routes at /providers/Microsoft.Management/managementGroups/$prefix-criticalinfra" }
+}
+else { Write-Host '     disabled/not-owned Critical Infrastructure assignments' }
+if ($firewallRouteGuardrailsEnabled) { Write-Host "     deployment-owned demo-firewall-routes at $workloadScope" }
+else { Write-Host '     disabled/not-owned demo-firewall-routes' }
+if (Get-OptionalBoolValue 'enableVmBackupRemediation' $false) {
+    for ($index = 0; $index -lt $approvedBackupVaults.Count; $index++) { Write-Host "     deployment-owned demo-vm-backup-$index at $landingZonesScope" }
+} else { Write-Host '     disabled/not-owned dynamic demo-vm-backup assignments' }
+if ($workspaceScope.Length -gt 0) { Write-Host "     deployment-owned remediating identity roles at $workspaceScope; workspace is external/protected when supplied." }
+foreach ($externalId in @(
+    $existingWorkspaceResourceId,
+    $approvedFirewallResourceId,
+    $approvedCustomerManagedKeyVaultUris,
+    @($approvedBackupVaults | ForEach-Object { [string]$_.vaultResourceId; [string]$_.backupPolicyResourceId }),
+    $approvedRouteTableResourceIds,
+    @($policyExemptions | ForEach-Object { [string]$_.policyAssignmentId })
+) | Where-Object { $_.Length -gt 0 }) {
+    Write-Host "     external/protected $externalId"
+}
+foreach ($protectedResourceGroup in $protectedExternalResourceGroups) {
+    Write-Host "     external/protected resource group $protectedResourceGroup"
+}
+Write-Host '  3. deployment-owned optional resource groups:'
+if ($evidenceResourcesEnabled) { Write-Host "     deployment-owned rg-$prefix-connectivity and rg-$prefix-$archetype-demo" }
 if ($monitoringGroupIsRepoOwned) {
-    Write-Host "  1a. Delete the demo-created monitoring resource group $monitoringResourceGroupName (deployCentralLogAnalytics=true and no existing workspace supplied)."
+    Write-Host "  3a. Delete the demo-created monitoring resource group $monitoringResourceGroupName (deployCentralLogAnalytics=true and no existing workspace supplied)."
+}
+if ($recoveryServicesVaultEnabled) {
+    $backupStepSuffix = if ($monitoringGroupIsRepoOwned) { 'b' } else { 'a' }
+    Write-Host "  3$backupStepSuffix. Delete the demo-created backup resource group $backupResourceGroupName."
 }
 if (-not [string]::IsNullOrWhiteSpace($existingWorkspaceResourceGroup)) {
     Write-Host ''
     Write-Host "NOTE: existingLogAnalyticsWorkspaceResourceId is set; resource group $existingWorkspaceResourceGroup in subscription $existingWorkspaceSubscription is protected and will never be deleted by this script, even if its name collides with a group above."
 }
-Write-Host '  2. Delete only the five permanent lower-privilege demo role assignments for the four operator/auditor groups at their documented scopes.'
-Write-Host '  3. Delete demo policy assignments, the tagging initiative, and custom policy definitions.'
-Write-Host "  4. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
-$stepNumber = 5
+Write-Host '  4. deployment-owned custom initiatives and policy definitions are deleted after assignments.'
+Write-Host "     deployment-owned initiatives $prefix-required-rg-tags, $prefix-inherit-rg-tags, $prefix-network-ingress, $prefix-private-access, $prefix-data-protection, $prefix-deploy-restrictions, $prefix-backup-posture, $prefix-nerc-cip-technical-overlay at $demoRootScope"
+Write-Host "     deployment-owned definitions $prefix-allowed-us-locations, $prefix-allowed-resource-types-all, $prefix-require-workload-rg-tags, $prefix-audit-public-ip, $prefix-public-mgmt-ingress, $prefix-require-subnet-nsg, $prefix-audit-paas-public-network, $prefix-audit-approved-firewall-routes, $prefix-block-expensive, $prefix-audit-storage-cmk-approved-key, $prefix-audit-platform-tags at $demoRootScope"
+Write-Host "  5. Move subscriptions $connectivitySubscription and $workloadSubscription back to $tenantRoot."
+$stepNumber = 6
 if ($criticalEnabled -and $criticalSubscriptions.Count -gt 0) {
     $criticalSubscriptionsList = $criticalSubscriptions -join ', '
     Write-Host "  $stepNumber. Move critical infrastructure subscriptions ($criticalSubscriptionsList) back to $tenantRoot."
@@ -200,7 +321,7 @@ else {
 Write-Host ''
 Write-Host 'NOTE: Owner eligibility is managed only through the separate one-shot PIM artifact. This teardown never discovers or removes it; submit a new, separately reviewed AdminRemove request for each existing schedule and verify removal in PIM.'
 Write-Host ''
-Write-Host 'Subscriptions, Entra groups, and any customer-supplied existing Log Analytics workspace are never deleted.'
+Write-Host 'Only objects named by this deployment and optional resource groups enabled in this parameter file are deployment-owned. Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted. Subscriptions and Entra groups are never deleted.'
 
 if (-not $Execute) {
     Write-Host ''
@@ -232,54 +353,129 @@ function Remove-RoleMapping {
 function Remove-PolicyAssignment {
     param(
         [string]$AssignmentName,
-        [string]$Scope
+        [string]$Scope,
+        [string]$DestinationScope = ''
     )
+    $principalId = & az policy assignment show --name $AssignmentName --scope $Scope --query identity.principalId --output tsv 2>$null
+    if (-not [string]::IsNullOrWhiteSpace([string]$principalId) -and [string]$principalId -ne 'null') {
+        foreach ($roleScope in (@($Scope, $DestinationScope) | Where-Object { $_.Length -gt 0 })) {
+            $roleAssignmentIds = & az role assignment list --assignee $principalId --scope $roleScope --query '[].id' --output tsv 2>$null
+            foreach ($roleAssignmentId in @($roleAssignmentIds)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$roleAssignmentId)) {
+                    & az role assignment delete --ids $roleAssignmentId 2>$null
+                }
+            }
+        }
+    }
     & az policy assignment delete --name $AssignmentName --scope $Scope 2>$null
+}
+
+function Remove-PolicyExemptions {
+    foreach ($exemption in $policyExemptions) {
+        if ($null -eq $exemption) { continue }
+        $scope = switch ([string]$exemption.exemptionScopeType) {
+            'managementGroup' { "/providers/Microsoft.Management/managementGroups/$($exemption.managementGroupName)" }
+            'subscription' { "/subscriptions/$($exemption.subscriptionId)" }
+            'resourceGroup' { "/subscriptions/$($exemption.subscriptionId)/resourceGroups/$($exemption.resourceGroupName)" }
+            default { '' }
+        }
+        if ($scope.Length -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$exemption.exemptionName)) {
+            & az policy exemption delete --name ([string]$exemption.exemptionName) --scope $scope 2>$null
+        }
+    }
+}
+
+function Remove-DemoPolicyAssignments {
+    $criticalScope = "/providers/Microsoft.Management/managementGroups/$prefix-criticalinfra"
+    $ownedAssignments = @(
+        @('demo-allowed-us-locs', $demoRootScope), @('demo-audit-public-ip', $demoRootScope),
+        @('demo-block-expensive', $demoRootScope), @('demo-defender-cspm', $demoRootScope),
+        @('demo-activity-logs', $demoRootScope), @('demo-deploy-restrictions', $demoRootScope),
+        @('demo-resource-diags', $demoRootScope), @('demo-audit-platform-tags', $platformScope),
+        @('demo-data-protection', $landingZonesScope), @('demo-require-rg-tags', $landingZonesScope),
+        @('demo-defender-servers', $landingZonesScope), @('demo-defender-storage', $landingZonesScope),
+        @('demo-audit-vuln-assess', $landingZonesScope), @('demo-audit-ama-windows', $landingZonesScope),
+        @('demo-audit-ama-linux', $landingZonesScope), @('demo-backup-posture', $landingZonesScope),
+        @('demo-network-ingress', $workloadScope), @('demo-private-access', $workloadScope)
+    )
+    foreach ($assignment in $ownedAssignments) {
+        Remove-PolicyAssignment $assignment[0] $assignment[1] $workspaceScope
+    }
+    if (Get-OptionalBoolValue 'enableMicrosoftCloudSecurityBenchmark' $false) { Remove-PolicyAssignment 'demo-mcsb-baseline' $demoRootScope $workspaceScope }
+    if (Get-OptionalBoolValue 'enableCisAzureFoundationsBenchmark' $false) { Remove-PolicyAssignment 'demo-cis-foundations' $demoRootScope $workspaceScope }
+    if (Get-OptionalBoolValue 'enableNistSp80053Rev5' $false) { Remove-PolicyAssignment 'demo-nist-800-53-r5' $demoRootScope $workspaceScope }
+    if (Get-OptionalBoolValue 'enableTagInheritance' $false) { Remove-PolicyAssignment 'demo-inherit-rg-tags' $landingZonesScope $workspaceScope }
+    if (Get-OptionalBoolValue 'enableVaultDiagnostics' $false) { Remove-PolicyAssignment 'demo-vault-diagnostics' $landingZonesScope $workspaceScope }
+    if ($criticalEnabled) {
+        Remove-PolicyAssignment 'demo-critical-private' $criticalScope $workspaceScope
+        if ($nercCipOverlayEnabled) { Remove-PolicyAssignment 'demo-nerc-cip-technical' $criticalScope $workspaceScope }
+    }
+    if ($firewallRouteGuardrailsEnabled) {
+        Remove-PolicyAssignment 'demo-firewall-routes' $workloadScope $workspaceScope
+        if ($criticalEnabled) { Remove-PolicyAssignment 'demo-critical-fw-routes' $criticalScope $workspaceScope }
+    }
+    if (Get-OptionalBoolValue 'enableVmBackupRemediation' $false) {
+        for ($index = 0; $index -lt $approvedBackupVaults.Count; $index++) {
+            Remove-PolicyAssignment "demo-vm-backup-$index" $landingZonesScope $workspaceScope
+        }
+    }
 }
 
 $connectivityResourceGroup = "rg-$prefix-connectivity"
 $workloadResourceGroup = "rg-$prefix-$archetype-demo"
 
-Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup
-Remove-ResourceGroupIfNotProtected -Subscription $workloadSubscription -Group $workloadResourceGroup
+Remove-PolicyExemptions
+if ($roleAssignmentsEnabled) {
+    Remove-RoleMapping $governanceGroup 'Management Group Contributor' $demoRootScope
+    Remove-RoleMapping $governanceGroup 'Resource Policy Contributor' $demoRootScope
+    Remove-RoleMapping $auditorsGroup 'Reader' $demoRootScope
+    Remove-RoleMapping $networkGroup 'Network Contributor' $connectivityScope
+    Remove-RoleMapping $workloadGroup 'Contributor' $subscriptionWorkloadScope
+}
+Remove-DemoPolicyAssignments
+if ($evidenceResourcesEnabled) {
+    if (Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup) { Wait-ResourceGroupDeletion -Subscription $connectivitySubscription -Group $connectivityResourceGroup }
+    if (Remove-ResourceGroupIfNotProtected -Subscription $workloadSubscription -Group $workloadResourceGroup) { Wait-ResourceGroupDeletion -Subscription $workloadSubscription -Group $workloadResourceGroup }
+}
 
 # Only delete the monitoring resource group when this repository created it (no conflicting
 # existing workspace was supplied). A supplied existing workspace/resource group is never
 # owned by this demo and must never be deleted here, even by name collision.
 if ($monitoringGroupIsRepoOwned) {
-    Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $monitoringResourceGroupName
+    if (Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $monitoringResourceGroupName) { Wait-ResourceGroupDeletion -Subscription $connectivitySubscription -Group $monitoringResourceGroupName }
+}
+if ($recoveryServicesVaultEnabled) {
+    if (Remove-ResourceGroupIfNotProtected -Subscription $workloadSubscription -Group $backupResourceGroupName) { Wait-ResourceGroupDeletion -Subscription $workloadSubscription -Group $backupResourceGroupName }
 }
 
-Wait-ResourceGroupDeletionIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup
-Wait-ResourceGroupDeletionIfNotProtected -Subscription $workloadSubscription -Group $workloadResourceGroup
-if ($monitoringGroupIsRepoOwned) {
-    Wait-ResourceGroupDeletionIfNotProtected -Subscription $connectivitySubscription -Group $monitoringResourceGroupName
+foreach ($initiativeName in @(
+    "$prefix-required-rg-tags",
+    "$prefix-inherit-rg-tags",
+    "$prefix-network-ingress",
+    "$prefix-private-access",
+    "$prefix-data-protection",
+    "$prefix-deploy-restrictions",
+    "$prefix-backup-posture",
+    "$prefix-nerc-cip-technical-overlay"
+)) {
+    & az policy set-definition delete --name $initiativeName --management-group $prefix 2>$null
 }
-
-Remove-RoleMapping $governanceGroup 'Management Group Contributor' $demoRootScope
-Remove-RoleMapping $governanceGroup 'Resource Policy Contributor' $demoRootScope
-Remove-RoleMapping $auditorsGroup 'Reader' $demoRootScope
-Remove-RoleMapping $networkGroup 'Network Contributor' $connectivityScope
-Remove-RoleMapping $workloadGroup 'Contributor' $subscriptionWorkloadScope
-
-Remove-PolicyAssignment 'demo-require-rg-tags' $landingZonesScope
-Remove-PolicyAssignment 'demo-require-rg-tags' $workloadScope
-Remove-PolicyAssignment 'demo-audit-platform-tags' $platformScope
-Remove-PolicyAssignment 'demo-block-expensive' $demoRootScope
-Remove-PolicyAssignment 'demo-audit-public-ip' $demoRootScope
-Remove-PolicyAssignment 'demo-allowed-us-locations' $demoRootScope
-
 $policyNames = @(
+    "$prefix-allowed-us-locations",
+    "$prefix-allowed-resource-types-all",
     "$prefix-require-workload-rg-tags",
     "$prefix-audit-platform-tags",
     "$prefix-block-expensive",
     "$prefix-audit-public-ip",
-    "$prefix-allowed-us-locations"
+    "$prefix-public-mgmt-ingress",
+    "$prefix-require-subnet-nsg",
+    "$prefix-audit-paas-public-network",
+    "$prefix-audit-approved-firewall-routes",
+    "$prefix-audit-storage-cmk-approved-key"
 )
 foreach ($policyName in $policyNames) {
     & az policy definition delete --name $policyName --management-group $prefix 2>$null
 }
-& az policy set-definition delete --name "$prefix-required-rg-tags" --management-group $prefix 2>$null
 
 & az account management-group subscription add --name $tenantRoot --subscription $connectivitySubscription
 if ($LASTEXITCODE -ne 0) { Stop-Teardown 'Failed to move the connectivity subscription.' }

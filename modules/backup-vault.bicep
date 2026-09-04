@@ -131,6 +131,7 @@ var vaultTags = union(tags, {
   CostModel: 'Metered'
   Ownership: 'Customer-owned'
   Purpose: 'Backup'
+  ESLZLifecycleOwner: namePrefix
 })
 
 resource backupResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = if (createVault) {

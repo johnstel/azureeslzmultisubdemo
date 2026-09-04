@@ -408,6 +408,35 @@ if parameter_is_true deployRecoveryServicesVault; then
   check_provider "${workload_subscription}" Microsoft.RecoveryServices
 fi
 
+check_owned_resource_group_collision() {
+  local subscription="$1"
+  local group="$2"
+  local exists
+  exists="$(az group exists --subscription "${subscription}" --name "${group}" --output tsv 2>/dev/null)" \
+    || fail "Cannot determine whether resource group ${group} exists; it is protected."
+  [[ "${exists}" == 'true' || "${exists}" == 'false' ]] \
+    || fail "Resource group ${group} returned an invalid existence result; it is protected."
+  if [[ "${exists}" == 'true' ]]; then
+    local owner
+    owner="$(az group show --subscription "${subscription}" --name "${group}" --query 'tags.ESLZLifecycleOwner' --output tsv)" \
+      || fail "Cannot read existing resource group ${group}; it is protected."
+    [[ -n "${owner}" ]] \
+      || fail "Resource group ${group} already exists without an ESLZLifecycleOwner marker; it is protected."
+    [[ "${owner}" == "${name_prefix}" ]] \
+      || fail "Resource group ${group} belongs to a different ESLZLifecycleOwner; it is protected."
+  fi
+}
+if parameter_is_true deployEvidenceResources; then
+  check_owned_resource_group_collision "${connectivity_subscription}" "rg-${name_prefix}-connectivity"
+  check_owned_resource_group_collision "${workload_subscription}" "rg-${name_prefix}-$(parameter_value workloadArchetype)-demo"
+fi
+if parameter_is_true deployCentralLogAnalytics && [[ -z "$(optional_parameter_value existingLogAnalyticsWorkspaceResourceId)" ]]; then
+  check_owned_resource_group_collision "${connectivity_subscription}" "rg-${name_prefix}-monitoring"
+fi
+if parameter_is_true deployRecoveryServicesVault; then
+  check_owned_resource_group_collision "${workload_subscription}" "rg-${name_prefix}-backup"
+fi
+
 check_resource() {
   local resource_id="$1"
   local expected_type="$2"

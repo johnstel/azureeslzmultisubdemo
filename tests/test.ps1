@@ -32,6 +32,17 @@ function Invoke-OfflineParitySuite {
         switch ($Arguments[0]) {
             'account' { if ($Arguments[1] -eq 'show') { $env:MOCK_ACCOUNT_JSON ?? '{"tenantId":"11111111-1111-1111-1111-111111111111","state":"Enabled"}' }; return }
             'bicep' { return }
+            'group' {
+                if ($Arguments[1] -eq 'exists') {
+                    if ($env:MOCK_GROUP_EXISTS_ERROR -eq 'true') { $global:LASTEXITCODE = 1; return }
+                    $env:MOCK_GROUP_EXISTS ?? 'false'
+                }
+                elseif ($Arguments[1] -eq 'show') {
+                    if ($env:MOCK_GROUP_SHOW_ERROR -eq 'true') { $global:LASTEXITCODE = 1; return }
+                    $env:MOCK_GROUP_OWNER ?? 'demo'
+                }
+                return
+            }
             'role' { return }
             'provider' { 'Registered'; return }
             'rest' {
@@ -143,8 +154,37 @@ function Invoke-OfflineParitySuite {
             throw "Offline parity case $($case.Name) expected $($case.Expected) but got $($passed.ToString().ToLowerInvariant()). Output: $($output -join ' ')"
         }
     }
+    $collisionDocument = $baseDocument | ConvertFrom-Json
+    $collisionDocument.parameters.tenantRootManagementGroupId.value = 'demo-root'
+    $collisionDocument.parameters.connectivitySubscriptionId.value = '11111111-1111-1111-1111-111111111111'
+    $collisionDocument.parameters.workloadSubscriptionId.value = '22222222-2222-2222-2222-222222222222'
+    $collisionDocument.parameters.governanceAdminsGroupObjectId.value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    $collisionDocument.parameters.networkOperatorsGroupObjectId.value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    $collisionDocument.parameters.workloadContributorsGroupObjectId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+    $collisionDocument.parameters.readOnlyAuditorsGroupObjectId.value = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+    $collisionDocument.parameters.namePrefix.value = 'demo'
+    $collisionDocument.parameters.deployEvidenceResources.value = $true
+    $collisionPath = Join-Path $TempDir 'collision.parameters.json'
+    $collisionDocument | ConvertTo-Json -Depth 20 | Set-Content -Path $collisionPath -Encoding utf8
+    foreach ($collisionCase in @(
+        @{ Name = 'absent'; Expected = $true },
+        @{ Name = 'existing'; Expected = $true; Exists = 'true'; Owner = 'demo' },
+        @{ Name = 'unreadable'; Expected = $false; Exists = 'true'; ShowError = 'true' },
+        @{ Name = 'mismatched'; Expected = $false; Exists = 'true'; Owner = 'external' },
+        @{ Name = 'error'; Expected = $false; ExistsError = 'true' }
+    )) {
+        foreach ($name in 'MOCK_GROUP_EXISTS', 'MOCK_GROUP_OWNER', 'MOCK_GROUP_SHOW_ERROR', 'MOCK_GROUP_EXISTS_ERROR') { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
+        if ($collisionCase.ContainsKey('Exists')) { $env:MOCK_GROUP_EXISTS = $collisionCase.Exists }
+        if ($collisionCase.ContainsKey('Owner')) { $env:MOCK_GROUP_OWNER = $collisionCase.Owner }
+        if ($collisionCase.ContainsKey('ShowError')) { $env:MOCK_GROUP_SHOW_ERROR = $collisionCase.ShowError }
+        if ($collisionCase.ContainsKey('ExistsError')) { $env:MOCK_GROUP_EXISTS_ERROR = $collisionCase.ExistsError }
+        $env:MOCK_REST_JSON = '{"value":[{"actions":["microsoft.authorization/policyassignments/write","microsoft.authorization/policydefinitions/write","microsoft.authorization/policysetdefinitions/write","microsoft.authorization/roleassignments/write"],"notActions":[]}]}'
+        $output = & (Join-Path $ProjectDir 'scripts/preflight.ps1') -ParameterFile $collisionPath 2>&1
+        if (($LASTEXITCODE -eq 0) -ne $collisionCase.Expected) { throw "Resource-group collision fixture $($collisionCase.Name) failed. Output: $($output -join ' ')" }
+    }
+    foreach ($name in 'MOCK_GROUP_EXISTS', 'MOCK_GROUP_OWNER', 'MOCK_GROUP_SHOW_ERROR', 'MOCK_GROUP_EXISTS_ERROR') { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
 
-        Write-Host 'Offline parity suite passed.'
+    Write-Host 'Offline parity suite passed.'
     }
     finally {
         if ($null -eq $priorAz) { Remove-Item function:global:az -ErrorAction SilentlyContinue }
@@ -162,8 +202,327 @@ function Invoke-OfflineParitySuite {
     }
 }
 
+function Invoke-TeardownOfflineFixture {
+    $fixtureDir = Join-Path $TempDir 'teardown-fixture'
+    New-Item -ItemType Directory -Path $fixtureDir -Force | Out-Null
+    $parameterPath = Join-Path $fixtureDir 'teardown.parameters.json'
+    $parameterJson = @'
+{
+  "parameters": {
+    "tenantRootManagementGroupId": { "value": "tenant-root" },
+    "namePrefix": { "value": "demo" },
+    "workloadArchetype": { "value": "workloads" },
+    "connectivitySubscriptionId": { "value": "11111111-1111-1111-1111-111111111111" },
+    "workloadSubscriptionId": { "value": "22222222-2222-2222-2222-222222222222" },
+    "governanceAdminsGroupObjectId": { "value": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    "networkOperatorsGroupObjectId": { "value": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+    "workloadContributorsGroupObjectId": { "value": "cccccccc-cccc-cccc-cccc-cccccccccccc" },
+    "readOnlyAuditorsGroupObjectId": { "value": "dddddddd-dddd-dddd-dddd-dddddddddddd" },
+    "deployCentralLogAnalytics": { "value": false },
+    "deployRecoveryServicesVault": { "value": true },
+    "deployRoleAssignments": { "value": true },
+    "deployEvidenceResources": { "value": true },
+    "enableFirewallRouteGuardrails": { "value": false },
+    "enableCriticalInfrastructure": { "value": true },
+    "criticalInfrastructureSubscriptionIds": { "value": ["55555555-5555-5555-5555-555555555555"] },
+    "enableNercCipTechnicalOverlay": { "value": true },
+    "existingLogAnalyticsWorkspaceResourceId": {
+      "value": "/SUBSCRIPTIONS/11111111-1111-1111-1111-111111111111/RESOURCEGROUPS/rg-demo-connectivity/PROVIDERS/MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/ws-protected"
+    },
+    "approvedFirewallResourceId": {
+      "value": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-demo-connectivity/providers/Microsoft.Network/azureFirewalls/fw-protected"
+    },
+    "approvedRouteTableResourceIds": {
+      "value": ["/subscriptions/22222222-2222-2222-2222-222222222222/RESOURCEGROUPS/rg-demo-workloads-demo/PROVIDERS/Microsoft.Network/routeTables/rt-protected"]
+    },
+    "approvedBackupVaults": {
+      "value": [{"vaultResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected", "backupPolicyResourceId": "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-backup/providers/Microsoft.RecoveryServices/vaults/vault-protected/backupPolicies/policy-protected"}]
+    },
+    "policyExemptions": { "value": [] },
+    "enableVmBackupRemediation": { "value": false }
+  }
+}
+'@
+    Set-Content -LiteralPath $parameterPath -Value $parameterJson -Encoding utf8
+
+    $mockDir = Join-Path $fixtureDir 'mock-bin'
+    New-Item -ItemType Directory -Path $mockDir -Force | Out-Null
+    $mockAzPath = Join-Path $mockDir 'az'
+    $mockAzScript = @'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${MOCK_AZ_LOG:-}" ]]; then
+  printf '%s\n' "az $*" >> "${MOCK_AZ_LOG}"
+fi
+[[ $# -gt 0 ]] || exit 0
+case "${1}" in
+  group)
+    case "${2:-}" in
+      exists)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" && -f "${MOCK_AZ_WAIT_FALLBACK_FILE}" ]]; then
+          printf '%s\n' invalid
+          exit 0
+        fi
+        case "$*" in
+          *"rg-demo-monitoring"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-connectivity"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf 'true\n'; exit 0 ;;
+          *"rg-demo-backup"*) printf 'true\n'; exit 0 ;;
+          *) printf 'false\n'; exit 0 ;;
+        esac
+        ;;
+      show)
+        case "$*" in
+          *"rg-demo-monitoring"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-connectivity"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-workloads-demo"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *"rg-demo-backup"*) printf '%s\n' "${MOCK_AZ_OWNER:-demo}"; exit 0 ;;
+          *) printf '%s\n' ''; exit 0 ;;
+        esac
+        ;;
+      wait)
+        if [[ -n "${MOCK_AZ_WAIT_FALLBACK_FILE:-}" ]]; then
+          : > "${MOCK_AZ_WAIT_FALLBACK_FILE}"
+          exit 1
+        fi
+        exit 0
+        ;;
+    esac
+    ;;
+  policy)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "show" ]]; then
+      case "$*" in
+        *"demo-nerc-cip-technical"*) printf '%s\n' 'nerc-assignment-principal'; exit 0 ;;
+      esac
+      printf '%s\n' 'null'; exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then exit 0; fi
+    if [[ "${2:-}" == "set-definition" && "${3:-}" == "delete" ]]; then exit 0; fi
+    if [[ "${2:-}" == "definition" && "${3:-}" == "delete" ]]; then exit 0; fi
+    ;;
+  role)
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "list" ]]; then
+      if [[ "$*" == *"nerc-assignment-principal"* && "$*" == *"ws-protected"* ]]; then
+        printf '%s\n' 'NERC-ROLE-ASSIGNMENT-ID'
+        exit 0
+      fi
+      printf '%s\n' ''
+      exit 0
+    fi
+    if [[ "${2:-}" == "assignment" && "${3:-}" == "delete" ]]; then exit 0; fi
+    ;;
+  account)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+exit 0
+'@
+    Set-Content -LiteralPath $mockAzPath -Value $mockAzScript -Encoding utf8
+    & bash -c "chmod +x '$mockAzPath'"
+    $mockAzCmdPath = Join-Path $mockDir 'az.cmd'
+    @'
+@echo off
+echo az %* >> "%MOCK_AZ_LOG%"
+set "args=%*"
+if "%MOCK_AZ_OWNER%"=="" (set "owner=demo") else (set "owner=%MOCK_AZ_OWNER%")
+if /I "%~1 %~2 %~3"=="policy assignment show" (
+  echo %args% | findstr /I /C:"demo-nerc-cip-technical" >nul
+  if not errorlevel 1 (
+    echo nerc-assignment-principal
+  ) else (
+    echo null
+  )
+  exit /b 0
+)
+if /I "%~1 %~2 %~3"=="role assignment list" (
+  echo %args% | findstr /I /C:"nerc-assignment-principal" >nul || exit /b 0
+  echo %args% | findstr /I /C:"ws-protected" >nul || exit /b 0
+  echo NERC-ROLE-ASSIGNMENT-ID
+  exit /b 0
+)
+if /I "%~1 %~2"=="group exists" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" if exist "%MOCK_AZ_WAIT_FALLBACK_FILE%" (echo invalid& exit /b 0)
+  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+  if errorlevel 1 (echo false) else (echo true)
+  exit /b 0
+)
+if /I "%~1 %~2"=="group wait" (
+  if not "%MOCK_AZ_WAIT_FALLBACK_FILE%"=="" (type nul > "%MOCK_AZ_WAIT_FALLBACK_FILE%"& exit /b 1)
+  exit /b 0
+)
+if /I "%~1 %~2"=="group show" (
+  echo %args% | findstr /I /C:"rg-demo-monitoring" /C:"rg-demo-connectivity" /C:"rg-demo-workloads-demo" /C:"rg-demo-backup" >nul
+  if errorlevel 1 (echo.) else (echo %owner%)
+  exit /b 0
+)
+exit /b 0
+'@ | Set-Content -LiteralPath $mockAzCmdPath
+
+    $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($null -eq $pwshCommand) {
+        Write-Host 'PowerShell teardown offline fixture skipped because pwsh is unavailable.'
+        return
+    }
+    $scriptPath = Join-Path $ProjectDir 'scripts/teardown.ps1'
+    $wrapperPath = Join-Path $fixtureDir 'invoke-teardown-with-mock-check.ps1'
+    @'
+param(
+    [Parameter(Mandatory = $true)][string]$ParameterFile,
+    [Parameter(Mandatory = $true)][string]$ExpectedMockDir,
+    [Parameter(Mandatory = $true)][string]$TeardownScript,
+    [Parameter(Mandatory = $true)][string]$Confirmation,
+    [switch]$MissingConfirmation
+)
+$azCommand = Get-Command az -ErrorAction SilentlyContinue
+if ($null -eq $azCommand -or -not $azCommand.Source.StartsWith($ExpectedMockDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Error "az did not resolve to the fixture mock directory."
+    exit 1
+}
+$global:FixtureTeardownConfirmation = $Confirmation
+function global:Read-Host { param([string]$Prompt) $global:FixtureTeardownConfirmation }
+if ($MissingConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue }
+& $TeardownScript -ParameterFile $ParameterFile -Execute
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $wrapperPath
+
+    $goodLog = Join-Path $fixtureDir 'good.log'
+    $previousPath = $env:PATH
+    $previousMockLog = $env:MOCK_AZ_LOG
+    $previousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+    try {
+        $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$previousPath"
+        $env:MOCK_AZ_LOG = $goodLog
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        $goodOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation 'demo' 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "PowerShell teardown fixture unexpectedly failed with valid confirmation. Output: $($goodOutput -join ' ')"
+        }
+    }
+    finally {
+        $env:PATH = $previousPath
+        if ($null -eq $previousMockLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $previousMockLog }
+        if ($null -eq $previousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $previousConfirmation }
+    }
+
+    $lines = @(Get-Content -LiteralPath $goodLog -ErrorAction SilentlyContinue | Where-Object { $_ -like 'az *' })
+    $roleDeleteIndex = -1
+    $policyDeleteIndex = -1
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -eq 'az role assignment delete --ids NERC-ROLE-ASSIGNMENT-ID' -and $roleDeleteIndex -lt 0) { $roleDeleteIndex = $index }
+        if ($lines[$index] -eq 'az policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/demo-criticalinfra' -and $policyDeleteIndex -lt 0) { $policyDeleteIndex = $index }
+        if ($roleDeleteIndex -ge 0 -and $policyDeleteIndex -ge 0) { break }
+    }
+    if ($roleDeleteIndex -lt 0 -or $policyDeleteIndex -lt 0 -or ($roleDeleteIndex + 1) -ne $policyDeleteIndex) {
+        throw "PowerShell teardown fixture expected NERC role delete immediately before NERC assignment delete. Log: $($lines -join ' | ')"
+    }
+    foreach ($line in $lines) {
+        if ($line -match 'az group (delete|wait).*rg-demo-(connectivity|workloads-demo|backup)') {
+            throw "PowerShell teardown fixture acted on a protected external resource group: $line"
+        }
+    }
+
+    $mismatchedOwnerLog = Join-Path $fixtureDir 'mismatched-owner.log'
+    $mismatchedOwnerPreviousPath = $env:PATH
+    $mismatchedOwnerPreviousMockLog = $env:MOCK_AZ_LOG
+    $mismatchedOwnerPreviousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+    $previousOwner = $env:MOCK_AZ_OWNER
+    try {
+        $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$mismatchedOwnerPreviousPath"
+        $env:MOCK_AZ_LOG = $mismatchedOwnerLog
+        $env:MOCK_AZ_OWNER = 'external'
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        $mismatchedOwnerOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation 'demo' 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "PowerShell teardown fixture failed for a mismatched resource-group owner marker. Output: $($mismatchedOwnerOutput -join ' ')"
+        }
+    }
+    finally {
+        $env:PATH = $mismatchedOwnerPreviousPath
+        if ($null -eq $mismatchedOwnerPreviousMockLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $mismatchedOwnerPreviousMockLog }
+        if ($null -eq $mismatchedOwnerPreviousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $mismatchedOwnerPreviousConfirmation }
+        if ($null -eq $previousOwner) { Remove-Item Env:MOCK_AZ_OWNER -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_OWNER = $previousOwner }
+    }
+    $mismatchedOwnerText = Get-Content -LiteralPath $mismatchedOwnerLog -Raw
+    if ($mismatchedOwnerText -match 'az group (delete|wait).*--name rg-demo-(monitoring|connectivity|workloads-demo)') {
+        throw "PowerShell teardown fixture acted on a mismatched-owner resource group: $mismatchedOwnerText"
+    }
+
+    $waitFallbackParameters = Join-Path $fixtureDir 'wait-fallback.parameters.json'
+    $waitFallbackDocument = Get-Content -LiteralPath $parameterPath -Raw | ConvertFrom-Json
+    $waitFallbackDocument.parameters.deployEvidenceResources.value = $false
+    $waitFallbackDocument.parameters.deployCentralLogAnalytics.value = $true
+    $waitFallbackDocument.parameters.deployRecoveryServicesVault.value = $false
+    $waitFallbackDocument.parameters.existingLogAnalyticsWorkspaceResourceId.value = ''
+    $waitFallbackDocument.parameters.approvedFirewallResourceId.value = ''
+    $waitFallbackDocument.parameters.approvedRouteTableResourceIds.value = @()
+    $waitFallbackDocument.parameters.approvedBackupVaults.value = @()
+    $waitFallbackDocument | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $waitFallbackParameters -Encoding utf8
+    $waitFallbackMarker = Join-Path $fixtureDir 'wait-fallback.marker'
+    $waitFallbackPreviousPath = $env:PATH
+    $waitFallbackPreviousLog = $env:MOCK_AZ_LOG
+    $waitFallbackPreviousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+    $waitFallbackPreviousMarker = $env:MOCK_AZ_WAIT_FALLBACK_FILE
+    try {
+        $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$waitFallbackPreviousPath"
+        $env:MOCK_AZ_LOG = Join-Path $fixtureDir 'wait-fallback.log'
+        $env:MOCK_AZ_WAIT_FALLBACK_FILE = $waitFallbackMarker
+        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+        $null = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $waitFallbackParameters -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation 'demo' 2>&1
+        if ($LASTEXITCODE -eq 0) { throw 'PowerShell teardown fixture accepted an invalid post-wait existence result.' }
+    }
+    finally {
+        $env:PATH = $waitFallbackPreviousPath
+        if ($null -eq $waitFallbackPreviousLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $waitFallbackPreviousLog }
+        if ($null -eq $waitFallbackPreviousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $waitFallbackPreviousConfirmation }
+        if ($null -eq $waitFallbackPreviousMarker) { Remove-Item Env:MOCK_AZ_WAIT_FALLBACK_FILE -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_WAIT_FALLBACK_FILE = $waitFallbackPreviousMarker }
+    }
+
+    foreach ($case in @(
+        @{ Name = 'missing-env'; Confirmation = $null; Input = 'demo' },
+        @{ Name = 'wrong-confirm'; Confirmation = 'DELETE-ESLZ-DEMO'; Input = 'wrong-demo-root' }
+    )) {
+        $caseLog = Join-Path $fixtureDir "$($case.Name).log"
+        Remove-Item -LiteralPath $caseLog -ErrorAction SilentlyContinue
+        $casePreviousPath = $env:PATH
+        $casePreviousMockLog = $env:MOCK_AZ_LOG
+        $casePreviousConfirmation = $env:ESLZ_TEARDOWN_CONFIRMATION
+        $caseExitCode = 0
+        try {
+            $env:PATH = "$mockDir$([System.IO.Path]::PathSeparator)$casePreviousPath"
+            $env:MOCK_AZ_LOG = $caseLog
+            if ($null -eq $case.Confirmation) {
+                Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:ESLZ_TEARDOWN_CONFIRMATION = $case.Confirmation
+            }
+            $missingConfirmationArgument = if ($null -eq $case.Confirmation) { @('-MissingConfirmation') } else { @() }
+            $caseOutput = & $pwshCommand.Source -NoLogo -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -ParameterFile $parameterPath -ExpectedMockDir $mockDir -TeardownScript $scriptPath -Confirmation $case.Input @missingConfirmationArgument 2>&1
+            $caseExitCode = $LASTEXITCODE
+        }
+        finally {
+            $env:PATH = $casePreviousPath
+            if ($null -eq $casePreviousMockLog) { Remove-Item Env:MOCK_AZ_LOG -ErrorAction SilentlyContinue } else { $env:MOCK_AZ_LOG = $casePreviousMockLog }
+            if ($null -eq $casePreviousConfirmation) { Remove-Item Env:ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue } else { $env:ESLZ_TEARDOWN_CONFIRMATION = $casePreviousConfirmation }
+        }
+        if ($caseExitCode -eq 0) {
+            throw "PowerShell teardown fixture should fail for blocked confirmation: $($case.Name)"
+        }
+        $blockedText = if (Test-Path -LiteralPath $caseLog) { Get-Content -LiteralPath $caseLog -Raw } else { '' }
+        if ($blockedText -match 'az (group delete|group wait|role assignment delete|policy assignment delete|policy definition delete|account management-group delete)') {
+            throw "PowerShell teardown fixture emitted destructive calls for blocked confirmation: $($case.Name)"
+        }
+    }
+
+    Write-Host 'PowerShell teardown offline fixture passed.'
+}
+
 if ($env:ESLZ_OFFLINE_TESTS -eq '1') {
     Invoke-OfflineParitySuite
+    Invoke-TeardownOfflineFixture
     return
 }
 
@@ -345,6 +704,17 @@ try {
             Stop-Test "Noncompliance message for $($nonComplianceMessage.policyDefinitionReferenceId) does not match its required tag."
         }
     }
+    $expectedEvidenceTags = @{
+        'connectivity-evidence' = @{
+            CostCenter = 'Demo'; ApplicationName = 'Connectivity Evidence'; Owner = 'Platform Team'
+            Environment = 'Sandbox'; DataClassification = 'Non-sensitive'; 'SSP-ID' = 'Demo'
+            Purpose = 'Landing Zone Evidence'
+        }
+        'workload-evidence' = @{
+            CostCenter = 'Demo'; ApplicationName = 'Landing Zone Demo'; Owner = 'Workload Team'
+            Environment = 'Sandbox'; DataClassification = 'Non-sensitive'; 'SSP-ID' = 'Demo'
+        }
+    }
     foreach ($evidenceDeploymentName in @('connectivity-evidence', 'workload-evidence')) {
         $evidenceDeployment = Find-JsonObjects -Node $compiledJson -Predicate {
             param($node)
@@ -354,16 +724,27 @@ try {
         if ($null -eq $evidenceDeployment) {
             Stop-Test "$evidenceDeploymentName deployment is missing."
         }
-        if ($evidenceDeploymentName -eq 'connectivity-evidence') {
-            $evidenceTags = $evidenceDeployment.properties.template.variables.commonTags
+        $resourceGroupTags = @($evidenceDeployment.properties.template.resources |
+            Where-Object { $_.type -eq 'Microsoft.Resources/resourceGroups' })[0].tags
+        $evidenceTags = if ($evidenceDeploymentName -eq 'connectivity-evidence') {
+            $evidenceDeployment.properties.template.variables.commonTags
         } else {
-            $evidenceTags = @($evidenceDeployment.properties.template.resources |
-                Where-Object { $_.type -eq 'Microsoft.Resources/resourceGroups' })[0].tags
+            $resourceGroupTags
         }
-        foreach ($requiredTag in $requiredTags) {
-            if (-not $evidenceTags.PSObject.Properties[$requiredTag]) {
-                Stop-Test "$evidenceDeploymentName resource group is missing the exact $requiredTag tag."
+        foreach ($expectedTag in $expectedEvidenceTags[$evidenceDeploymentName].Keys) {
+            if (-not $evidenceTags.PSObject.Properties[$expectedTag] -or
+                $evidenceTags.PSObject.Properties[$expectedTag].Value -cne $expectedEvidenceTags[$evidenceDeploymentName][$expectedTag]) {
+                Stop-Test "$evidenceDeploymentName resource group has an invalid $expectedTag tag."
             }
+        }
+        $expectedLifecycleTag = if ($evidenceDeploymentName -eq 'connectivity-evidence') {
+            "[union(variables('commonTags'), createObject('ESLZLifecycleOwner', parameters('namePrefix')))]"
+        } else {
+            "[parameters('namePrefix')]"
+        }
+        if (($evidenceDeploymentName -eq 'connectivity-evidence' -and $resourceGroupTags -cne $expectedLifecycleTag) -or
+            ($evidenceDeploymentName -eq 'workload-evidence' -and $resourceGroupTags.ESLZLifecycleOwner -cne $expectedLifecycleTag)) {
+            Stop-Test "$evidenceDeploymentName resource group must bind ESLZLifecycleOwner to namePrefix."
         }
     }
     $inheritanceInitiative = Find-JsonObjects -Node $compiledJson -Predicate {
@@ -1181,6 +1562,57 @@ exit $LASTEXITCODE
     if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw) -notmatch 'DELETE-ESLZ-DEMO') {
         Stop-Test 'Bash teardown confirmation guard is missing.'
     }
+    foreach ($deploymentScript in @('scripts/deploy.sh', 'scripts/deploy.ps1')) {
+        $lines = Get-Content -LiteralPath (Join-Path $ProjectDir $deploymentScript)
+        $preflightLine = (($lines | Select-String -Pattern 'preflight\.(sh|ps1)' | Select-Object -First 1).LineNumber)
+        $whatIfLine = (($lines | Select-String -Pattern 'what-if\.(sh|ps1)' | Select-Object -First 1).LineNumber)
+        $confirmationLine = (($lines | Select-String -Pattern 'DEPLOY-ESLZ-DEMO' | Select-Object -First 1).LineNumber)
+        if ($null -eq $preflightLine -or $null -eq $whatIfLine -or $null -eq $confirmationLine -or
+            $preflightLine -ge $confirmationLine -or $whatIfLine -ge $confirmationLine) {
+            Stop-Test "$deploymentScript must run preflight and tenant what-if before the deployment confirmation gate."
+        }
+    }
+    foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {
+        $text = Get-Content -LiteralPath (Join-Path $ProjectDir $teardownScript) -Raw
+        foreach ($requiredText in @(
+            'policy exemption delete',
+            'role assignment list --assignee',
+            'Supplied workspace, firewall, key, vault, policy, and other external IDs are never deleted'
+        )) {
+            if (-not $text.Contains($requiredText)) {
+                Stop-Test "$teardownScript is missing v2 lifecycle coverage: $requiredText"
+            }
+        }
+    }
+    foreach ($assignmentName in @('demo-firewall-routes', 'demo-vm-backup-${approvedVaultIndex}')) {
+        if ((Get-Content -LiteralPath (Join-Path $ProjectDir 'main.bicep') -Raw) -notmatch [regex]::Escape("assignmentName: '$assignmentName'")) {
+            Stop-Test "main.bicep is missing $assignmentName."
+        }
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-firewall-routes') -or
+        -not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains('demo-firewall-routes')) {
+        Stop-Test 'Teardown scripts do not clean up demo-firewall-routes.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-vm-backup-${backup_index}') -or
+        -not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains('demo-vm-backup-$index')) {
+        Stop-Test 'Teardown scripts do not clean up dynamic demo-vm-backup assignments.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/root-deployment-restrictions.bicep') -Raw).Contains("assignmentName: 'demo-deploy-restrictions'")) {
+        Stop-Test 'Nested root-deployment-restrictions assignment inventory is missing.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw).Contains('demo-deploy-restrictions|${demo_root_scope}')) {
+        Stop-Test 'Bash teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
+    }
+    if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw).Contains("@('demo-deploy-restrictions', `$demoRootScope)")) {
+        Stop-Test 'PowerShell teardown does not clean up demo-deploy-restrictions at the demo-root scope.'
+    }
+    foreach ($requiredText in @('exemptionScopeType', 'deployEvidenceResources')) {
+        foreach ($teardownScript in @('scripts/teardown.sh', 'scripts/teardown.ps1')) {
+            if (-not (Get-Content -LiteralPath (Join-Path $ProjectDir $teardownScript) -Raw).Contains($requiredText)) {
+                Stop-Test "$teardownScript is missing lifecycle ownership handling for $requiredText."
+            }
+        }
+    }
 
     Write-Host '8/29 Confirm region policy and workload network guardrails are safe by default...'
     $policyText = Get-Content -LiteralPath (Join-Path $ProjectDir 'modules/policy-library.bicep') -Raw
@@ -1992,12 +2424,12 @@ exit $LASTEXITCODE
     Write-Host '17/29 Confirm teardown scripts protect a supplied existing workspace resource group and only remove a demo-created monitoring resource group...'
     $teardownShText = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.sh') -Raw
     $teardownPs1Text = Get-Content -LiteralPath (Join-Path $ProjectDir 'scripts/teardown.ps1') -Raw
-    foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_existing_workspace_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'rg-${prefix}-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'is_protected_external_resource_group', 'monitoring_group_is_repo_owned', 'delete_resource_group_if_not_protected "${connectivity_subscription}" "rg-${prefix}-connectivity"')) {
         if (-not $teardownShText.Contains($requiredText)) {
             Stop-Test "scripts/teardown.sh is missing monitoring teardown safety text: $requiredText"
         }
     }
-    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'Test-ProtectedExistingWorkspaceGroup', '$existingWorkspaceSupplied = $existingWorkspaceResourceId.Length -gt 0', '$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied', 'Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup')) {
+    foreach ($requiredText in @('deployCentralLogAnalytics', 'centralLogAnalyticsEnabled', 'rg-$prefix-monitoring', 'existingLogAnalyticsWorkspaceResourceId', 'Test-ProtectedExternalResourceGroup', '$existingWorkspaceSupplied = $existingWorkspaceResourceId.Length -gt 0', '$monitoringGroupIsRepoOwned = $centralLogAnalyticsEnabled -and -not $existingWorkspaceSupplied', 'Remove-ResourceGroupIfNotProtected -Subscription $connectivitySubscription -Group $connectivityResourceGroup')) {
         if (-not $teardownPs1Text.Contains($requiredText)) {
             Stop-Test "scripts/teardown.ps1 is missing monitoring teardown safety text: $requiredText"
         }
@@ -2018,6 +2450,14 @@ if [[ "$1" == 'group' && "$2" == 'exists' ]]; then
   echo 'true'
   exit 0
 fi
+if [[ "$1" == 'policy' && "$2" == 'assignment' && "$3" == 'show' ]]; then
+  echo '11111111-1111-1111-1111-111111111111'
+  exit 0
+fi
+if [[ "$1" == 'role' && "$2" == 'assignment' && "$3" == 'list' ]]; then
+  echo '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/demo-owned'
+  exit 0
+fi
 exit 0
 '@ | Set-Content -LiteralPath $mockAzPath -NoNewline
     if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod +x $mockAzPath }
@@ -2033,6 +2473,14 @@ exit 0
 echo %* >> "%AZ_CALL_LOG%"
 if /I "%~1"=="group" if /I "%~2"=="exists" (
   echo true
+  exit /b 0
+)
+if /I "%~1"=="policy" if /I "%~2"=="assignment" if /I "%~3"=="show" (
+  echo 11111111-1111-1111-1111-111111111111
+  exit /b 0
+)
+if /I "%~1"=="role" if /I "%~2"=="assignment" if /I "%~3"=="list" (
+  echo /subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/demo-owned
   exit /b 0
 )
 exit /b 0
@@ -2067,7 +2515,26 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $templateJson.parameters.workloadContributorsGroupObjectId.value = '66666666-6666-6666-6666-666666666666'
     $templateJson.parameters.readOnlyAuditorsGroupObjectId.value = '77777777-7777-7777-7777-777777777777'
     $templateJson.parameters.deployCentralLogAnalytics.value = $true
-    $templateJson.parameters.existingLogAnalyticsWorkspaceResourceId.value = '   '
+    $templateJson.parameters.existingLogAnalyticsWorkspaceResourceId.value = '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-monitoring/providers/Microsoft.OperationalInsights/workspaces/external-log'
+    $templateJson.parameters.deployEvidenceResources.value = $false
+    $templateJson.parameters.enableCriticalInfrastructure.value = $true
+    $templateJson.parameters.criticalInfrastructureSubscriptionIds.value = @('88888888-8888-8888-8888-888888888888')
+    $templateJson.parameters.enableNercCipTechnicalOverlay.value = $true
+    $templateJson.parameters.nercCipApprovedLocations.value = @('eastus')
+    $templateJson.parameters.nercCipDataClassificationTagValue.value = 'Non-sensitive'
+    $templateJson.parameters.nercCipSspIdTagValue.value = 'Demo'
+    $templateJson.parameters.enableVmBackupRemediation.value = $true
+    $templateJson.parameters.deployActivityLogRemediationRoleAssignments.value = $true
+    $templateJson.parameters.enableFirewallRouteGuardrails.value = $true
+    $templateJson.parameters.approvedBackupVaults.value = @([pscustomobject]@{
+        vaultResourceId = '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault'
+        backupPolicyResourceId = '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/external-vault/providers/Microsoft.RecoveryServices/vaults/vault/backupPolicies/daily'
+    })
+    $templateJson.parameters.policyExemptions.value = @(@{
+        exemptionName = 'child-exemption'; exemptionScopeType = 'resourceGroup'
+        subscriptionId = '22222222-2222-2222-2222-222222222222'; resourceGroupName = 'child-rg'
+        policyAssignmentId = '/providers/Microsoft.Management/managementGroups/eslz-demo/providers/Microsoft.Authorization/policyAssignments/demo-audit-public-ip'
+    })
     $templateJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $whitespaceParamFile
 
     if (Get-Command bash -ErrorAction SilentlyContinue) {
@@ -2085,28 +2552,64 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         if ($azCalls -match 'rg-eslz-demo-monitoring') {
             Stop-Test 'teardown.sh must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
         }
+        foreach ($requiredCall in @(
+            'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
+            'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra',
+            'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp',
+            'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones',
+            'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888'
+        )) {
+            if (-not $azCalls.Contains($requiredCall)) { Stop-Test "teardown.sh missing mocked lifecycle call: $requiredCall" }
+        }
     }
 
-    if (Get-Command bash -ErrorAction SilentlyContinue) {
-        if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
-        New-Item -ItemType File -Path $azCallLog | Out-Null
-        $originalPath = $env:PATH
-        $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
-        $env:AZ_CALL_LOG = $azCallLog
-        $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
-        $ps1Script = Join-Path $ProjectDir 'scripts/teardown.ps1'
-        $nestedOutput = & bash -c "echo 'eslz-demo' | pwsh -NoLogo -NoProfile -File '$wrapperScript' -ParameterFile '$whitespaceParamFile' -ExpectedMockDir '$mockBinDir' -TeardownScript '$ps1Script'" 2>&1
-        $nestedExitCode = $LASTEXITCODE
-        $env:PATH = $originalPath
-        Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
-        Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
-        if ($nestedExitCode -ne 0) {
-            Stop-Test "teardown.ps1 safety test failed: az did not resolve to the temporary mock directory (or teardown.ps1 failed unexpectedly). Nested output: $nestedOutput"
-        }
-        $azCalls = Get-Content -LiteralPath $azCallLog -Raw
-        if ($azCalls -match 'rg-eslz-demo-monitoring') {
-            Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
-        }
+    if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
+    New-Item -ItemType File -Path $azCallLog | Out-Null
+    $originalPath = $env:PATH
+    $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
+    $env:AZ_CALL_LOG = $azCallLog
+    $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+    $ps1Script = Join-Path $ProjectDir 'scripts/teardown.ps1'
+    $nestedOutput = 'eslz-demo' | & pwsh -NoLogo -NoProfile -File $wrapperScript -ParameterFile $whitespaceParamFile -ExpectedMockDir $mockBinDir -TeardownScript $ps1Script 2>&1
+    $nestedExitCode = $LASTEXITCODE
+    $env:PATH = $originalPath
+    Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
+    Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+    if ($nestedExitCode -ne 0) {
+        Stop-Test "teardown.ps1 safety test failed: az did not resolve to the temporary mock directory (or teardown.ps1 failed unexpectedly). Nested output: $nestedOutput"
+    }
+    $azCalls = Get-Content -LiteralPath $azCallLog -Raw
+    if ($azCalls -match 'rg-eslz-demo-monitoring') {
+        Stop-Test 'teardown.ps1 must never touch rg-eslz-demo-monitoring when existingLogAnalyticsWorkspaceResourceId is a whitespace-only value (Bicep treats it as supplied).'
+    }
+    foreach ($requiredCall in @(
+        'policy exemption delete --name child-exemption --scope /subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/child-rg',
+        'policy assignment delete --name demo-nerc-cip-technical --scope /providers/Microsoft.Management/managementGroups/eslz-demo-criticalinfra',
+        'policy assignment delete --name demo-firewall-routes --scope /providers/Microsoft.Management/managementGroups/eslz-demo-corp',
+        'policy assignment delete --name demo-vm-backup-0 --scope /providers/Microsoft.Management/managementGroups/eslz-demo-landingzones',
+        'management-group subscription add --name mg-root --subscription 88888888-8888-8888-8888-888888888888'
+    )) {
+        if (-not $azCalls.Contains($requiredCall)) { Stop-Test "teardown.ps1 missing mocked lifecycle call: $requiredCall" }
+    }
+    $whitespaceOnlyParameterFile = Join-Path $TempDir 'whitespace-only.parameters.json'
+    $templateJson.parameters.existingLogAnalyticsWorkspaceResourceId.value = '   '
+    $templateJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $whitespaceOnlyParameterFile
+    if (Test-Path -LiteralPath $azCallLog) { Remove-Item -LiteralPath $azCallLog }
+    New-Item -ItemType File -Path $azCallLog | Out-Null
+    $originalPath = $env:PATH
+    $env:PATH = "$mockBinDir$([System.IO.Path]::PathSeparator)$env:PATH"
+    $env:AZ_CALL_LOG = $azCallLog
+    $env:ESLZ_TEARDOWN_CONFIRMATION = 'DELETE-ESLZ-DEMO'
+    $whitespaceOutput = 'eslz-demo' | & pwsh -NoLogo -NoProfile -File $wrapperScript -ParameterFile $whitespaceOnlyParameterFile -ExpectedMockDir $mockBinDir -TeardownScript $ps1Script 2>&1
+    $whitespaceExitCode = $LASTEXITCODE
+    $env:PATH = $originalPath
+    Remove-Item Env:\AZ_CALL_LOG -ErrorAction SilentlyContinue
+    Remove-Item Env:\ESLZ_TEARDOWN_CONFIRMATION -ErrorAction SilentlyContinue
+    if ($whitespaceExitCode -ne 0) {
+        Stop-Test "teardown.ps1 whitespace fixture failed: $whitespaceOutput"
+    }
+    if ((Get-Content -LiteralPath $azCallLog -Raw) -match 'rg-eslz-demo-monitoring') {
+        Stop-Test 'teardown.ps1 must not touch monitoring resources for a whitespace-only supplied workspace value.'
     }
 
     Write-Host '19/29 Parse every PowerShell lifecycle and test script...'

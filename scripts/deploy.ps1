@@ -13,11 +13,6 @@ if ([string]::IsNullOrWhiteSpace($ParameterFile)) {
     $ParameterFile = Join-Path $ProjectDir 'parameters/demo.parameters.json'
 }
 
-if ($env:ESLZ_DEPLOY_CONFIRMATION -ne 'DEPLOY-ESLZ-DEMO') {
-    Write-Error 'Deployment is locked. Set ESLZ_DEPLOY_CONFIRMATION=DEPLOY-ESLZ-DEMO only after reviewing what-if.' -ErrorAction Continue
-    exit 2
-}
-
 & (Join-Path $ScriptDir 'preflight.ps1') -ParameterFile $ParameterFile
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
@@ -25,6 +20,11 @@ if ($LASTEXITCODE -ne 0) {
 & (Join-Path $ScriptDir 'what-if.ps1') -ParameterFile $ParameterFile
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
+}
+
+if ($env:ESLZ_DEPLOY_CONFIRMATION -ne 'DEPLOY-ESLZ-DEMO') {
+    Write-Error 'Deployment is locked. Set ESLZ_DEPLOY_CONFIRMATION=DEPLOY-ESLZ-DEMO only after reviewing what-if.' -ErrorAction Continue
+    exit 2
 }
 
 $parameters = Get-Content -LiteralPath $ParameterFile -Raw | ConvertFrom-Json

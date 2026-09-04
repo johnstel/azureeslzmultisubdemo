@@ -497,6 +497,29 @@ if (Test-ParameterTrue deployRecoveryServicesVault) {
     Test-ProviderRegistration $workloadSubscription Microsoft.RecoveryServices
 }
 
+function Test-OwnedResourceGroupCollision {
+    param([string]$Subscription, [string]$Group)
+    $exists = & az group exists --subscription $Subscription --name $Group --output tsv 2>$null
+    if ($LASTEXITCODE -ne 0) { Stop-Preflight "Cannot determine whether resource group $Group exists; it is protected." }
+    if ([string]$exists -notin @('true', 'false')) { Stop-Preflight "Resource group $Group returned an invalid existence result; it is protected." }
+    if ([string]$exists -eq 'true') {
+        $owner = & az group show --subscription $Subscription --name $Group --query 'tags.ESLZLifecycleOwner' --output tsv 2>$null
+        if ($LASTEXITCODE -ne 0) { Stop-Preflight "Cannot read existing resource group $Group; it is protected." }
+        if ([string]::IsNullOrEmpty([string]$owner)) { Stop-Preflight "Resource group $Group already exists without an ESLZLifecycleOwner marker; it is protected." }
+        if ([string]$owner -cne $namePrefix) { Stop-Preflight "Resource group $Group belongs to a different ESLZLifecycleOwner; it is protected." }
+    }
+}
+if (Test-ParameterTrue deployEvidenceResources) {
+    Test-OwnedResourceGroupCollision $connectivitySubscription "rg-$namePrefix-connectivity"
+    Test-OwnedResourceGroupCollision $workloadSubscription "rg-$namePrefix-$((Get-ParameterValue workloadArchetype))-demo"
+}
+if ((Test-ParameterTrue deployCentralLogAnalytics) -and [string]::IsNullOrEmpty([string](Get-OptionalParameterValue existingLogAnalyticsWorkspaceResourceId))) {
+    Test-OwnedResourceGroupCollision $connectivitySubscription "rg-$namePrefix-monitoring"
+}
+if (Test-ParameterTrue deployRecoveryServicesVault) {
+    Test-OwnedResourceGroupCollision $workloadSubscription "rg-$namePrefix-backup"
+}
+
 function Test-ReferencedResource {
     param(
         [string]$ResourceId,
