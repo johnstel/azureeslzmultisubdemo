@@ -4474,6 +4474,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
         try {
             $global:LASTEXITCODE = 0
             $preflightOutput = if ($preflightScript -like '*.sh') {
+                # The Bash script accepts its parameter file positionally; PowerShell uses -ParameterFile.
                 & bash $preflightScript $preflightParameterFile 2>&1
             }
             else {
