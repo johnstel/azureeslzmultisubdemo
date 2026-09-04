@@ -517,11 +517,11 @@ release_notes="${PROJECT_DIR}/docs/RELEASE-NOTES-V2.0.0.md"
 for required_release_note in \
   'Repository version: `2.0.0`' \
   'Validated IaC only; no customer Azure deployment was performed.' \
-  'Breaking changes' \
-  'Migration from v1' \
-  'Safety defaults' \
-  'Paid-service opt-ins' \
-  'Known limitations' \
+  '## Breaking changes' \
+  '## Migration from v1' \
+  '## Safety defaults' \
+  '## Paid-service opt-ins' \
+  '## Known limitations' \
   'parameters/demo.parameters.template.json' \
   'parameters/customer-control.template.bicepparam' \
   'releases/tag/v1.0.0' \

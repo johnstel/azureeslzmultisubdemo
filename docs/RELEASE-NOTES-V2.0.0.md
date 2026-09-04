@@ -47,15 +47,18 @@ Nothing in v2 modifies the `v1.0.0` tag or `release/v1` branch.
 - Default templates contain placeholders and are intentionally non-deployable
   until customer values are supplied.
 - Deny assignments remain in `DoNotEnforce` by default.
-- RBAC (`deployRoleAssignments`), evidence resources
-  (`deployEvidenceResources`), tag inheritance remediation
-  (`enableTagInheritance`), backup remediation (`enableVmBackupRemediation`),
-  central logging (`deployCentralLogAnalytics` or
-  `existingLogAnalyticsWorkspaceResourceId`), Sentinel (`deploySentinel`),
-  Defender paid plans (`enableDefenderCspm`, `enableDefenderForServers`, and
-  `enableDefenderForStorage`), and Critical Infrastructure overlays
-  (`enableCriticalInfrastructure` and `enableNercCipOverlay`) require explicit
-  opt-in parameters.
+- The following capabilities require explicit opt-in parameters:
+  - RBAC: `deployRoleAssignments`
+  - Evidence resources: `deployEvidenceResources`
+  - Tag inheritance remediation: `enableTagInheritance`
+  - Backup remediation: `enableVmBackupRemediation`
+  - Central logging: `deployCentralLogAnalytics` or
+    `existingLogAnalyticsWorkspaceResourceId`
+  - Sentinel: `deploySentinel`
+  - Defender paid plans: `enableDefenderCspm`, `enableDefenderForServers`, and
+    `enableDefenderForStorage`
+  - Critical Infrastructure overlays: `enableCriticalInfrastructure` and
+    `enableNercCipOverlay`
 - Tenant root is not assigned policy, no subscription or Entra identity is
   created, and destructive lifecycle operations require exact confirmations.
 
