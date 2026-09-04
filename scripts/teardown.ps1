@@ -133,11 +133,11 @@ $workloadScope = "/providers/Microsoft.Management/managementGroups/$prefix-$arch
 $connectivityScope = "/subscriptions/$connectivitySubscription"
 $subscriptionWorkloadScope = "/subscriptions/$workloadSubscription"
 $workspaceScope = ''
-if ($centralLogAnalyticsEnabled) {
-    $workspaceScope = "/subscriptions/$connectivitySubscription/resourceGroups/rg-$prefix-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-$prefix-central"
-}
-elseif ($existingWorkspaceResourceId -match '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.OperationalInsights/workspaces/[^/]+$') {
+if ($existingWorkspaceResourceId -match '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.OperationalInsights/workspaces/[^/]+$') {
     $workspaceScope = $existingWorkspaceResourceId
+}
+elseif ($centralLogAnalyticsEnabled) {
+    $workspaceScope = "/subscriptions/$connectivitySubscription/resourceGroups/rg-$prefix-monitoring/providers/Microsoft.OperationalInsights/workspaces/log-$prefix-central"
 }
 $policyExemptionsProperty = $parameters.parameters.PSObject.Properties['policyExemptions']
 $policyExemptions = if ($null -eq $policyExemptionsProperty -or $null -eq $policyExemptionsProperty.Value.value) { @() } else { @($policyExemptionsProperty.Value.value) }
