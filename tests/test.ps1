@@ -4458,16 +4458,29 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
     $preflightParameters.parameters.enableCriticalInfrastructure.value = $true
     $preflightParameters.parameters.criticalInfrastructureSubscriptionIds.value = @()
     $preflightParameters | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $preflightParameterFile -Encoding utf8
-    foreach ($preflightScript in @(
-            (Join-Path $ProjectDir 'scripts/preflight.sh'),
-            (Join-Path $ProjectDir 'scripts/preflight.ps1'))) {
-        $preflightOutput = if ($preflightScript -like '*.sh') {
-            & bash $preflightScript $preflightParameterFile 2>&1
+    $preflightScripts = @((Join-Path $ProjectDir 'scripts/preflight.ps1'))
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        $preflightScripts += Join-Path $ProjectDir 'scripts/preflight.sh'
+    }
+    else {
+        Write-Host '    (skipping Bash preflight dependency check: bash is not available)'
+    }
+    foreach ($preflightScript in $preflightScripts) {
+        $preflightExitCode = 0
+        try {
+            $preflightOutput = if ($preflightScript -like '*.sh') {
+                & bash $preflightScript $preflightParameterFile 2>&1
+            }
+            else {
+                & $preflightScript -ParameterFile $preflightParameterFile 2>&1
+            }
+            $preflightExitCode = $LASTEXITCODE
         }
-        else {
-            & $preflightScript -ParameterFile $preflightParameterFile 2>&1
+        catch {
+            $preflightOutput = @($_)
+            $preflightExitCode = 1
         }
-        if ($LASTEXITCODE -eq 0) {
+        if ($preflightExitCode -eq 0) {
             Stop-Test "Preflight accepted critical infrastructure without a supplied subscription: $preflightScript"
         }
         if ((ConvertTo-TestMessage $preflightOutput) -notmatch 'enableCriticalInfrastructure requires one or more') {
