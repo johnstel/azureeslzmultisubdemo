@@ -500,14 +500,39 @@ run_offline_parity_suite
 
 printf '1/31 Validate repository versioning and branch guidance...\n'
 version_value="$(tr -d '\r\n' < "${PROJECT_DIR}/VERSION")"
-[[ "${version_value}" == '2.0.0-dev' ]] || {
-  printf 'ERROR: VERSION must be exactly 2.0.0-dev.\n' >&2
+[[ "${version_value}" == '2.0.0' ]] || {
+  printf 'ERROR: VERSION must be exactly 2.0.0.\n' >&2
   exit 1
 }
-rg -q '\*\*Version status:\*\* `main` is the \*\*v2 development line\*\* \(`2\.0\.0-dev`\)\.' "${PROJECT_DIR}/README.md"
+rg -q '\*\*Version status:\*\* `main` is the \*\*v2\.0\.0 release line\*\* \(`2\.0\.0`\)\.' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/releases/tag/v1\.0\.0' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/tree/release/v1' "${PROJECT_DIR}/README.md"
+rg -q 'docs/RELEASE-NOTES-V2\.0\.0\.md' "${PROJECT_DIR}/README.md"
 rg -q 'https://github\.com/johnstel/azureeslzmultisubdemo/issues\?q=milestone%3A%22v2\.0\.0%22' "${PROJECT_DIR}/README.md"
+release_notes="${PROJECT_DIR}/docs/RELEASE-NOTES-V2.0.0.md"
+[[ -f "${release_notes}" ]] || {
+  printf 'ERROR: docs/RELEASE-NOTES-V2.0.0.md is required.\n' >&2
+  exit 1
+}
+for required_release_note in \
+  'Repository version: `2.0.0`' \
+  'Validated IaC only; no customer Azure deployment was performed.' \
+  'Breaking changes' \
+  'Migration from v1' \
+  'Safety defaults' \
+  'Paid-service opt-ins' \
+  'Known limitations' \
+  'parameters/demo.parameters.template.json' \
+  'parameters/customer-control.template.bicepparam' \
+  'releases/tag/v1.0.0' \
+  'tree/release/v1' \
+  'v2.0.0 tag and GitHub Release must be created only after this release commit is merged to `main`'
+do
+  rg -q -F "${required_release_note}" "${release_notes}" || {
+    printf 'ERROR: release notes are missing required text: %s\n' "${required_release_note}" >&2
+    exit 1
+  }
+done
 
 printf '2/31 Build the complete tenant template and validate policy assignment shapes...\n'
 az_build_stderr="$(az bicep build --file "${PROJECT_DIR}/main.bicep" --outfile "${TEMP_DIR}/main.json" 2>&1 1>/dev/null)"

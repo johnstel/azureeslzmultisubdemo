@@ -614,18 +614,42 @@ try {
     Write-Host '1/31 Validate repository versioning and branch guidance...'
     $versionPath = Join-Path $ProjectDir 'VERSION'
     $versionValue = (Get-Content -LiteralPath $versionPath -Raw).Trim()
-    if ($versionValue -ne '2.0.0-dev') {
-        Stop-Test 'VERSION must be exactly 2.0.0-dev.'
+    if ($versionValue -ne '2.0.0') {
+        Stop-Test 'VERSION must be exactly 2.0.0.'
     }
     $readmeText = Get-Content -LiteralPath (Join-Path $ProjectDir 'README.md') -Raw
     foreach ($requiredText in @(
-        '**Version status:** `main` is the **v2 development line** (`2.0.0-dev`).',
+        '**Version status:** `main` is the **v2.0.0 release line** (`2.0.0`).',
         'https://github.com/johnstel/azureeslzmultisubdemo/releases/tag/v1.0.0',
         'https://github.com/johnstel/azureeslzmultisubdemo/tree/release/v1',
+        'docs/RELEASE-NOTES-V2.0.0.md',
         'https://github.com/johnstel/azureeslzmultisubdemo/issues?q=milestone%3A%22v2.0.0%22'
     )) {
         if (-not $readmeText.Contains($requiredText)) {
             Stop-Test "README is missing required v2 guidance: $requiredText"
+        }
+    }
+    $releaseNotesPath = Join-Path $ProjectDir 'docs/RELEASE-NOTES-V2.0.0.md'
+    if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
+        Stop-Test 'docs/RELEASE-NOTES-V2.0.0.md is required.'
+    }
+    $releaseNotesText = Get-Content -LiteralPath $releaseNotesPath -Raw
+    foreach ($requiredReleaseNote in @(
+        'Repository version: `2.0.0`',
+        'Validated IaC only; no customer Azure deployment was performed.',
+        'Breaking changes',
+        'Migration from v1',
+        'Safety defaults',
+        'Paid-service opt-ins',
+        'Known limitations',
+        'parameters/demo.parameters.template.json',
+        'parameters/customer-control.template.bicepparam',
+        'releases/tag/v1.0.0',
+        'tree/release/v1',
+        'v2.0.0 tag and GitHub Release must be created only after this release commit is merged to `main`'
+    )) {
+        if (-not $releaseNotesText.Contains($requiredReleaseNote)) {
+            Stop-Test "Release notes are missing required text: $requiredReleaseNote"
         }
     }
 
