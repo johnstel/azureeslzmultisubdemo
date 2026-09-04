@@ -4472,7 +4472,7 @@ if (-not $resolvedSource -or -not $resolvedSource.StartsWith($ExpectedMockDir, [
                 & bash $preflightScript $preflightParameterFile 2>&1
             }
             else {
-                & $preflightScript -ParameterFile $preflightParameterFile 2>&1
+                & pwsh -NoLogo -NoProfile -File $preflightScript -ParameterFile $preflightParameterFile 2>&1
             }
             $preflightExitCode = $LASTEXITCODE
         }
