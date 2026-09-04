@@ -29,6 +29,42 @@ placeholders, keep deny policies in `DoNotEnforce`, and disable both RBAC and
 evidence resources. Start with preflight and tenant-scope what-if; only the guarded
 deployment script can perform a live deployment.
 
+## Choose a starting profile
+
+Pick one of three starting points before running anything.
+
+| Profile | Use it when | Start from | Key posture |
+|---|---|---|---|
+| **v1 stable** | You want the smallest supported demo: management groups, a handful of policies, and optional RBAC | [v1.0.0 release](https://github.com/johnstel/azureeslzmultisubdemo/releases/tag/v1.0.0) / [release/v1 branch](https://github.com/johnstel/azureeslzmultisubdemo/tree/release/v1) | Deny policies in `DoNotEnforce`; permanent Owner is still a parameter |
+| **v2 safe demo** | You want the full v2 control surface with nothing paid or enforcing turned on | [`parameters/demo.parameters.template.json`](parameters/demo.parameters.template.json) | Everything metered or remediating is `false`/`Disabled`; deny in `DoNotEnforce`; no Owner assignment |
+| **v2 customer control** | You have change-controlled allowlists, a Critical Infrastructure branch, or NERC CIP evidence obligations | [`parameters/customer-control.template.bicepparam`](parameters/customer-control.template.bicepparam) | Same safe defaults, plus explicit customer allowlists for locations, resource types, and VM SKUs |
+
+Both v2 profiles retain replacement placeholders for external identities and
+resources, keep paid and remediating switches off, and require `DoNotEnforce`
+until the allowlists and a what-if/policy impact report are approved. Choosing
+a v2 profile is not a commitment to enforce anything.
+
+Already running v1? See [Migrating from v1 to v2](docs/MIGRATION-V1-TO-V2.md).
+The one breaking parameter change is the removal of
+`subscriptionOwnersGroupObjectId`.
+
+## Documentation map
+
+| Document | Read it for |
+|---|---|
+| [Beginner's Guide](docs/BEGINNERS-GUIDE.md) | End-to-end walkthrough in plain language |
+| [First-Run Checklist](docs/FIRST-RUN-CHECKLIST.md) | The short operational checklist to keep open while working |
+| [Migrating from v1 to v2](docs/MIGRATION-V1-TO-V2.md) | Upgrading an existing v1 deployment, and how to roll back |
+| [Control matrix](docs/CONTROL-MATRIX.md) | Every customer requirement and the control or manual dependency that implements it |
+| [Control scope and inheritance](docs/CONTROL-SCOPE-AND-INHERITANCE.md) | Where each control is assigned and what inherits it |
+| [Enforcement and remediation](docs/ENFORCEMENT-AND-REMEDIATION.md) | Audit → canary → remediation → deny promotion → rollback → exemptions |
+| [Shared services and cost](docs/SHARED-SERVICES-AND-COST.md) | Which switch creates a metered service, and who owns it |
+| [Identity governance runbook](docs/IDENTITY-GOVERNANCE-RUNBOOK.md) | Sequenced PIM, Conditional Access, break-glass, and access-review work |
+| [PIM-ready Azure RBAC](docs/AZURE-RBAC-PIM.md) | Eligible Owner detail and the one-shot request workflow |
+| [Entra Conditional Access and PIM](docs/ENTRA-CONDITIONAL-ACCESS-PIM.md) | Report-only identity artifacts, licensing, and rollback |
+| [Access reviews](docs/ACCESS-REVIEWS.md) | Review cadence, criteria, evidence retention, and CIEM |
+| [NERC CIP matrix](docs/NERC-CIP-MATRIX.md) | Customer responsibility and evidence boundaries; not a compliance claim |
+
 ## Architecture
 
 ```text
@@ -38,14 +74,20 @@ Tenant root management group (existing; never receives demo policy)
     │   └── Connectivity
     │       └── Existing connectivity sandbox subscription
     └── Landing Zones
-        └── Corp or Online (selected by parameter)
-            └── Existing workload sandbox subscription
+        ├── Corp or Online (selected by parameter)
+        │   └── Existing workload sandbox subscription
+        └── Critical Infrastructure (opt-in)
+            └── Existing critical-workload subscriptions
 ```
 
 The management-group names are derived from `namePrefix`. For example, a prefix
 of `eslz-demo` creates `eslz-demo`, `eslz-demo-platform`,
 `eslz-demo-connectivity`, `eslz-demo-landingzones`, and either
-`eslz-demo-corp` or `eslz-demo-online`.
+`eslz-demo-corp` or `eslz-demo-online`. The opt-in
+`eslz-demo-criticalinfra` branch is created only when
+`enableCriticalInfrastructure=true`. See
+[control scope and inheritance](docs/CONTROL-SCOPE-AND-INHERITANCE.md) for
+which control is assigned at which branch and what inherits it.
 
 ## Policy layers
 
@@ -159,7 +201,9 @@ public-IP audit remains the only public-IP resource control.
 
 For rollout phasing, prefer resource selectors or `DoNotEnforce` assignment
 mode. Use an exemption only when a specific deployed scope needs a reviewed,
-ticketed exception with a mandatory owner and expiry.
+ticketed exception with a mandatory owner and expiry. The full progression from
+audit through canary, remediation, deny promotion, and rollback is documented
+in [Enforcement and remediation](docs/ENFORCEMENT-AND-REMEDIATION.md).
 
 ### Storage, Key Vault, and customer-managed keys
 
@@ -455,6 +499,10 @@ an untracked replacement for remediation, selector-based rollout, or
 
 ## Least-privilege RBAC model
 
+> The sequenced identity work — baseline group RBAC, break-glass review,
+> report-only Conditional Access, eligible Owner, and recurring access reviews
+> — is in the [identity governance runbook](docs/IDENTITY-GOVERNANCE-RUNBOOK.md).
+
 Bicep does not create Microsoft Entra identities. The repeatable main deployment
 accepts the object IDs of four baseline **security groups**:
 
@@ -539,6 +587,11 @@ remediation decision workflow, and how Defender CSPM CIEM complements the
 inventory when licensed.
 
 ## Cost rationale
+
+> Every metered switch, the shared services behind it, and who owns the
+> resulting bill are summarized in
+> [Shared services and cost](docs/SHARED-SERVICES-AND-COST.md). Read it before
+> enabling monitoring, Sentinel, a Defender plan, or backup remediation.
 
 With `deployEvidenceResources=false`, the project creates only governance-plane
 objects (management groups, policies, assignments, and optionally RBAC), which
@@ -787,6 +840,32 @@ Run the remaining commands from the `azureeslzmultisubdemo` folder.
 
 ## Prepare parameters
 
+Start from the profile you chose above. The v2 safe demo profile uses the JSON
+template shown here.
+
+**The customer-control profile needs one extra step.** Every lifecycle script
+(`preflight`, `what-if`, `deploy`, `teardown`) reads an ARM JSON parameters
+document with `jq` / `ConvertFrom-Json`; none of them can consume a
+`.bicepparam` file directly. Compile the customer-control template to the JSON
+file the scripts expect, then continue with the identical workflow below:
+
+```bash
+az bicep build-params \
+  --file parameters/customer-control.template.bicepparam \
+  --outfile parameters/demo.parameters.json
+```
+
+```powershell
+az bicep build-params `
+  --file .\parameters\customer-control.template.bicepparam `
+  --outfile .\parameters\demo.parameters.json
+```
+
+Edit the `REPLACE_WITH_*` values in the `.bicepparam` source and recompile;
+editing the generated JSON directly is lost on the next compile. Both profiles
+produce identical parameter names and value types, which
+[`tests/test.sh`](tests/test.sh) verifies.
+
 Windows PowerShell (primary):
 
 ```powershell
@@ -825,6 +904,19 @@ NIST overlays independently after reviewing their impact:
 
 An equivalent Bicep parameter template is provided at
 `parameters/main.template.bicepparam`.
+
+Every remaining switch defaults to the safe posture: no metered service, no
+remediation task, no enforcement. Which of them create cost, and what each one
+turns on, is tabulated in
+[Shared services and cost](docs/SHARED-SERVICES-AND-COST.md). The opt-in
+Critical Infrastructure branch (`enableCriticalInfrastructure`,
+`criticalInfrastructureSubscriptionIds`) and the NERC CIP technical overlay are
+described in
+[Control scope and inheritance](docs/CONTROL-SCOPE-AND-INHERITANCE.md).
+
+Your completed `parameters/demo.parameters.json` is git-ignored. Keep real
+tenant, subscription, and group IDs out of committed files and out of
+exemption records.
 
 ## Validate and preview
 
@@ -885,6 +977,63 @@ export ESLZ_DEPLOY_CONFIRMATION="DEPLOY-ESLZ-DEMO"
 The script runs preflight and what-if again before asking for an interactive
 confirmation. It then creates a named tenant deployment. Do not use the script
 against production subscriptions.
+
+## Verify a deployment
+
+These commands are read-only. Run them on Windows, macOS, or Linux; the Azure
+CLI syntax is identical, only the line-continuation character differs.
+
+Confirm the hierarchy, then the assignments visible at the demo root and at the
+opt-in Critical Infrastructure branch, then compliance:
+
+```bash
+az account management-group show --name "<namePrefix>" --expand --recurse --output table
+az policy assignment list \
+  --scope "/providers/Microsoft.Management/managementGroups/<namePrefix>" \
+  --disable-scope-strict-match --output table
+az policy assignment list \
+  --scope "/providers/Microsoft.Management/managementGroups/<namePrefix>-criticalinfra" \
+  --disable-scope-strict-match --output table
+az policy state summarize --management-group "<namePrefix>"
+```
+
+```powershell
+az account management-group show --name "<namePrefix>" --expand --recurse --output table
+az policy assignment list `
+  --scope "/providers/Microsoft.Management/managementGroups/<namePrefix>" `
+  --disable-scope-strict-match --output table
+az policy assignment list `
+  --scope "/providers/Microsoft.Management/managementGroups/<namePrefix>-criticalinfra" `
+  --disable-scope-strict-match --output table
+az policy state summarize --management-group "<namePrefix>"
+```
+
+Expect every deny-capable assignment to report `enforcementMode` of
+`DoNotEnforce` until it is deliberately promoted. Compliance results are not
+immediate; allow roughly 30 minutes after a new assignment before treating an
+empty result as compliant.
+
+Portal verification steps, with screenshots of what each blade should show, are
+in the [Beginner's Guide](docs/BEGINNERS-GUIDE.md).
+
+## Troubleshooting
+
+| Symptom | Most likely cause | Where to look |
+|---|---|---|
+| `Parameter file still contains REPLACE_WITH_* placeholders` | The local parameter file was never completed | [Beginner's Guide](docs/BEGINNERS-GUIDE.md#troubleshooting) |
+| `AuthorizationFailed` on management groups or policy | The deployment principal lacks the rights listed under [Required permissions](#required-permissions) | Beginner's Guide |
+| Deployment fails validating a parameter that no longer exists | A v1 parameter file was reused; `subscriptionOwnersGroupObjectId` was removed in v2 | [Migrating from v1 to v2](docs/MIGRATION-V1-TO-V2.md) |
+| Explicit configuration-error resource about the workspace | `deployCentralLogAnalytics` and `existingLogAnalyticsWorkspaceResourceId` were both set, or Sentinel was requested with neither | [Shared services and cost](docs/SHARED-SERVICES-AND-COST.md) |
+| A deployment is unexpectedly blocked | A deny assignment was promoted to `Default` | [Enforcement and remediation](docs/ENFORCEMENT-AND-REMEDIATION.md) |
+| An assignment reports nothing | Compliance data has not populated yet, or a resource selector narrows evaluation | [Control scope and inheritance](docs/CONTROL-SCOPE-AND-INHERITANCE.md) |
+| A control applies where you did not expect | Inheritance from an ancestor management group | [Control scope and inheritance](docs/CONTROL-SCOPE-AND-INHERITANCE.md) |
+| An opt-in Defender plan does nothing | The remediation identity is deliberately role-less until a customer grants Owner outside this template | [Shared services and cost](docs/SHARED-SERVICES-AND-COST.md) |
+| Teardown cannot delete a management group | Resources or assignments were added under the hierarchy outside this project | [Teardown](#teardown) |
+
+The Beginner's Guide has a longer
+[troubleshooting section](docs/BEGINNERS-GUIDE.md#troubleshooting) covering
+sign-in, PowerShell execution policy, subscription visibility, tenant-root
+access, subscription movement, and interrupted deployments.
 
 ## Migrate the legacy resource-group tag policy
 
@@ -970,26 +1119,50 @@ The script:
    **and** no existing workspace ID was supplied;
 3. deletes the five ordinary demo role assignments for the four baseline groups by principal and scope; eligible Owner schedules require separate one-shot PIM `AdminRemove` requests and are not automatically removed;
 4. removes policy assignments, then policy definitions;
-5. moves both subscriptions back to the supplied tenant-root management group;
-6. deletes leaf management groups and then the dedicated demo root.
+5. moves both subscriptions — and every
+   `criticalInfrastructureSubscriptionIds` entry when the Critical
+   Infrastructure branch is enabled — back to the supplied tenant-root
+   management group;
+6. deletes leaf management groups, including `<namePrefix>-criticalinfra`
+   before `<namePrefix>-landingzones`, and then the dedicated demo root.
 
 It never deletes subscriptions, Entra groups, or a customer-supplied existing
 Log Analytics workspace referenced via `existingLogAnalyticsWorkspaceResourceId`.
-A dry run is the default. If other resources or assignments have been added
-under the hierarchy, Azure will refuse management-group deletion; inspect and
-remove those items deliberately.
+It also never removes a policy exemption you supplied through
+`policyExemptions` at a scope outside the demo hierarchy, a customer-owned
+Recovery Services vault you created outside this project, protected backup
+items, or data already ingested into a workspace. A dry run is the default. If
+other resources or assignments have been added under the hierarchy, Azure will
+refuse management-group deletion; inspect and remove those items deliberately.
+
+Teardown is not a rollback mechanism for an enforcement change. To reverse a
+deny promotion, redeploy with `denyPolicyEnforcementMode` set back to
+`DoNotEnforce` — see
+[Enforcement and remediation](docs/ENFORCEMENT-AND-REMEDIATION.md).
 
 ## Project layout
 
 ```text
 main.bicep
+VERSION
+bicepconfig.json
 docs/
   BEGINNERS-GUIDE.md
   FIRST-RUN-CHECKLIST.md
+  MIGRATION-V1-TO-V2.md
+  CONTROL-MATRIX.md
+  CONTROL-SCOPE-AND-INHERITANCE.md
+  ENFORCEMENT-AND-REMEDIATION.md
+  SHARED-SERVICES-AND-COST.md
+  IDENTITY-GOVERNANCE-RUNBOOK.md
   ENTRA-CONDITIONAL-ACCESS-PIM.md
   AZURE-RBAC-PIM.md
   ACCESS-REVIEWS.md
   NERC-CIP-MATRIX.md
+policy/
+  control-catalog.json
+  control-catalog.schema.json
+  access-review-criteria.json
 identity/
   azure-rbac/
     owner-eligibility-request.bicep
@@ -1016,8 +1189,16 @@ modules/
   policy-assignment.bicep
   remediating-policy-assignment.bicep
   remediating-policy-rbac.bicep
+  root-deployment-restrictions.bicep
+  defender-plan-assignment.bicep
+  policy-exemption.bicep
+  policy-exemption-at-management-group.bicep
+  policy-exemption-at-subscription.bicep
+  policy-exemption-at-resource-group.bicep
   management-group-rbac.bicep
   subscription-rbac.bicep
+  workspace-diagnostics-rbac.bicep
+  workspace-remediation-rbac.bicep
   evidence-connectivity.bicep
   evidence-network.bicep
   evidence-workload.bicep
@@ -1027,12 +1208,17 @@ modules/
   backup-vault.bicep
   backup-vault-resources.bicep
 parameters/
+  demo.parameters.template.json
+  main.template.bicepparam
+  customer-control.template.bicepparam
 scripts/
   owner-eligibility-request.ps1
   preflight.ps1
   what-if.ps1
   deploy.ps1
   teardown.ps1
+  migrate-legacy-rg-tags.ps1
+  remediate-resource-tags.ps1
   validate-identity-artifacts.ps1
   validate-rbac-artifacts.ps1
   review-privileged-access.ps1
@@ -1041,13 +1227,32 @@ scripts/
   what-if.sh
   deploy.sh
   teardown.sh
+  migrate-legacy-rg-tags.sh
+  remediate-resource-tags.sh
   validate-identity-artifacts.sh
   validate-rbac-artifacts.sh
   review-privileged-access.sh
 tests/
   test.ps1
   test.sh
+  validate-control-catalog.ps1
+  validate-control-catalog.sh
+  validate-initiative-composition.ps1
+  validate-initiative-composition.sh
+  validate-policy-assignment.ps1
+  validate-policy-assignment.sh
+  validate-remediating-policy-assignment.ps1
+  validate-remediating-policy-assignment.sh
+  validate-tag-policy-migration.ps1
+  validate-tag-policy-migration.sh
+  uri-grammar-forced-fallback-tests.sh
+  control-catalog-schema-check.jq
+  fixtures/
 ```
+
+`tests/test.ps1` and `tests/test.sh` are the entry points; they invoke the
+`validate-*` scripts above. `parameters/demo.parameters.json` and the
+`.access-reviews/` report directory are git-ignored and stay local.
 
 ## Safety boundaries
 

@@ -11,6 +11,60 @@ This document is the human-readable companion to the machine-readable [`policy/c
 
 This catalog only **documents** implementation mechanisms. It does not create, assign, or deploy any Azure Policy definition, initiative, assignment, Microsoft Entra identity, or Azure resource, and it does not query or change a customer tenant. Every built-in identifier below was verified against a public source; no policy ID was invented.
 
+## Scope and inheritance
+
+The **Scope** column below is the scope at which the *customer requirement* is
+intended to take effect. It is **not** a statement that an assignment exists at
+exactly that management group, and it is not where the definition lives. Every
+custom definition and initiative in this repository is created at the dedicated
+demo root and then assigned at the appropriate branch, so one definition can be
+assigned with different parameters at different scopes.
+
+Two consequences, both of which appear in the rows below:
+
+- **A control may be assigned at a broader scope than its target.** Inheritance
+  makes a broader assignment cover the target scope. For example
+  `REQ-DEPLOY-04` and `REQ-DEPLOY-05` target `landingzones`, but the
+  `root-deployment-restrictions` module assigns them at the **demo root**, so
+  Platform and Connectivity are covered too.
+- **A control may be catalog-only, with no policy assignment at all.** These
+  records document a verified mechanism and its requirement, not an assignment
+  this template creates. For example `REQ-NET-03` is satisfied by a Defender for
+  Cloud recommendation populated at no cost by Foundational CSPM; `main.bicep`
+  never assigns policy definition `bb91dfba-…`. Rows whose **Classification** is
+  `manual-evidence`, `entra-config`, or `not-applicable` are likewise not backed
+  by an assignment created here.
+
+Treat this catalog as the requirement-to-mechanism register. The authoritative
+list of the assignments this template actually creates, and the management
+group each one is created at, is
+[`docs/CONTROL-SCOPE-AND-INHERITANCE.md`](CONTROL-SCOPE-AND-INHERITANCE.md).
+Verify the deployed reality with
+`az policy assignment list --disable-scope-strict-match` rather than inferring
+it from this column.
+
+| Scope value | Management group | Reaches |
+|---|---|---|
+| `demo-root` | `<namePrefix>` | Every branch and both subscriptions, including Platform and Connectivity |
+| `platform` | `<namePrefix>-platform` | Platform, Connectivity, and the connectivity subscription |
+| `landingzones` | `<namePrefix>-landingzones` | The workload branch and the opt-in Critical Infrastructure branch |
+| `workload` | `<namePrefix>-corp` or `<namePrefix>-online` | Ordinary workloads only |
+| `critical-infrastructure` | `<namePrefix>-criticalinfra` | Opt-in critical subscriptions only |
+| `subscription` | — | A single subscription; used for RBAC, evidence, and subscription-level services |
+| `tenant (Entra ID)` | — | Microsoft Entra, outside Azure Policy entirely |
+
+Azure Policy inheritance flows downward and cannot be cancelled by a child
+scope. Assignments stack, so a resource in the Critical Infrastructure branch
+is evaluated by the demo-root, Landing Zones, **and** Critical Infrastructure
+assignments simultaneously. Only a resource selector, `notScopes`, or an
+approved expiring exemption narrows an inherited assignment.
+
+No control in this catalog is assigned at the tenant root management group.
+
+The per-assignment scope map, the rule for choosing a scope for a new control,
+and the verification commands are in
+[`docs/CONTROL-SCOPE-AND-INHERITANCE.md`](CONTROL-SCOPE-AND-INHERITANCE.md).
+
 ## Important caveats
 
 - Azure service security baselines (for example, the Storage, Key Vault, or Compute security baselines) are Microsoft Learn guidance mapped into individual service controls; they are not one universal assignable Azure Policy initiative. See REQ-BASE-04.
