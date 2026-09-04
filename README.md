@@ -1,10 +1,10 @@
 # Azure Enterprise-Scale Landing Zone — Two-Subscription Demo
 
-> **Version status:** `main` is the **v2 development line** (`2.0.0-dev`).
-> Use the stable current implementation at the
+> **Version status:** `main` is the **v2.0.0 release line** (`2.0.0`).
+> v1 remains available at the
 > [v1.0.0 release](https://github.com/johnstel/azureeslzmultisubdemo/releases/tag/v1.0.0)
 > and the [release/v1 maintenance branch](https://github.com/johnstel/azureeslzmultisubdemo/tree/release/v1).
-> Contributors should track planned v2 work in the
+> See the [v2.0.0 release notes](docs/RELEASE-NOTES-V2.0.0.md) and
 > [v2.0.0 milestone](https://github.com/johnstel/azureeslzmultisubdemo/issues?q=milestone%3A%22v2.0.0%22).
 
 > **New to Azure?** Start with the
