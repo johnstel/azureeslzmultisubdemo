@@ -4842,6 +4842,6 @@ finally {
         Remove-Item -LiteralPath $TempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $ArtifactsParent) {
-        Remove-Item -LiteralPath $ArtifactsParent -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $ArtifactsParent -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
